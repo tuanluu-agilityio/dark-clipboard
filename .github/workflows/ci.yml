@@ -26,13 +26,10 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: tools/schema-check/package-lock.json
-      # TASK-001: remove the `if:` guards below once the workspace exists.
       - uses: dtolnay/rust-toolchain@stable
-        if: hashFiles('Cargo.toml') != ''
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-        if: hashFiles('Cargo.toml') != ''
       - name: Quality gate (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -45,6 +42,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # hashFiles() is not available in job-level `if`, so the guard sits on the step.
       - uses: EmbarkStudios/cargo-deny-action@v2
-        if: hashFiles('Cargo.toml') != ''
