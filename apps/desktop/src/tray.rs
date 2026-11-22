@@ -13,7 +13,7 @@ use darkclip_core::i18n::{t, Lang, Msg};
 use darkclip_core::{CaptureMode, Timestamp};
 
 /// "Pause until resumed": a pause that never expires by itself.
-pub const UNTIL_RESUMED: Timestamp = Timestamp(i64::MAX);
+pub const UNTIL_RESUMED: Timestamp = darkclip_core::FAR_FUTURE;
 const FIVE_MINUTES_MS: i64 = 5 * 60_000;
 const ONE_HOUR_MS: i64 = 60 * 60_000;
 
@@ -114,7 +114,7 @@ pub fn menu_model(s: TrayState) -> MenuModel {
 /// `TogglePrivate` goes back to normal when already private.
 pub fn mode_for(action: MenuAction, current: TrayState, now: Timestamp) -> Option<CaptureMode> {
     let pause_for = |ms: i64| CaptureMode::Paused {
-        until: Timestamp(now.0.saturating_add(ms)),
+        until: Timestamp(now.0.saturating_add(ms).min(darkclip_core::FAR_FUTURE.0)),
     };
     match action {
         MenuAction::Pause5Min => Some(pause_for(FIVE_MINUTES_MS)),
@@ -264,6 +264,16 @@ mod win {
                 (settings.id().clone(), MenuAction::Settings),
                 (quit.id().clone(), MenuAction::Quit),
             ];
+            let id = icon_id(first.state);
+            let built = TrayIconBuilder::new()
+                .with_menu(Box::new(menu))
+                .with_menu_on_left_click(false)
+                .with_tooltip(tooltip(l, first.state, first.utc_offset_min))
+                .with_icon(icon_for(id)?)
+                .build()
+                .ok()?;
+            // Handlers are installed only now that the icon exists, so a failed build leaves
+            // none behind.
             let menu_cb = Arc::clone(&on_action);
             MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
                 if let Some((_, action)) = routes.iter().find(|(id, _)| *id == e.id) {
@@ -281,15 +291,6 @@ mod win {
                     click_cb(MenuAction::Open);
                 }
             }));
-
-            let id = icon_id(first.state);
-            let built = TrayIconBuilder::new()
-                .with_menu(Box::new(menu))
-                .with_menu_on_left_click(false)
-                .with_tooltip(tooltip(l, first.state, first.utc_offset_min))
-                .with_icon(icon_for(id)?)
-                .build()
-                .ok()?;
             let mut tray = Tray {
                 icon: built,
                 shown: Some(id),
@@ -487,12 +488,22 @@ mod tests {
     }
 
     #[test]
+    fn until_resumed_can_be_saved() {
+        // Settings store the time as RFC 3339; the value must be one that can be read back.
+        assert_eq!(UNTIL_RESUMED, darkclip_core::FAR_FUTURE);
+        assert_eq!(
+            Timestamp::parse_rfc3339(&UNTIL_RESUMED.to_rfc3339()),
+            Ok(UNTIL_RESUMED)
+        );
+    }
+
+    #[test]
     fn pause_end_never_overflows() {
         let late = Timestamp(i64::MAX - 1);
         assert_eq!(
             mode_for(MenuAction::Pause1Hour, TrayState::Active, late),
             Some(CaptureMode::Paused {
-                until: Timestamp(i64::MAX)
+                until: darkclip_core::FAR_FUTURE
             })
         );
     }

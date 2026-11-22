@@ -405,4 +405,18 @@ mod tests {
         // The file was not discarded.
         assert_eq!(files(d.path()), vec!["settings.json".to_string()]);
     }
+
+    #[test]
+    fn indefinite_pause_survives_save_and_load() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        let mut s = Settings::default();
+        s.privacy.mode = darkclip_core::CaptureMode::Paused {
+            until: darkclip_core::FAR_FUTURE,
+        };
+        s.save(&p).unwrap();
+        let (loaded, outcome) = Settings::load(&p);
+        assert_eq!(outcome, LoadOutcome::Loaded);
+        assert_eq!(loaded.privacy.mode, s.privacy.mode);
+    }
 }

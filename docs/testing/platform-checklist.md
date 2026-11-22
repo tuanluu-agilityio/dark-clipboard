@@ -59,6 +59,8 @@ All rows **untested** until the owner runs them (Windows 11, `cargo build`, run 
 | Menu: Settings... | Window shows (settings content arrives in Task 207) | **untested** |
 | Menu: Quit | Icon disappears at once; process ends within 2 s | **untested** |
 | Vietnamese Windows UI language (first run) | Menu and tooltip in Vietnamese | **untested** |
+| `dark-clipboard --toggle`, `--quit`, `--help` from interactive cmd or PowerShell | Known limit (GUI subsystem): the shell does not wait, so output may appear after the next prompt and `%ERRORLEVEL%` / `$LASTEXITCODE` are not the real exit code. Use `start /wait` or `Start-Process -Wait -PassThru` to get it | **untested** |
+| `--headless` started from Explorer or a shortcut | Known limit: no console and no tray; it stops only with `--quit` (from another start) or Task Manager | **untested** |
 | Explorer restarts (taskbar crash) | Known limit: the icon may vanish until the app restarts (not handled in this task) | **untested** |
 
 ## macOS

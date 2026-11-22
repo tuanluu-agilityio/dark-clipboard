@@ -28,8 +28,11 @@ fn is_missing(h: &HANDLE) -> bool {
 }
 
 fn fill_std_handle(which: STD_HANDLE, console_file: windows::core::PCWSTR) {
-    // SAFETY: plain handle queries; the opened console handle is kept for the process lifetime
-    // on purpose (it becomes the standard handle).
+    // SAFETY: `console_file` is a `w!` literal, so it is static and NUL-terminated. The calls
+    // only query a standard handle and, if it is missing (null or invalid), open the console
+    // device and install it; a handle the parent redirected is never replaced. The opened
+    // handle is leaked on purpose: it becomes the process's standard handle and must stay open
+    // until exit.
     unsafe {
         let current = GetStdHandle(which).unwrap_or(INVALID_HANDLE_VALUE);
         if !is_missing(&current) {
