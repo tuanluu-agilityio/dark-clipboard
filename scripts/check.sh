@@ -9,7 +9,6 @@ step() { local name="$1"; shift; echo "== $name"; "$@" || fail "$name"; }
 
 has_ws=0; [ -f Cargo.toml ] && has_ws=1
 
-
 if [ "$has_ws" = 1 ]; then
   step "cargo fmt --check" cargo fmt --all --check
   step "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings

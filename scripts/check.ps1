@@ -15,7 +15,6 @@ function Step([string]$name, [scriptblock]$cmd) {
 
 $hasWorkspace = Test-Path -LiteralPath 'Cargo.toml'
 
-
 if ($hasWorkspace) {
     Step 'cargo fmt --check' { cargo fmt --all --check }
     Step 'cargo clippy' { cargo clippy --workspace --all-targets -- -D warnings }
