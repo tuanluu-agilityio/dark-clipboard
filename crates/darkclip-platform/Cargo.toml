@@ -10,3 +10,11 @@ workspace = true
 
 [dependencies]
 darkclip-core = { path = "../darkclip-core" }
+serde = { version = "1.0.229", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0.154"
+
+[features]
+# Exposes `fake::FakePlatform` to downstream test code (darkclip-app dev-dependency).
+fake = []
