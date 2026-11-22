@@ -17,6 +17,8 @@ Create `crates/darkclip-windows/src/{dib.rs, text.rs}` (pure, compiled on all OS
 5. **`CF_HDROP`** → `text/uri-list` (`DragQueryFileW`; `file:///` URIs, percent-encoded per RFC 8089, CRLF-separated), capped like text.
 6. `RawRepresentation.platform_format` = the format name read. Errors carry no content (GC-06).
 
+**Note from the Task 102 review:** `snapshot_meta` reports `size_hint: None` for every format on Windows (a handle size would need `GetClipboardData`), so the policy never drops an oversize image before the read. This task's `GlobalSize` check before copying is therefore the only image cap, and an oversize image must return `PlatformError::TooLarge` (not a generic error).
+
 ## Tests
 - Pure DIB fixtures (built in-test): `dib_bottom_up_24bit`, `dib_top_down_32bit`, `dibv5_alpha_preserved`, `dib_1x1`, `dib_16k_wide_too_large` (cap), `dib_header_lies_about_size` (error, no panic), `dib_bitfields_32bit`, `dib_8bit_unsupported`. Each decodes the produced PNG and compares pixels.
 - Pure text: `utf16_truncates_on_char_boundary`, `utf16_stops_at_nul`, `utf16_lone_surrogate_lossy`, `uri_list_percent_encodes_unicode_and_spaces`.
