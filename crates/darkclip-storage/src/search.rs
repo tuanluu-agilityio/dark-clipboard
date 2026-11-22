@@ -71,6 +71,8 @@ pub struct ClipSummary {
     pub last_copied_at: Timestamp,
     pub sensitivity: SensitivityLevel,
     pub thumb: Option<[u8; 32]>,
+    /// The source app's display name, or its id when there is no name (UI chips, Task 204).
+    pub source_app: Option<String>,
 }
 
 /// Never prints the preview (GC-06).
@@ -229,8 +231,7 @@ fn like_escape(s: &str) -> String {
     out
 }
 
-const COLS: &str =
-    "c.id, c.kind, c.preview, c.pinned, c.last_copied_at, c.sensitivity_level, c.meta";
+const COLS: &str = "c.id, c.kind, c.preview, c.pinned, c.last_copied_at, c.sensitivity_level,      c.meta, COALESCE(c.source_app_name, c.source_app_id)";
 
 fn row_to_summary(r: &rusqlite::Row<'_>) -> Result<ClipSummary, StorageError> {
     let decode = || StorageError::Sqlite("ColumnDecode".into());
@@ -247,6 +248,7 @@ fn row_to_summary(r: &rusqlite::Row<'_>) -> Result<ClipSummary, StorageError> {
         last_copied_at: Timestamp(r.get(4)?),
         sensitivity: enum_parse(level)?,
         thumb: meta.image_thumb_sha256,
+        source_app: r.get(7)?,
     })
 }
 
@@ -570,6 +572,39 @@ mod tests {
 
     fn previews(r: &(Vec<ClipSummary>, Option<Cursor>)) -> Vec<&str> {
         r.0.iter().map(|s| s.preview.as_str()).collect()
+    }
+
+    #[test]
+    fn summaries_carry_the_source_app_name_or_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path());
+        s.upsert_clip(&text_clip("from the id only")).unwrap();
+        let mut named = text_clip("from a named app");
+        if let Some(src) = named.source.as_mut() {
+            src.app_name = Some("Example Editor".into());
+        }
+        s.upsert_clip(&named).unwrap();
+        let mut none = text_clip("without a source");
+        none.source = None;
+        s.upsert_clip(&none).unwrap();
+        let mut empty = q("");
+        empty.text = None;
+        for query in [empty, q("from")] {
+            let rows = s.search(&query).unwrap().0;
+            let src = |p: &str| {
+                rows.iter()
+                    .find(|r| r.preview == p)
+                    .map(|r| r.source_app.clone())
+            };
+            assert_eq!(src("from a named app"), Some(Some("Example Editor".into())));
+            assert_eq!(
+                src("from the id only"),
+                Some(Some("org.example.editor".into()))
+            );
+            if query.text.is_none() {
+                assert_eq!(src("without a source"), Some(None));
+            }
+        }
     }
 
     #[test]

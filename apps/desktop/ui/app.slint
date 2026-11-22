@@ -1,40 +1,296 @@
+import { ListView, Palette } from "std-widgets.slint";
 import { Theme, Strings } from "theme.slint";
+import { Seg, ClipRow, Chip, ChipView, ActionButton, RowView, RowMetrics } from "popup.slint";
 
-export { Theme, Strings }
+export { Theme, Strings, Seg, ClipRow, Chip }
 
-// Placeholder popup window (Task 201). The real popup content arrives in Task 204.
+// The popup (Task 204): created once at start and kept hidden; shown near the cursor by the
+// shortcut, the tray or `--toggle`. All data and every decision come from Rust
+// (`src/ui/popup_host.rs`); this file only lays things out and forwards input.
 export component MainWindow inherits Window {
     title: Strings.app-name;
-    background: Theme.bg;
-    preferred-width: 420px;
-    preferred-height: 560px;
-    min-width: 320px;
-    min-height: 240px;
+    no-frame: true;
+    always-on-top: true;
+    background: transparent;
+    width: 420px;
+    height: 560px;
+    default-font-size: 13px;
 
-    VerticalLayout {
-        padding: 20px;
-        spacing: 12px;
-        alignment: start;
+    in property <[ClipRow]> rows;
+    in property <[Chip]> chips;
+    in property <int> selected;
+    // 0 rows, 1 loading, 2 empty history, 3 no results, 4 error.
+    in property <int> view-state;
+    in property <string> toast;
+    in property <bool> toast-undo;
+    in property <bool> selected-pinned;
+    in property <bool> has-selection;
+    in-out property <string> query;
+    // Whole rows that fit in the list (for Page Up / Page Down).
+    out property <int> page-rows: max(1, floor(clip-list.visible-height / RowMetrics.height));
+    private property <bool> chips-focused;
 
-        Text {
-            text: Strings.app-name;
-            color: Theme.text;
-            font-size: 20px;
-            font-weight: 600;
+    callback query-edited(string);
+    // Returns true when the key was handled (the search box does not see it then).
+    callback key(string, bool, bool, bool, bool, bool, bool) -> bool;
+    callback chip-toggled(int);
+    callback row-clicked(int);
+    callback row-activated(int);
+    callback act-copy();
+    callback act-copy-plain();
+    callback act-pin();
+    callback act-delete();
+    callback act-undo();
+    callback act-close();
+    // The last row index on screen changed (Rust loads the next page near the end).
+    callback shown-until(int);
+
+    public function focus-search() {
+        search.focus();
+    }
+
+    // Scrolls the list so that row `i` is visible.
+    public function scroll-to(i: int) {
+        if (i <= 0) {
+            clip-list.content-y = 0;
+            return;
         }
-        Text {
-            text: Strings.status;
-            color: Theme.accent;
-            font-size: 13px;
+        if (i * RowMetrics.height < -clip-list.content-y) {
+            clip-list.content-y = -(i * RowMetrics.height);
+        } else if ((i + 1) * RowMetrics.height > -clip-list.content-y + clip-list.visible-height) {
+            clip-list.content-y = -((i + 1) * RowMetrics.height - clip-list.visible-height);
         }
-        Rectangle {
-            height: 1px;
-            background: Theme.line;
+    }
+
+    function report-shown() {
+        root.shown-until(floor((-clip-list.content-y + clip-list.visible-height) / RowMetrics.height));
+    }
+
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
+
+    // Sees every key before the focused element (`capture-key-pressed`), never takes focus.
+    keys := FocusScope {
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+        capture-key-pressed(e) => {
+            if (root.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, search.has-focus, root.chips-focused)) {
+                return accept;
+            }
+            reject
         }
-        Text {
-            text: Strings.placeholder;
-            color: Theme.text-muted;
-            wrap: word-wrap;
+
+        panel := Rectangle {
+            background: Theme.bg;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line;
+            clip: true;
+
+            VerticalLayout {
+                padding: 10px;
+                spacing: 8px;
+
+                // Search box and close button.
+                HorizontalLayout {
+                    spacing: 6px;
+                    height: 36px;
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        border-radius: 6px;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: search.has-focus ? Theme.accent : Theme.line;
+
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            Rectangle {
+                                search := TextInput {
+                                    single-line: true;
+                                    text <=> root.query;
+                                    color: Theme.text;
+                                    selection-background-color: Theme.accent;
+                                    selection-foreground-color: Theme.bg;
+                                    font-size: 14px;
+                                    vertical-alignment: center;
+                                    accessible-label: Strings.search-label;
+                                    accessible-placeholder-text: Strings.search-placeholder;
+                                    accessible-description: Strings.key-hints;
+                                    edited => {
+                                        root.query-edited(self.text);
+                                    }
+                                }
+                                Text {
+                                    visible: root.query == "";
+                                    text: Strings.search-placeholder;
+                                    color: Theme.text-muted;
+                                    font-size: 14px;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    width: 100%;
+                                    accessible-role: none;
+                                }
+                            }
+                        }
+                    }
+
+                    ActionButton {
+                        text: "✕";
+                        width: 32px;
+                        height: 36px;
+                        accessible-label: Strings.close;
+                        clicked => {
+                            root.act-close();
+                        }
+                    }
+                }
+
+                // Filter chips, scrolled sideways when they do not fit.
+                chip-flick := Flickable {
+                    height: 28px;
+                    content-width: max(self.width, chip-row.preferred-width);
+                    accessible-role: groupbox;
+                    accessible-label: Strings.filters-label;
+                    chip-row := HorizontalLayout {
+                        spacing: 6px;
+                        padding-top: 1px;
+                        padding-bottom: 1px;
+                        for c in root.chips: ChipView {
+                            chip: c;
+                            toggled => {
+                                root.chip-toggled(c.id);
+                            }
+                            focused(x, w) => {
+                                if (x < -chip-flick.content-x) {
+                                    chip-flick.content-x = -x;
+                                } else if (x + w > -chip-flick.content-x + chip-flick.width) {
+                                    chip-flick.content-x = -(x + w - chip-flick.width);
+                                }
+                            }
+                            changed has-focus => {
+                                root.chips-focused = self.has-focus;
+                            }
+                        }
+                    }
+                }
+
+                // The list, or a state message in its place.
+                Rectangle {
+                    vertical-stretch: 1;
+
+                    list-focus := FocusScope {
+                        focus-on-click: false;
+                        accessible-role: list;
+                        accessible-label: Strings.list-label;
+                        accessible-item-count: root.rows.length;
+                        visible: root.view-state == 0;
+
+                        Rectangle {
+                            border-radius: 6px;
+                            border-width: list-focus.has-focus ? 1px : 0px;
+                            border-color: Theme.accent;
+                        }
+
+                        clip-list := ListView {
+                            for r[i] in root.rows: RowView {
+                                data: r;
+                                index: i;
+                                selected: i == root.selected;
+                                clicked => {
+                                    root.row-clicked(i);
+                                }
+                                activated => {
+                                    root.row-activated(i);
+                                }
+                            }
+                            changed content-y => {
+                                root.report-shown();
+                            }
+                            changed visible-height => {
+                                root.report-shown();
+                            }
+                        }
+                    }
+
+                    Text {
+                        visible: root.view-state != 0;
+                        width: parent.width - 40px;
+                        text: root.view-state == 1 ? Strings.loading
+                            : root.view-state == 2 ? Strings.empty-history
+                            : root.view-state == 3 ? Strings.no-results
+                            : Strings.load-failed;
+                        color: root.view-state == 4 ? Theme.danger : Theme.text-muted;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+
+                // Footer: actions for the selected clip, or the toast (with Undo).
+                Rectangle {
+                    height: 1px;
+                    background: Theme.line;
+                }
+                if root.toast == "": HorizontalLayout {
+                    height: 28px;
+                    spacing: 4px;
+
+                    ActionButton {
+                        text: Strings.copy;
+                        visible: root.has-selection;
+                        clicked => {
+                            root.act-copy();
+                        }
+                    }
+                    ActionButton {
+                        text: Strings.copy-plain;
+                        visible: root.has-selection;
+                        clicked => {
+                            root.act-copy-plain();
+                        }
+                    }
+                    ActionButton {
+                        text: root.selected-pinned ? Strings.unpin : Strings.pin;
+                        visible: root.has-selection;
+                        clicked => {
+                            root.act-pin();
+                        }
+                    }
+                    ActionButton {
+                        text: Strings.delete;
+                        visible: root.has-selection;
+                        clicked => {
+                            root.act-delete();
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                }
+                if root.toast != "": HorizontalLayout {
+                    height: 28px;
+                    spacing: 8px;
+
+                    Text {
+                        text: root.toast;
+                        color: Theme.text;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                        accessible-role: text;
+                    }
+                    ActionButton {
+                        text: Strings.undo;
+                        visible: root.toast-undo;
+                        clicked => {
+                            root.act-undo();
+                        }
+                    }
+                }
+            }
         }
     }
 }

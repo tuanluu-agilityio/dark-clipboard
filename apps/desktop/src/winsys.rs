@@ -6,11 +6,17 @@
 //!   Handles that were redirected (pipes, files) are left alone.
 //! - `local_utc_offset_minutes`: the current local UTC offset, for the "paused until HH:MM"
 //!   tooltip.
+//! - Popup placement (Task 204): per-monitor DPI v2 awareness, the monitor under the cursor
+//!   (work area and DPI), and the foreground window recorded at show time (handle only).
 
 #![allow(unsafe_code)]
 
 use windows::core::w;
+use windows::Win32::Foundation::POINT;
 use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
@@ -18,7 +24,15 @@ use windows::Win32::System::Console::{
     AttachConsole, GetStdHandle, SetStdHandle, ATTACH_PARENT_PROCESS, STD_ERROR_HANDLE, STD_HANDLE,
     STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
 };
+use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
+use windows::Win32::UI::HiDpi::{
+    GetDpiForMonitor, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    MDT_EFFECTIVE_DPI,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetCursorPos, GetForegroundWindow, GetWindowThreadProcessId,
+};
 
 /// Value `GetTimeZoneInformation` returns while daylight saving time is in effect.
 const TIME_ZONE_ID_DAYLIGHT: u32 = 2;
@@ -80,4 +94,73 @@ pub fn local_utc_offset_minutes() -> i32 {
         info.StandardBias
     };
     -(info.Bias + extra)
+}
+
+/// Makes the process per-monitor DPI aware (v2), so the popup renders crisp on every monitor
+/// of a mixed-DPI setup (Task 204). Must run before the first window is created; winit asks for
+/// the same mode, so a failure here (already set) is harmless.
+pub fn set_per_monitor_dpi_awareness() {
+    // SAFETY: takes a constant context value, no pointers; fails harmlessly when already set.
+    let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+}
+
+/// The cursor position and the monitor under it, in physical pixels.
+pub struct MonitorAtCursor {
+    pub cursor: (i32, i32),
+    /// Work area (without the taskbar) of the monitor under the cursor.
+    pub work: crate::popup::place::Rect,
+    /// Effective DPI of that monitor (96 = 100 %).
+    pub dpi: u32,
+}
+
+/// Where the cursor is and which monitor it is on; `None` when Windows cannot tell.
+pub fn monitor_at_cursor() -> Option<MonitorAtCursor> {
+    let mut pt = POINT::default();
+    // SAFETY: `pt` is a valid, writable POINT.
+    unsafe { GetCursorPos(&mut pt) }.ok()?;
+    // SAFETY: plain value arguments; DEFAULTTONEAREST always returns a monitor handle, which is
+    // not owned by the caller (nothing to release).
+    let monitor = unsafe { MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST) };
+    if monitor.is_invalid() {
+        return None;
+    }
+    let mut info = MONITORINFO {
+        cbSize: u32::try_from(std::mem::size_of::<MONITORINFO>()).ok()?,
+        ..Default::default()
+    };
+    // SAFETY: `info` is a valid MONITORINFO with `cbSize` set, as the API requires.
+    if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+        return None;
+    }
+    let (mut dpi_x, mut dpi_y) = (0u32, 0u32);
+    // SAFETY: both out pointers are valid, writable u32s; failure leaves them 0 (treated as 96).
+    let _ = unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) };
+    let w = info.rcWork;
+    Some(MonitorAtCursor {
+        cursor: (pt.x, pt.y),
+        work: crate::popup::place::Rect {
+            left: w.left,
+            top: w.top,
+            right: w.right,
+            bottom: w.bottom,
+        },
+        dpi: dpi_x,
+    })
+}
+
+/// The foreground window when it belongs to another process (the window to return focus to,
+/// Task 205), as a raw handle value. Only the handle is kept: no title, no class name (SR-11).
+pub fn foreground_window_of_other_process() -> Option<isize> {
+    // SAFETY: no arguments; returns a handle that is not owned by the caller.
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.0.is_null() {
+        return None;
+    }
+    let mut pid = 0u32;
+    // SAFETY: `hwnd` came from the OS just now (a stale handle only makes the call fail); `pid`
+    // is a valid, writable u32.
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    // SAFETY: no arguments.
+    let own = unsafe { GetCurrentProcessId() };
+    (pid != 0 && pid != own).then_some(hwnd.0 as isize)
 }

@@ -99,6 +99,45 @@ messages! {
     UiCapturePrivate => ("Private mode: nothing is saved", "Chế độ riêng tư: không lưu gì"),
     UiCaptureUnavailable => ("Capture is unavailable", "Không thể ghi nhớ"),
     UiStarting => ("Starting...", "Đang khởi động..."),
+    // Popup (Task 204)
+    UiSearchPlaceholder => ("Search your clipboard history", "Tìm trong lịch sử bảng nhớ tạm"),
+    UiSearchLabel => ("Search", "Tìm kiếm"),
+    UiFiltersLabel => ("Filters", "Bộ lọc"),
+    UiClipListLabel => ("Clipboard history", "Lịch sử bảng nhớ tạm"),
+    UiFilterPinned => ("Pinned", "Đã ghim"),
+    UiFilterToday => ("Today", "Hôm nay"),
+    UiFilter7Days => ("7 days", "7 ngày"),
+    UiEmptyHistory => (
+        "Nothing here yet. Copy some text and it will show up here.",
+        "Chưa có gì. Hãy sao chép một đoạn văn bản, nó sẽ hiện ở đây."
+    ),
+    UiNoResults => ("No matching clips", "Không có mục nào phù hợp"),
+    UiLoading => ("Loading...", "Đang tải..."),
+    UiLoadFailed => (
+        "The history could not be loaded",
+        "Không tải được lịch sử"
+    ),
+    UiActionFailed => (
+        "That did not work. Please try again.",
+        "Không thực hiện được. Hãy thử lại."
+    ),
+    UiCopy => ("Copy", "Sao chép"),
+    UiCopyPlain => ("Copy as plain text", "Sao chép dạng văn bản thuần"),
+    UiPin => ("Pin", "Ghim"),
+    UiUnpin => ("Unpin", "Bỏ ghim"),
+    UiDelete => ("Delete", "Xóa"),
+    UiDeleted => ("Clip deleted", "Đã xóa mục"),
+    UiUndo => ("Undo", "Hoàn tác"),
+    UiClose => ("Close", "Đóng"),
+    UiKeyHints => (
+        "Enter copy · Shift+Enter plain · Ctrl+P pin · Del delete · Esc close",
+        "Enter sao chép · Shift+Enter văn bản thuần · Ctrl+P ghim · Del xóa · Esc đóng"
+    ),
+    CliSeedRefused => (
+        "--seed-demo-clips needs --data-dir with a folder other than the default data folder.",
+        "--seed-demo-clips cần --data-dir với một thư mục khác thư mục dữ liệu mặc định."
+    ),
+    CliSeedDone => ("Demo clips written:", "Đã ghi các mục mẫu:"),
     // Tray icon and menu (Task 202)
     TrayOpen => ("Open", "Mở"),
     TrayPause => ("Pause capture", "Tạm dừng ghi nhớ"),

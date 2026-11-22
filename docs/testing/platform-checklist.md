@@ -63,6 +63,29 @@ All rows **untested** until the owner runs them (Windows 11, `cargo build`, run 
 | `--headless` started from Explorer or a shortcut | Known limit: no console and no tray; it stops only with `--quit` (from another start) or Task Manager | **untested** |
 | Explorer restarts (taskbar crash) | Known limit: the icon may vanish until the app restarts (not handled in this task) | **untested** |
 
+## Windows: popup (Task 204)
+
+All rows **untested** until the owner runs them. Use a scratch history: `dark-clipboard --seed-demo-clips 10000 --data-dir <empty folder>`, then `dark-clipboard --data-dir <same folder>` (synthetic text only). Delete the folder afterwards.
+
+| Row | Expected | Result |
+|---|---|---|
+| Press `Ctrl+Shift+V` | Popup near the cursor, search box focused and empty, recent clips listed, pinned first | **untested** |
+| Shortcut pressed twice quickly (Review Focus 1) | Opens then closes (or stays open if the second press comes within the 150 ms shortcut debounce); never two popups, never stuck | **untested** |
+| Shortcut while the popup is open | Closes it | **untested** |
+| Click outside the popup | Popup closes | **untested** |
+| Mixed-DPI monitors (Review Focus 2): e.g. a 100 % and a 150 % monitor; open the popup on each | Opens on the monitor under the cursor, inside its work area (not under the taskbar), text crisp (not blurry), size about 420 × 560 at 100 % | **untested** |
+| Vietnamese IME (Review Focus 4): Windows Vietnamese Telex and VNI keyboards, and Unikey (Telex), type `tieesng vieejt` / `tie61ng vie65t` | Search box shows `tiếng việt`; results update; the composition is not cut by the 60 ms debounce | **untested** |
+| 10,000 clips (Review Focus 5): hold Down arrow, Page Down, End; drag the scrollbar; mouse wheel | List scrolls without visible jank; more clips load as you reach the end; End goes to the last loaded clip | **untested** |
+| Type a search with 10,000 clips | Results follow the typing without a visible stall; matched words highlighted, accents ignored (`viet` highlights `Việt`) | **untested** |
+| Enter on a clip, then paste in Notepad | The clip is pasted; the popup closed after Enter | **untested** |
+| Shift+Enter on a rich-text clip, then paste in Word | Plain text only | **untested** |
+| Delete, then Undo (button or Ctrl+Z) within 5 s | Clip disappears, then comes back; without Undo it is gone after 5 s or when the popup closes | **untested** |
+| Ctrl+P on a clip | Pinned clips move to the top with an accent bar; again unpins | **untested** |
+| Alt+1 .. Alt+9 | Copies the n-th listed clip and closes | **untested** |
+| Tab / Shift+Tab | Focus moves search → chips → list and back; Enter or Space on a chip toggles it | **untested** |
+| Narrator on the popup | Search box, chips (checkbox, checked state) and rows (list items) are announced | **untested** |
+| Real-shortcut NFR-01 timing: 50 presses, then `scripts/measure-popup.ps1 -LogPath <log> -Source hotkey` | p95 ≤ 100 ms (record the numbers in `docs/testing/perf-windows.md`) | **untested** |
+
 ## macOS
 
 All rows **untested** (no hardware, Q-04).

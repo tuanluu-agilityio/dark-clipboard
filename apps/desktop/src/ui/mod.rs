@@ -22,8 +22,9 @@
 mod generated {
     slint::include_modules!();
 }
-pub use generated::{MainWindow, Strings, Theme};
+pub use generated::{Chip, ClipRow, MainWindow, Seg, Strings, Theme};
 
+mod popup_host;
 mod shortcut_host;
 mod tray_host;
 
@@ -37,6 +38,7 @@ use darkclip_app::settings::LoadOutcome;
 use darkclip_app::{App, AppEvent, CaptureConfig, ClipApi};
 use darkclip_core::i18n::{t, Lang, Msg};
 use darkclip_core::Clock;
+use popup_host::Trigger;
 use slint::{ComponentHandle, Weak};
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -44,7 +46,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// What the event loop does for a command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +64,15 @@ pub fn action_for(window_visible: bool, cmd: Command) -> Action {
         Command::Toggle | Command::ShowSettings => Action::Show,
         Command::Quit => Action::Quit,
     }
+}
+
+/// A tray click arriving this soon after the popup closed itself on focus loss is the click
+/// that took the focus away: it must not reopen the popup.
+pub const REOPEN_GUARD: Duration = Duration::from_millis(300);
+
+/// True when a show request must be ignored (see `REOPEN_GUARD`).
+pub fn swallow_reopen(trigger: Trigger, visible: bool, since_focus_hide: Option<Duration>) -> bool {
+    trigger == Trigger::Tray && !visible && since_focus_hide.is_some_and(|d| d < REOPEN_GUARD)
 }
 
 /// Which message describes the capture state.
@@ -118,6 +129,7 @@ fn set_strings(
     s.set_placeholder(t(lang, Msg::UiPopupPlaceholder).into());
     let status = status.map_or(Msg::UiStarting, status_msg);
     s.set_status(t(lang, status).into());
+    popup_host::set_strings(w, lang);
 }
 
 type Job = Box<dyn FnOnce(&App) + Send>;
@@ -125,8 +137,10 @@ type Job = Box<dyn FnOnce(&App) + Send>;
 enum WorkerMsg {
     /// Re-read status and language, then update the window.
     Refresh,
-    /// Run an `App` call on the worker (storage never runs on the UI thread).
+    /// Run an `App` call on the worker (storage never runs on the UI thread), then refresh.
     Run(Job),
+    /// Run an `App` call that changes nothing the status shows (searches, copy): no refresh.
+    Quiet(Job),
     Stop,
 }
 
@@ -137,6 +151,11 @@ pub struct Poster(Sender<WorkerMsg>);
 impl Poster {
     pub fn post(&self, job: impl FnOnce(&App) + Send + 'static) {
         let _ = self.0.send(WorkerMsg::Run(Box::new(job)));
+    }
+
+    /// Like `post`, without the status refresh afterwards (searches and copies).
+    pub fn post_quiet(&self, job: impl FnOnce(&App) + Send + 'static) {
+        let _ = self.0.send(WorkerMsg::Quiet(Box::new(job)));
     }
 }
 
@@ -235,6 +254,9 @@ fn push_status(
         if let Some(w) = ui.upgrade() {
             set_strings(&w, lang, Some(status), sc);
         }
+        popup_host::set_lang(lang);
+        // Clips may have been added, pinned or deleted: a visible popup re-runs its search.
+        popup_host::app_changed();
     });
     wake_after(state, now)
 }
@@ -330,6 +352,7 @@ impl Worker {
                             job(&app);
                             wake = push_status(&app, &ui, mode, &log);
                         }
+                        WorkerMsg::Quiet(job) => job(&app),
                         WorkerMsg::Stop => break,
                     }
                 }
@@ -367,15 +390,16 @@ impl Worker {
     }
 }
 
-/// Applies a command to the window; runs on the event loop thread.
-fn apply_command(w: &MainWindow, cmd: Command) {
-    match action_for(w.window().is_visible(), cmd) {
-        Action::Show => {
-            let _ = w.show();
-        }
-        Action::Hide => {
-            let _ = w.hide();
-        }
+/// Applies a command to the window; runs on the event loop thread. `asked` is when the
+/// shortcut, tray or IPC asked (for the NFR-01 `perf` event).
+fn apply_command(w: &MainWindow, cmd: Command, asked: Instant, trigger: Trigger) {
+    let visible = w.window().is_visible();
+    if cmd == Command::Toggle && swallow_reopen(trigger, visible, popup_host::since_focus_hide()) {
+        return;
+    }
+    match action_for(visible, cmd) {
+        Action::Show => popup_host::show(w, asked, trigger),
+        Action::Hide => popup_host::hide(w),
         Action::Quit => {
             let _ = slint::quit_event_loop();
         }
@@ -392,7 +416,7 @@ fn handle_tray_action(action: MenuAction, window: &Weak<MainWindow>, poster: &Po
                 Command::ShowSettings
             };
             if let Some(w) = window.upgrade() {
-                apply_command(&w, cmd);
+                apply_command(&w, cmd, Instant::now(), Trigger::Tray);
             }
         }
         MenuAction::Quit => {
@@ -443,8 +467,9 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
     let weak = window.as_weak();
     let ipc_log = Arc::clone(&log);
     let handler: CommandHandler = Box::new(move |cmd| {
+        let asked = Instant::now();
         ipc_log.event("ipc_command", &[("cmd", Val::Name(cmd.name()))]);
-        let _ = weak.upgrade_in_event_loop(move |w| apply_command(&w, cmd));
+        let _ = weak.upgrade_in_event_loop(move |w| apply_command(&w, cmd, asked, Trigger::Ipc));
     });
     if listen(handler).is_err() {
         log.event("start_failed", &[("stage", Val::Name("ipc"))]);
@@ -458,8 +483,11 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
     } else {
         let press_window = window.as_weak();
         let on_press: shortcut_host::OnPress = Arc::new(move || {
+            let asked = Instant::now();
             let w = press_window.clone();
-            let _ = w.upgrade_in_event_loop(|w| apply_command(&w, Command::Toggle));
+            let _ = w.upgrade_in_event_loop(move |w| {
+                apply_command(&w, Command::Toggle, asked, Trigger::Hotkey);
+            });
         });
         if shortcut_host::init(on_press) {
             ShortcutMode::Enabled
@@ -472,6 +500,13 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
         log.event("start_failed", &[("stage", Val::Name("worker"))]);
         return false;
     };
+    // The popup: list, search and keyboard (Task 204).
+    popup_host::install(&window, worker.poster(), args_lang, Arc::clone(&log));
+    popup_host::close_on_focus_loss(&window);
+    window.window().on_close_requested(|| {
+        popup_host::shutdown_pending();
+        slint::CloseRequestResponse::HideWindow
+    });
 
     if let Some(ms) = args.exit_after_ms {
         let _ = std::thread::Builder::new()
@@ -505,6 +540,8 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
     }
 
     let looped = slint::run_event_loop_until_quit();
+    // A delete still waiting for its undo is sent before the worker stops.
+    popup_host::shutdown();
     // Remove the icon first, so it does not linger while the app shuts down.
     tray_host::destroy();
     shortcut_host::release();
@@ -557,6 +594,22 @@ mod tests {
             wake_after(TrayState::Paused(Timestamp(0)), now),
             Some(Duration::from_millis(50))
         );
+    }
+
+    #[test]
+    fn a_tray_click_that_closed_the_popup_does_not_reopen_it() {
+        let just = Some(Duration::from_millis(40));
+        assert!(swallow_reopen(Trigger::Tray, false, just));
+        // Later clicks, other triggers and a visible popup are not affected.
+        assert!(!swallow_reopen(
+            Trigger::Tray,
+            false,
+            Some(Duration::from_millis(900))
+        ));
+        assert!(!swallow_reopen(Trigger::Tray, false, None));
+        assert!(!swallow_reopen(Trigger::Hotkey, false, just));
+        assert!(!swallow_reopen(Trigger::Ipc, false, just));
+        assert!(!swallow_reopen(Trigger::Tray, true, just));
     }
 
     #[test]
