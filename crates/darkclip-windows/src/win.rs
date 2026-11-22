@@ -4,11 +4,9 @@
 //!
 //! Nothing here reads window titles (GC-06). Clipboard data is read only by
 //! `ClipboardGuard::dword_value` (a 4-byte marker DWORD, `snapshot_meta`) and by `data_size` /
-//! `copy_data` / `drop_files`, which `access::read_plan` calls only for planned formats after
+//! `copy_data`, which `access::read_plan` calls only for planned formats after
 //! the policy decision (GC-03). Content buffers are wiped on drop and never logged.
 
-use crate::access::DropFiles;
-use crate::formats::CF_HDROP;
 use darkclip_platform::PlatformError;
 use std::cell::RefCell;
 use std::ffi::c_void;
@@ -31,7 +29,6 @@ use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
     GetWindowThreadProcessId, PostMessageW, PostQuitMessage, RegisterClassExW, UnregisterClassW,
@@ -207,48 +204,7 @@ impl ClipboardGuard {
         drop(lock);
         Some(out)
     }
-
-    /// `CF_HDROP` file names via `DragQueryFileW`, stopping before the name that would take
-    /// the total past `max_units` UTF-16 units (or after `MAX_DROP_FILES` names). The HDROP
-    /// belongs to the clipboard: no `DragFinish`.
-    pub(crate) fn drop_files(&self, max_units: usize) -> Option<DropFiles> {
-        let mem = self.data_handle(CF_HDROP)?;
-        let hdrop = HDROP(mem.0);
-        // SAFETY: `hdrop` is the clipboard's CF_HDROP handle (a DROPFILES block); index
-        // 0xFFFFFFFF with no buffer returns the file count.
-        let count = unsafe { DragQueryFileW(hdrop, u32::MAX, None) };
-        let mut names = Vec::new();
-        let mut total = 0usize;
-        for i in 0..count {
-            if names.len() >= MAX_DROP_FILES {
-                return Some(DropFiles { names, more: true });
-            }
-            // SAFETY: as above; no buffer returns the name length without the NUL.
-            let len = unsafe { DragQueryFileW(hdrop, i, None) };
-            let len = usize::try_from(len).unwrap_or(usize::MAX);
-            if len == 0 {
-                continue;
-            }
-            if len > MAX_PATH_UNITS || total.saturating_add(len) > max_units {
-                return Some(DropFiles { names, more: true });
-            }
-            let mut buf = Zeroizing::new(vec![0u16; len + 1]);
-            // SAFETY: as above; `buf` holds `len + 1` writable units and the wrapper passes
-            // its length as the maximum count.
-            let got = unsafe { DragQueryFileW(hdrop, i, Some(buf.as_mut_slice())) };
-            let got = usize::try_from(got).unwrap_or(0).min(len);
-            buf.truncate(got);
-            total += got;
-            names.push(buf);
-        }
-        Some(DropFiles { names, more: false })
-    }
 }
-
-/// Most `CF_HDROP` names read.
-const MAX_DROP_FILES: usize = 65_536;
-/// Longest accepted file name (extended-length paths are at most 32 767 units).
-const MAX_PATH_UNITS: usize = 32_767;
 
 impl Drop for ClipboardGuard {
     fn drop(&mut self) {
@@ -640,6 +596,11 @@ pub(crate) mod test_support {
     /// Writes `text` as `CF_UNICODETEXT`; returns the sequence number after the write.
     pub(crate) fn write_text(text: &str) -> Result<u32, PlatformError> {
         write_formats(vec![(CF_UNICODETEXT, utf16z(text))])
+    }
+
+    /// Writes a packed DIB as `CF_DIB` only (the system synthesizes `CF_DIBV5` on request).
+    pub(crate) fn write_dib(dib: &[u8]) -> Result<u32, PlatformError> {
+        write_formats(vec![(crate::formats::CF_DIB, dib.to_vec())])
     }
 
     /// Writes `html` (a full CF_HTML payload, UTF-8) as `HTML Format`, NUL-terminated.

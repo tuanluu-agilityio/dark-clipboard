@@ -7,6 +7,8 @@
 
 #![cfg_attr(not(windows), allow(dead_code))]
 
+use zeroize::Zeroizing;
+
 /// Most raw bytes read for a UTF-16 format with a UTF-8 cap of `cap` bytes: `4 × cap + 2`.
 /// Every UTF-16 unit gives at least one UTF-8 byte, so this always reaches past the cap and a
 /// cut is detected.
@@ -96,26 +98,37 @@ fn until_nul(raw: &[u8]) -> &[u8] {
 /// A Windows path (UTF-16, no NUL) as a `file:` URI (RFC 8089): drive paths become
 /// `file:///C:/...`, UNC paths `file://host/share/...`; `\\?\` prefixes are dropped. Every
 /// byte outside the unreserved set (and `/`, and the drive colon) is percent-encoded.
-pub(crate) fn file_uri(path: &[u16]) -> String {
-    let path = String::from_utf16_lossy(path).replace('\\', "/");
-    let path = if let Some(rest) = path.strip_prefix("//?/UNC/") {
-        format!("//{rest}")
-    } else if let Some(rest) = path.strip_prefix("//?/") {
-        rest.to_owned()
+/// Intermediate and result buffers are reserved up front (no reallocation copies) and wiped
+/// on drop.
+pub(crate) fn file_uri(path: &[u16]) -> Zeroizing<String> {
+    // At most 3 UTF-8 bytes per UTF-16 unit.
+    let mut slashed = Zeroizing::new(String::with_capacity(path.len().saturating_mul(3)));
+    for c in char::decode_utf16(path.iter().copied()) {
+        let c = c.unwrap_or(char::REPLACEMENT_CHARACTER);
+        slashed.push(if c == '\\' { '/' } else { c });
+    }
+    let p: &str = slashed.as_str();
+    let (unc, rest) = if let Some(r) = p.strip_prefix("//?/UNC/") {
+        (true, r)
+    } else if let Some(r) = p.strip_prefix("//?/") {
+        (false, r)
+    } else if let Some(r) = p.strip_prefix("//") {
+        (true, r)
     } else {
-        path
+        (false, p.trim_start_matches('/'))
     };
-    let mut out = String::with_capacity(path.len() * 3 + 8);
-    if let Some(unc) = path.strip_prefix("//") {
+    // Every byte becomes at most 3 characters.
+    let mut out = Zeroizing::new(String::with_capacity(
+        rest.len().saturating_mul(3).saturating_add(8),
+    ));
+    if unc {
         out.push_str("file://");
-        encode_into(&mut out, unc, false);
+        encode_into(&mut out, rest, false);
     } else {
         out.push_str("file:///");
-        let drive = {
-            let b = path.as_bytes();
-            b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
-        };
-        encode_into(&mut out, path.trim_start_matches('/'), drive);
+        let b = rest.as_bytes();
+        let drive = matches!(b, [d, b':', ..] if d.is_ascii_alphabetic());
+        encode_into(&mut out, rest, drive);
     }
     out
 }
@@ -136,10 +149,115 @@ fn encode_into(out: &mut String, s: &str, drive: bool) {
     }
 }
 
+/// File names of a `CF_HDROP` (UTF-16, no NUL), wiped on drop.
+pub(crate) struct FileNames {
+    pub names: Vec<Zeroizing<Vec<u16>>>,
+    /// Names were left out (budget, name count or a cut copy).
+    pub more: bool,
+}
+
+/// Size of the `DROPFILES` header.
+const DROPFILES_LEN: usize = 20;
+/// Room allowed for a `pFiles` offset beyond the plain header.
+const DROPFILES_SLACK: usize = 4096;
+/// Most names taken from one block.
+pub(crate) const MAX_DROP_FILES: usize = 65_536;
+
+/// Most bytes copied from a `CF_HDROP` block for a cap of `cap` bytes.
+pub(crate) fn dropfiles_raw_limit(cap: usize) -> usize {
+    utf16_raw_limit(cap).saturating_add(DROPFILES_SLACK)
+}
+
+/// Parses a `DROPFILES` block copied from `CF_HDROP` (bounded by `GlobalSize` and
+/// [`dropfiles_raw_limit`]) without trusting it: `pFiles` must point past the header and
+/// inside the block; names are NUL-terminated and the list ends with an empty name (double
+/// NUL). `complete` says whether `block` is the whole `GlobalSize` block: then a missing
+/// terminator is malformed (`None`); otherwise the copy was cut, the partial name is dropped
+/// and `more` is set. Takes names until the next would pass `max_units` UTF-16 units in
+/// total, or [`MAX_DROP_FILES`] names. ANSI blocks (`fWide = 0`) are accepted only when every
+/// name is ASCII (other bytes need the system code page). Never panics.
+pub(crate) fn parse_dropfiles(block: &[u8], complete: bool, max_units: usize) -> Option<FileNames> {
+    let u32_at = |off: usize| -> Option<u32> {
+        let s = block.get(off..off.checked_add(4)?)?;
+        Some(u32::from_le_bytes([
+            *s.first()?,
+            *s.get(1)?,
+            *s.get(2)?,
+            *s.get(3)?,
+        ]))
+    };
+    if block.len() < DROPFILES_LEN {
+        return None;
+    }
+    let p_files = usize::try_from(u32_at(0)?).ok()?;
+    let wide = u32_at(16)? != 0;
+    if p_files < DROPFILES_LEN || p_files >= block.len() {
+        return None;
+    }
+    let list = block.get(p_files..)?;
+    let wide_units = list.as_chunks::<2>().0;
+    let count = if wide { wide_units.len() } else { list.len() };
+    let unit = |i: usize| -> Option<u16> {
+        if wide {
+            wide_units.get(i).map(|&b| u16::from_le_bytes(b))
+        } else {
+            list.get(i).map(|&b| u16::from(b))
+        }
+    };
+
+    let mut names: Vec<Zeroizing<Vec<u16>>> = Vec::new();
+    let mut total = 0usize;
+    let mut pos = 0usize;
+    loop {
+        // Find the end of the next name without copying it.
+        let mut end = pos;
+        while end < count && unit(end)? != 0 {
+            if !wide && unit(end)? >= 0x80 {
+                return None;
+            }
+            end += 1;
+        }
+        if end >= count {
+            // No NUL before the end of the copy.
+            return if complete {
+                None
+            } else {
+                Some(FileNames { names, more: true })
+            };
+        }
+        let len = end - pos;
+        if len == 0 {
+            // The empty name: end of the list.
+            return Some(FileNames { names, more: false });
+        }
+        if names.len() >= MAX_DROP_FILES || total.saturating_add(len) > max_units {
+            return Some(FileNames { names, more: true });
+        }
+        let mut name = Zeroizing::new(Vec::with_capacity(len));
+        for i in pos..end {
+            name.push(unit(i)?);
+        }
+        total += len;
+        names.push(name);
+        pos = end + 1;
+    }
+}
+
+/// Upper bound of one URI's length: 9 characters per UTF-16 unit (3 UTF-8 bytes, each
+/// percent-encoded) plus the `file:///` prefix.
+fn uri_bound(units: usize) -> usize {
+    units.saturating_mul(9).saturating_add(8)
+}
+
 /// `text/uri-list` of `paths`, CRLF-separated, capped at `cap` bytes by whole URIs (a cut URI
-/// would name another file). Returns the list and whether a URI was left out.
+/// would name another file). Returns the list and whether a URI was left out. The output is
+/// reserved up front (no reallocation copies); a left-out URI is wiped.
 pub(crate) fn uri_list<P: AsRef<[u16]>>(paths: &[P], cap: usize) -> (String, bool) {
-    let mut out = String::new();
+    let bound = paths.iter().fold(0usize, |acc, p| {
+        acc.saturating_add(uri_bound(p.as_ref().len()))
+            .saturating_add(2)
+    });
+    let mut out = String::with_capacity(cap.min(bound));
     for p in paths {
         let uri = file_uri(p.as_ref());
         let sep = if out.is_empty() { 0 } else { 2 };
@@ -155,7 +273,7 @@ pub(crate) fn uri_list<P: AsRef<[u16]>>(paths: &[P], cap: usize) -> (String, boo
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn le(units: &[u16]) -> Vec<u8> {
@@ -267,15 +385,15 @@ mod tests {
     fn uri_list_percent_encodes_unicode_and_spaces() {
         let w = |s: &str| s.encode_utf16().collect::<Vec<u16>>();
         assert_eq!(
-            file_uri(&w(r"C:\Users\Tuấn\My File.txt")),
+            file_uri(&w(r"C:\Users\Tuấn\My File.txt")).as_str(),
             "file:///C:/Users/Tu%E1%BA%A5n/My%20File.txt"
         );
         assert_eq!(
-            file_uri(&w(r"\\server\share\a#b%c.txt")),
+            file_uri(&w(r"\\server\share\a#b%c.txt")).as_str(),
             "file://server/share/a%23b%25c.txt"
         );
-        assert_eq!(file_uri(&w(r"\\?\D:\x y")), "file:///D:/x%20y");
-        assert_eq!(file_uri(&w(r"\\?\UNC\srv\s\f")), "file://srv/s/f");
+        assert_eq!(file_uri(&w(r"\\?\D:\x y")).as_str(), "file:///D:/x%20y");
+        assert_eq!(file_uri(&w(r"\\?\UNC\srv\s\f")).as_str(), "file://srv/s/f");
         let paths = vec![w(r"C:\a b.txt"), w(r"D:\ñ")];
         let (list, cut) = uri_list(&paths, 1000);
         assert_eq!(list, "file:///C:/a%20b.txt\r\nfile:///D:/%C3%B1");
@@ -287,5 +405,110 @@ mod tests {
         let (list, cut) = uri_list(&paths, 3);
         assert_eq!(list, "");
         assert!(cut);
+    }
+
+    /// A DROPFILES block: 20-byte header (`pFiles`, `pt`, `fNC`, `fWide`), then the names,
+    /// each NUL-terminated, then a final NUL.
+    pub(crate) fn dropfiles(names: &[&str], wide: bool) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(&20u32.to_le_bytes());
+        b.extend_from_slice(&[0u8; 12]);
+        b.extend_from_slice(&u32::from(wide).to_le_bytes());
+        for n in names {
+            if wide {
+                b.extend(n.encode_utf16().chain([0]).flat_map(u16::to_le_bytes));
+            } else {
+                b.extend_from_slice(n.as_bytes());
+                b.push(0);
+            }
+        }
+        if wide {
+            b.extend_from_slice(&[0, 0]);
+        } else {
+            b.push(0);
+        }
+        b
+    }
+
+    fn names(f: &FileNames) -> Vec<String> {
+        f.names
+            .iter()
+            .map(|n| String::from_utf16(n).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn dropfiles_wide_and_ansi_parsed() {
+        let block = dropfiles(&[r"C:\Tuấn\a b.txt", r"\\srv\s\x"], true);
+        let f = parse_dropfiles(&block, true, 1000).unwrap();
+        assert_eq!(names(&f), vec![r"C:\Tuấn\a b.txt", r"\\srv\s\x"]);
+        assert!(!f.more);
+        // GlobalSize padding after the terminator is ignored.
+        let mut padded = block.clone();
+        padded.extend_from_slice(&[0xAB; 7]);
+        assert_eq!(
+            names(&parse_dropfiles(&padded, true, 1000).unwrap()).len(),
+            2
+        );
+        // ANSI names, ASCII only.
+        let f = parse_dropfiles(&dropfiles(&[r"C:\a.txt"], false), true, 1000).unwrap();
+        assert_eq!(names(&f), vec![r"C:\a.txt"]);
+        // No files at all.
+        let f = parse_dropfiles(&dropfiles(&[], true), true, 1000).unwrap();
+        assert!(f.names.is_empty() && !f.more);
+        // A larger pFiles (extra header bytes) is honoured.
+        let mut b = dropfiles(&[r"C:\x"], true);
+        b.splice(20..20, [0u8; 8]);
+        b[0..4].copy_from_slice(&28u32.to_le_bytes());
+        assert_eq!(
+            names(&parse_dropfiles(&b, true, 1000).unwrap()),
+            vec![r"C:\x"]
+        );
+    }
+
+    #[test]
+    fn dropfiles_malformed_blocks_rejected() {
+        let good = dropfiles(&[r"C:\a", r"C:\b"], true);
+        // Shorter than the header.
+        for cut in 0..20 {
+            assert!(
+                parse_dropfiles(&good[..cut], true, 1000).is_none(),
+                "cut {cut}"
+            );
+        }
+        // pFiles inside the header or past the block.
+        for p in [0u32, 19, u32::try_from(good.len()).unwrap(), u32::MAX] {
+            let mut b = good.clone();
+            b[0..4].copy_from_slice(&p.to_le_bytes());
+            assert!(parse_dropfiles(&b, true, 1000).is_none(), "pFiles {p}");
+        }
+        // A complete block without the double-NUL terminator.
+        let no_final = &good[..good.len() - 2];
+        assert!(parse_dropfiles(no_final, true, 1000).is_none());
+        let no_nul = &good[..good.len() - 4];
+        assert!(parse_dropfiles(no_nul, true, 1000).is_none());
+        // ANSI names outside ASCII need the code page: rejected.
+        let mut ansi = dropfiles(&[r"C:\a"], false);
+        ansi[23] = 0xE9;
+        assert!(parse_dropfiles(&ansi, true, 1000).is_none());
+    }
+
+    #[test]
+    fn dropfiles_cut_block_and_budget() {
+        let good = dropfiles(&[r"C:\aaaa", r"C:\bbbb"], true);
+        // The copy was cut by the read limit inside the second name: first name kept, the
+        // partial one dropped, `more` set.
+        let cut = &good[..20 + 8 * 2 + 6];
+        let f = parse_dropfiles(cut, false, 1000).unwrap();
+        assert_eq!(names(&f), vec![r"C:\aaaa"]);
+        assert!(f.more);
+        // The budget stops before the name that would pass it.
+        let f = parse_dropfiles(&good, true, 10).unwrap();
+        assert_eq!(names(&f), vec![r"C:\aaaa"]);
+        assert!(f.more);
+        let f = parse_dropfiles(&good, true, 3).unwrap();
+        assert!(f.names.is_empty() && f.more);
+        // The read limit leaves room for the header.
+        assert!(dropfiles_raw_limit(10) > utf16_raw_limit(10) + 20);
     }
 }

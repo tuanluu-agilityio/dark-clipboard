@@ -61,16 +61,6 @@ pub(crate) trait OpenClipboardView {
     /// The first `min(GlobalSize, max)` bytes of a planned format's data (`GlobalLock`, copy,
     /// unlock), or `None` when unavailable. Only after `data_size` passed the caps.
     fn copy_data(&self, id: u32, max: usize) -> Option<Zeroizing<Vec<u8>>>;
-    /// `CF_HDROP` file names (`DragQueryFileW`), stopping before the name that would take the
-    /// total past `max_units` UTF-16 units. Only when `CF_HDROP` is planned.
-    fn drop_files(&self, max_units: usize) -> Option<DropFiles>;
-}
-
-/// File names of a `CF_HDROP`, wiped on drop.
-pub(crate) struct DropFiles {
-    pub names: Vec<Zeroizing<Vec<u16>>>,
-    /// Names were left out to stay within the budget.
-    pub more: bool,
 }
 
 /// Registered ids of the marker names, cached after the first full registration.
@@ -217,9 +207,10 @@ fn name_of(id: u32) -> Option<&'static str> {
 }
 
 /// Bytes fetched while the clipboard was open; converted after it is closed. Wiped on drop.
-enum Fetched {
-    Bytes(Zeroizing<Vec<u8>>),
-    Files(DropFiles),
+struct Fetched {
+    bytes: Zeroizing<Vec<u8>>,
+    /// The copy holds the whole `GlobalSize` block (not cut by the read limit).
+    complete: bool,
 }
 
 fn saturating_usize(v: u64) -> usize {
@@ -278,16 +269,14 @@ pub(crate) fn read_plan<O: ClipboardOs>(
                     }
                     saturating_usize(size)
                 }
-                ReadKind::Files => {
-                    if let Some(files) = open.drop_files(text_cap) {
-                        fetched.push((name, kind, mime, Fetched::Files(files)));
-                    }
-                    continue;
-                }
+                // The DROPFILES block is parsed here (`text::parse_dropfiles`), never handed
+                // to shell32 unchecked.
+                ReadKind::Files => text::dropfiles_raw_limit(text_cap),
             };
             let limit = limit.min(saturating_usize(size));
             if let Some(bytes) = open.copy_data(id, limit) {
-                fetched.push((name, kind, mime, Fetched::Bytes(bytes)));
+                let complete = u64::try_from(bytes.len()).ok() == Some(size);
+                fetched.push((name, kind, mime, Fetched { bytes, complete }));
             }
         }
         fetched
@@ -295,7 +284,16 @@ pub(crate) fn read_plan<O: ClipboardOs>(
     };
 
     let mut reps = Vec::with_capacity(fetched.len());
-    for (name, kind, mime, data) in fetched {
+    for (
+        name,
+        kind,
+        mime,
+        Fetched {
+            bytes: raw,
+            complete,
+        },
+    ) in fetched
+    {
         let rep = |bytes: Vec<u8>, truncated: bool| RawRepresentation {
             mime,
             platform_format: name.to_owned(),
@@ -304,20 +302,20 @@ pub(crate) fn read_plan<O: ClipboardOs>(
             height: None,
             truncated,
         };
-        match (kind, data) {
-            (ReadKind::Text, Fetched::Bytes(raw)) => {
+        match kind {
+            ReadKind::Text => {
                 let (s, cut) = text::utf16_capped(&raw, text_cap);
                 reps.push(rep(s.into_bytes(), cut));
             }
-            (ReadKind::Html, Fetched::Bytes(raw)) => {
+            ReadKind::Html => {
                 let (b, cut) = text::utf8_capped(&raw, text_cap);
                 reps.push(rep(b, cut));
             }
-            (ReadKind::Rtf, Fetched::Bytes(raw)) => {
+            ReadKind::Rtf => {
                 let (b, cut) = text::bytes_capped(&raw, text_cap);
                 reps.push(rep(b, cut));
             }
-            (ReadKind::Png, Fetched::Bytes(raw)) => {
+            ReadKind::Png => {
                 // Not a PNG: that representation is skipped.
                 if let Some((w, h)) = png_dimensions(&raw) {
                     let mut r = rep(raw.to_vec(), false);
@@ -326,7 +324,7 @@ pub(crate) fn read_plan<O: ClipboardOs>(
                     reps.push(r);
                 }
             }
-            (ReadKind::Dib, Fetched::Bytes(raw)) => match dib::dib_to_png(&raw, image_cap) {
+            ReadKind::Dib => match dib::dib_to_png(&raw, image_cap) {
                 Ok(img) => {
                     let mut r = rep(img.png, false);
                     r.width = Some(img.width);
@@ -342,13 +340,15 @@ pub(crate) fn read_plan<O: ClipboardOs>(
                 // Unsupported layout or malformed header: that representation is skipped.
                 Err(dib::DibError::Unsupported(_) | dib::DibError::Malformed(_)) => {}
             },
-            (ReadKind::Files, Fetched::Files(files)) => {
-                let (list, cut) = text::uri_list(&files.names, text_cap);
-                if !list.is_empty() {
-                    reps.push(rep(list.into_bytes(), cut || files.more));
+            ReadKind::Files => {
+                // Malformed block: that representation is skipped.
+                if let Some(files) = text::parse_dropfiles(&raw, complete, text_cap) {
+                    let (list, cut) = text::uri_list(&files.names, text_cap);
+                    if !list.is_empty() {
+                        reps.push(rep(list.into_bytes(), cut || files.more));
+                    }
                 }
             }
-            _ => {}
         }
     }
     Ok(reps)
@@ -431,10 +431,6 @@ impl OpenClipboardView for win::ClipboardGuard {
     fn copy_data(&self, id: u32, max: usize) -> Option<Zeroizing<Vec<u8>>> {
         win::ClipboardGuard::copy_data(self, id, max)
     }
-
-    fn drop_files(&self, max_units: usize) -> Option<DropFiles> {
-        win::ClipboardGuard::drop_files(self, max_units)
-    }
 }
 
 /// Win32 clipboard access.
@@ -512,8 +508,6 @@ mod tests {
         size_calls: RefCell<Vec<u32>>,
         /// Every `(id, max)` passed to `copy_data`.
         copy_calls: RefCell<Vec<(u32, usize)>>,
-        /// Every `max_units` passed to `drop_files`.
-        drop_calls: RefCell<Vec<usize>>,
     }
 
     impl FakeOs {
@@ -535,7 +529,6 @@ mod tests {
                 files: Vec::new(),
                 size_calls: RefCell::new(Vec::new()),
                 copy_calls: RefCell::new(Vec::new()),
-                drop_calls: RefCell::new(Vec::new()),
             }
         }
 
@@ -554,11 +547,21 @@ mod tests {
             self
         }
 
+        /// The data of `id`: `CF_HDROP` is a DROPFILES block built from `files`.
+        fn content_of(&self, id: u32) -> Option<Vec<u8>> {
+            if id == CF_HDROP && !self.files.is_empty() {
+                return Some(crate::text::tests::dropfiles(&self.files, true));
+            }
+            self.content
+                .iter()
+                .find(|(i, _)| *i == id)
+                .map(|(_, b)| b.clone())
+        }
+
         /// Any data fetch at all (sizes, copies, file names, DWORDs).
         fn fetched_nothing(&self) -> bool {
             self.size_calls.borrow().is_empty()
                 && self.copy_calls.borrow().is_empty()
-                && self.drop_calls.borrow().is_empty()
                 && self.data_reads.borrow().is_empty()
         }
 
@@ -672,38 +675,16 @@ mod tests {
             if let Some((_, s)) = self.0.sizes.iter().find(|(i, _)| *i == id) {
                 return Some(*s);
             }
-            if id == CF_HDROP && !self.0.files.is_empty() {
-                return Some(1000);
-            }
             self.0
-                .content
-                .iter()
-                .find(|(i, _)| *i == id)
-                .map(|(_, b)| u64::try_from(b.len()).unwrap())
+                .content_of(id)
+                .map(|b| u64::try_from(b.len()).unwrap())
         }
 
         fn copy_data(&self, id: u32, max: usize) -> Option<Zeroizing<Vec<u8>>> {
             self.0.copy_calls.borrow_mut().push((id, max));
             self.0
-                .content
-                .iter()
-                .find(|(i, _)| *i == id)
-                .map(|(_, b)| Zeroizing::new(b[..b.len().min(max)].to_vec()))
-        }
-
-        fn drop_files(&self, max_units: usize) -> Option<DropFiles> {
-            self.0.drop_calls.borrow_mut().push(max_units);
-            let mut names = Vec::new();
-            let mut total = 0;
-            for f in &self.0.files {
-                let w: Vec<u16> = f.encode_utf16().collect();
-                if total + w.len() > max_units {
-                    return Some(DropFiles { names, more: true });
-                }
-                total += w.len();
-                names.push(Zeroizing::new(w));
-            }
-            Some(DropFiles { names, more: false })
+                .content_of(id)
+                .map(|b| Zeroizing::new(b[..b.len().min(max)].to_vec()))
         }
     }
 
@@ -802,7 +783,7 @@ mod tests {
         let copied: Vec<u32> = os.copy_calls.borrow().iter().map(|c| c.0).collect();
         assert_eq!(copied.len(), 2);
         assert!(copied.iter().all(|id| want.contains(id)));
-        assert!(os.drop_calls.borrow().is_empty());
+        assert!(!os.size_calls.borrow().contains(&CF_HDROP));
         assert!(os.data_reads.borrow().is_empty(), "no marker DWORDs");
         assert_eq!((os.opens.get(), os.closes.get()), (1, 1));
 
@@ -963,12 +944,44 @@ mod tests {
             "file:///C:/Users/Tu%E1%BA%A5n/a%20b.txt\r\nfile:///D:/x"
         );
         assert!(!reps[0].truncated);
-        assert_eq!(os.drop_calls.borrow().as_slice(), &[1000]);
+        // The DROPFILES block is copied (bounded) and parsed here, not by shell32.
+        let block_len = crate::text::tests::dropfiles(&os.files, true).len();
+        assert_eq!(
+            os.copy_calls.borrow().as_slice(),
+            &[(CF_HDROP, block_len.min(text::dropfiles_raw_limit(1000)))]
+        );
         let mut os = full_clipboard();
         os.files = vec![r"C:\a", r"C:\b"];
         let reps = read_with(&mut os, &plan(&[(Mime::UriList, "CF_HDROP")], 15, 0)).unwrap();
         assert_eq!(reps[0].bytes, b"file:///C:/a");
         assert!(reps[0].truncated);
+    }
+
+    #[test]
+    fn hdrop_malformed_block_skipped() {
+        // pFiles past the block: the representation is skipped, the text kept.
+        let mut block = crate::text::tests::dropfiles(&[r"C:\a"], true);
+        block[0..4].copy_from_slice(&5000u32.to_le_bytes());
+        let mut os = FakeOs::new();
+        os.std_data(CF_HDROP, block)
+            .std_data(CF_UNICODETEXT, utf16z("t"));
+        let p = plan(
+            &[
+                (Mime::TextPlain, "CF_UNICODETEXT"),
+                (Mime::UriList, "CF_HDROP"),
+            ],
+            1000,
+            0,
+        );
+        let reps = read_with(&mut os, &p).unwrap();
+        assert_eq!(reps.len(), 1);
+        assert_eq!(reps[0].mime, Mime::TextPlain);
+        // No terminator in a complete block: skipped as well.
+        let block = crate::text::tests::dropfiles(&[r"C:\a"], true);
+        let mut os = FakeOs::new();
+        os.std_data(CF_HDROP, block[..block.len() - 2].to_vec());
+        let reps = read_with(&mut os, &plan(&[(Mime::UriList, "CF_HDROP")], 1000, 0)).unwrap();
+        assert!(reps.is_empty());
     }
 
     #[test]
@@ -1267,6 +1280,43 @@ mod tests {
         let reps = retry(|| a.read(&p));
         assert_eq!(std::str::from_utf8(&reps[0].bytes).unwrap(), "Tiế");
         assert!(reps[0].truncated);
+    }
+
+    #[test]
+    #[ignore = "writes the real clipboard"]
+    fn real_clipboard_write_dib_reads_synthesized_dibv5() {
+        // A 2x1 32-bit BI_BITFIELDS CF_DIB; Windows synthesizes CF_DIBV5 from it (the layout
+        // where masks may follow the V5 header). Pixels: red, green.
+        let mut d = Vec::new();
+        for v in [40u32, 2, 1] {
+            d.extend_from_slice(&v.to_le_bytes());
+        }
+        d.extend_from_slice(&1u16.to_le_bytes());
+        d.extend_from_slice(&32u16.to_le_bytes());
+        d.extend_from_slice(&3u32.to_le_bytes()); // BI_BITFIELDS
+        d.extend_from_slice(&[0u8; 20]);
+        for m in [0x00FF_0000u32, 0x0000_FF00, 0x0000_00FF] {
+            d.extend_from_slice(&m.to_le_bytes());
+        }
+        d.extend_from_slice(&[0, 0, 255, 0, 0, 255, 0, 0]);
+        retry(|| win::test_support::write_dib(&d));
+        let mut a = WinAccess::new();
+        for name in ["CF_DIBV5", "CF_DIB"] {
+            let p = plan(&[(Mime::ImagePng, name)], 0, 1 << 20);
+            let reps = retry(|| a.read(&p));
+            assert_eq!(reps.len(), 1, "{name}");
+            assert_eq!(
+                (reps[0].width, reps[0].height),
+                (Some(2), Some(1)),
+                "{name}"
+            );
+            let mut dec = png::Decoder::new(std::io::Cursor::new(&reps[0].bytes[..]));
+            dec.set_transformations(png::Transformations::EXPAND);
+            let mut r = dec.read_info().unwrap();
+            let mut buf = vec![0; r.output_buffer_size().unwrap()];
+            r.next_frame(&mut buf).unwrap();
+            assert_eq!(buf[..8], [255, 0, 0, 255, 0, 255, 0, 255], "{name}");
+        }
     }
 
     #[test]

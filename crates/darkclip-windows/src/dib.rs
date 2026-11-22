@@ -91,7 +91,7 @@ impl Channel {
     }
 }
 
-/// Converts a packed DIB to PNG. `max_bytes` caps both the RGBA size (`width Ã— height Ã— 4`,
+/// Converts a packed DIB to PNG. `max_bytes` caps both the RGBA size (`width × height × 4`,
 /// checked before allocating) and the encoded PNG.
 pub(crate) fn dib_to_png(dib: &[u8], max_bytes: u64) -> Result<DibImage, DibError> {
     let header_size = u32_at(dib, 0).ok_or(SHORT)?;
@@ -161,13 +161,32 @@ pub(crate) fn dib_to_png(dib: &[u8], max_bytes: u64) -> Result<DibImage, DibErro
     let stride = (u64::from(w) * u64::from(bpp)).div_ceil(32) * 4;
     let image_len = stride * u64::from(h);
     let len = u64::try_from(dib.len()).unwrap_or(u64::MAX);
-    // Some writers append the three masks after a V4/V5 header as well: accept that layout
-    // only when the size matches it exactly.
-    if compression == BI_BITFIELDS
-        && header_len >= 52
-        && start.saturating_add(12).saturating_add(image_len) == len
-    {
-        start += 12;
+    // Some writers (and GDI synthesis) append the three masks after a V2+ header as well.
+    // `GlobalSize` may exceed the DIB, so the block size cannot tell; the layout is taken only
+    // when the 12 bytes after the header repeat the header's masks, the image still fits after
+    // them, and a non-zero `biSizeImage` does not contradict it.
+    let size_image = u64::from(u32_at(dib, 20).ok_or(SHORT)?);
+    if compression == BI_BITFIELDS && header_len >= 52 {
+        let after = usize::try_from(start)
+            .ok()
+            .and_then(|s| Some((s, s.checked_add(12)?)))
+            .and_then(|(s, e)| dib.get(s..e));
+        let mut repeated = [0u8; 12];
+        for (i, m) in [r_mask, g_mask, b_mask].into_iter().enumerate() {
+            if let Some(slot) = repeated.get_mut(i * 4..i * 4 + 4) {
+                slot.copy_from_slice(&m.to_le_bytes());
+            }
+        }
+        let image_room = if size_image != 0 {
+            size_image.max(image_len)
+        } else {
+            image_len
+        };
+        if after == Some(&repeated[..])
+            && start.saturating_add(12).saturating_add(image_room) <= len
+        {
+            start += 12;
+        }
     }
     if start.saturating_add(image_len) > len {
         return Err(DibError::Malformed(
@@ -216,22 +235,32 @@ pub(crate) fn dib_to_png(dib: &[u8], max_bytes: u64) -> Result<DibImage, DibErro
         }
     }
 
-    let png = encode_png(&rgba, w, h)?;
+    // Wiped on drop, so an over-cap encoding leaves no copy behind.
+    let mut png = encode_png(&rgba, w, h)?;
     let png_len = u64::try_from(png.len()).unwrap_or(u64::MAX);
     if png_len > max_bytes {
         return Err(DibError::TooLarge { bytes: png_len });
     }
     Ok(DibImage {
-        png,
+        png: std::mem::take(&mut *png),
         width: w,
         height: h,
     })
 }
 
-fn encode_png(rgba: &[u8], w: u32, h: u32) -> Result<Vec<u8>, DibError> {
-    let mut out = Vec::new();
+/// Encodes RGBA as PNG into a buffer wiped on drop. The buffer is reserved for the worst
+/// case (stored deflate blocks) so it does not reallocate and leave copies in freed memory.
+/// The encoder's own internal buffers are outside this crate's control.
+fn encode_png(rgba: &[u8], w: u32, h: u32) -> Result<Zeroizing<Vec<u8>>, DibError> {
+    let rows = usize::try_from(h).unwrap_or(usize::MAX);
+    let raw = rgba.len().saturating_add(rows); // one filter byte per row
+    let worst = raw
+        .saturating_add(raw / 16_000 * 5)
+        .saturating_add(raw / 1_000)
+        .saturating_add(1024);
+    let mut out = Zeroizing::new(Vec::with_capacity(worst));
     {
-        let mut enc = png::Encoder::new(&mut out, w, h);
+        let mut enc = png::Encoder::new(&mut *out, w, h);
         enc.set_color(png::ColorType::Rgba);
         enc.set_depth(png::BitDepth::Eight);
         let mut writer = enc
@@ -357,6 +386,96 @@ mod tests {
     }
 
     #[test]
+    fn dib_top_down_24bit() {
+        // 1x2 top-down: first row red, second row blue; rows padded to 4 bytes.
+        let px = [0, 0, 255, 0, 255, 0, 0, 0];
+        let img = dib_to_png(&dib(40, 1, -2, 24, BI_RGB, None, &px), BIG).unwrap();
+        let (w, h, rgba) = decode(&img.png);
+        assert_eq!((w, h), (1, 2));
+        assert_eq!(rgba, vec![255, 0, 0, 255, 0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn dib_24bit_odd_width() {
+        // 3x2 bottom-up: 9 pixel bytes + 3 padding bytes per row.
+        let mut px = Vec::new();
+        px.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 0xEE, 0xEE, 0xEE]); // bottom
+        px.extend_from_slice(&[10, 20, 30, 40, 50, 60, 70, 80, 90, 0xEE, 0xEE, 0xEE]); // top
+        let img = dib_to_png(&dib(40, 3, 2, 24, BI_RGB, None, &px), BIG).unwrap();
+        let (w, h, rgba) = decode(&img.png);
+        assert_eq!((w, h), (3, 2));
+        assert_eq!(
+            rgba,
+            vec![
+                30, 20, 10, 255, 60, 50, 40, 255, 90, 80, 70, 255, // top
+                3, 2, 1, 255, 6, 5, 4, 255, 9, 8, 7, 255, // bottom
+            ]
+        );
+    }
+
+    /// `d` with `biClrUsed = n` and an `n`-entry colour table inserted after the header
+    /// (and after the masks of a 40-byte BI_BITFIELDS header).
+    fn with_table(mut d: Vec<u8>, at: usize, n: u32) -> Vec<u8> {
+        d[32..36].copy_from_slice(&n.to_le_bytes());
+        let table: Vec<u8> = (0..n * 4).map(|i| 0xA0 | (i as u8 & 0x0F)).collect();
+        d.splice(at..at, table);
+        d
+    }
+
+    #[test]
+    fn dib_nonzero_clr_used_table_skipped() {
+        // 24-bit with a 2-entry optimisation palette.
+        let d = with_table(dib(40, 1, 1, 24, BI_RGB, None, &[1, 2, 3, 0]), 40, 2);
+        let (_, _, rgba) = decode(&dib_to_png(&d, BIG).unwrap().png);
+        assert_eq!(rgba, vec![3, 2, 1, 255]);
+        // 32-bit BI_RGB with a 3-entry palette.
+        let d = with_table(dib(40, 1, 1, 32, BI_RGB, None, &[4, 5, 6, 0]), 40, 3);
+        let (_, _, rgba) = decode(&dib_to_png(&d, BIG).unwrap().png);
+        assert_eq!(rgba, vec![6, 5, 4, 255]);
+        // 32-bit BI_BITFIELDS (40-byte header): masks, then the palette, then the pixels.
+        let masks = [0x00FF_0000, 0x0000_FF00, 0x0000_00FF, 0];
+        let d = with_table(
+            dib(40, 1, 1, 32, BI_BITFIELDS, Some(masks), &[7, 8, 9, 0]),
+            52,
+            1,
+        );
+        let (_, _, rgba) = decode(&dib_to_png(&d, BIG).unwrap().png);
+        assert_eq!(rgba, vec![9, 8, 7, 255]);
+    }
+
+    #[test]
+    fn dibv5_repeated_masks_with_padded_block() {
+        // GlobalSize may exceed the DIB: masks repeated after the V5 header, then the pixels,
+        // then padding. The masks must not be read as pixels.
+        let masks = [0x00FF_0000, 0x0000_FF00, 0x0000_00FF, 0];
+        let mut d = dib(124, 2, -1, 32, BI_BITFIELDS, Some(masks), &[]);
+        for v in &masks[..3] {
+            d.extend_from_slice(&v.to_le_bytes());
+        }
+        d.extend_from_slice(&[1, 2, 3, 0, 4, 5, 6, 0]);
+        d.extend_from_slice(&[0u8; 16]);
+        let (_, _, rgba) = decode(&dib_to_png(&d, BIG).unwrap().png);
+        assert_eq!(rgba, vec![3, 2, 1, 255, 6, 5, 4, 255]);
+        // Same with biSizeImage set.
+        d[20..24].copy_from_slice(&8u32.to_le_bytes());
+        let (_, _, rgba) = decode(&dib_to_png(&d, BIG).unwrap().png);
+        assert_eq!(rgba, vec![3, 2, 1, 255, 6, 5, 4, 255]);
+        // No repeated masks, padded block: pixels start right after the header.
+        let mut d = dib(
+            124,
+            2,
+            -1,
+            32,
+            BI_BITFIELDS,
+            Some(masks),
+            &[1, 2, 3, 0, 4, 5, 6, 0],
+        );
+        d.extend_from_slice(&[0u8; 16]);
+        let (_, _, rgba) = decode(&dib_to_png(&d, BIG).unwrap().png);
+        assert_eq!(rgba, vec![3, 2, 1, 255, 6, 5, 4, 255]);
+    }
+
+    #[test]
     fn dib_1x1() {
         let img = dib_to_png(&dib(40, 1, 1, 24, BI_RGB, None, &[1, 2, 3, 0]), BIG).unwrap();
         assert_eq!((img.width, img.height), (1, 1));
@@ -367,7 +486,7 @@ mod tests {
 
     #[test]
     fn dib_16k_wide_too_large() {
-        // 16 384 Ã— 16 384 Ã— 4 = 1 GiB of RGBA: refused before allocating or reading pixels
+        // 16 384 × 16 384 × 4 = 1 GiB of RGBA: refused before allocating or reading pixels
         // (no pixel data is even present).
         let d = dib(40, 16_384, 16_384, 32, BI_RGB, None, &[]);
         assert_eq!(
@@ -376,7 +495,8 @@ mod tests {
                 bytes: 16_384 * 16_384 * 4
             })
         );
-        // Just at the cap is fine; one byte under is not.
+        // A cap that holds the RGBA (8 bytes) and the encoded PNG is fine; a cap below the
+        // RGBA size is refused with that size.
         let d = dib(40, 2, 1, 32, BI_RGB, None, &[0; 8]);
         assert!(dib_to_png(&d, 8 + 200).is_ok());
         assert!(matches!(
