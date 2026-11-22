@@ -19,7 +19,7 @@ Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers sub
 | 003 Core policy | task/003-core-policy | specialist | opus | done | 95,465 | 58,907 (security-reviewer opus: APPROVED) | 0 | 154,372 |
 | 004 Classify, hash | task/004-core-classify-hash | builder | sonnet | done | 79,309 | 27,404 (reviewer sonnet: APPROVED) | 83,194 | 189,907 |
 | 005 Sensitive detection | task/005-core-sensitive | specialist | opus | in progress | | | | |
-| 006 Platform traits, fake | task/006-platform-traits-fake | builder | sonnet | pending | | | | |
+| 006 Platform traits, fake | task/006-platform-traits-fake | builder | sonnet | in progress | | | | |
 | 007 Storage schema | task/007-storage-schema | specialist | opus | pending | | | | |
 | 008 Storage search | task/008-storage-search | builder | sonnet | pending | | | | |
 | 009 Storage retention | task/009-storage-retention | builder | sonnet | pending | | | | |
