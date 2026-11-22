@@ -13,7 +13,7 @@ apps/desktop (Slint)   darkclip-cli (P2)   darkclip-mcp (P2)
 Portable crates (core, platform, storage, app) have no OS, UI or async dependencies (`check.ps1`).
 
 ## Patterns to follow
-- **Single clipboard actor:** only `capture.rs` touches the OS clipboard. Signals are hints; the sequence number is the truth. Debounce 75 ms; source captured at the first signal.
+- **Single clipboard actor:** only the capture actor (`crates/darkclip-app/src/capture/`) touches the OS clipboard. Signals are hints; the sequence number is the truth. Debounce 75 ms; source captured at the first signal.
 - **Policy before read:** `policy::decide_pre_read` (pure) decides from format names, markers, source and mode. Adapters report and never decide.
 - **Single DB writer:** the desktop app writes; CLI/MCP open read-only and send mutations over IPC (P2).
 - **Content-free observability:** manual `Debug`, `Redacted<T>`, no logging macros in privacy modules, skip counters instead of logs.

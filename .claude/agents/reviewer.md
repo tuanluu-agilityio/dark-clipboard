@@ -17,7 +17,7 @@ Branch `task/NNN-...` and package `docs/tasks/NNN-....md`.
 2. Inspect changes: `git diff main...HEAD` and `git log main..HEAD --oneline`.
 3. Run the check script and record the real result.
 4. Check, in order of importance:
-   - Global-constraint violations: OS/UI/async crates in portable crates; clipboard access outside `capture.rs`; content in logs, errors or `Debug`; configurable mandatory markers; network access.
+   - Global-constraint violations: OS/UI/async crates in portable crates; clipboard access outside `crates/darkclip-app/src/capture/`; content in logs, errors or `Debug`; configurable mandatory markers; network access.
    - Correctness: behaviour that differs from the package or spec; unhandled edge cases; handle leaks; possible panics in release paths (`panic = "abort"` kills the tray app).
    - Tests: every package test exists with exactly the stated assertions; nothing weakened, skipped or ignored beyond what the package marks.
    - Contract: names and signatures in "Interfaces" match exactly.

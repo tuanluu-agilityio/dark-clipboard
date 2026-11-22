@@ -1,0 +1,253 @@
+//! CaptureActor: the single serialized clipboard worker (system-overview §2 rules 1–7).
+//!
+//! One thread owns the platform's `ClipboardAccess`, the monitor and the `Storage` handle.
+//! It is the only code that calls `ClipboardAccess::read` (after `Decision::Read`) and
+//! `ClipboardAccess::write` (GC-03). A small forwarder thread moves the monitor's change
+//! signals into the actor's queue so that one `recv_timeout` loop serves both signals and
+//! commands; the forwarder never touches the clipboard.
+//!
+//! Privacy order per change: settings and self-write gate (no clipboard access at all) →
+//! `snapshot_meta` (names, markers, source; never content) → `decide_pre_read` → `read` →
+//! `classify` → kind check → sensitive scan → decode and hash → store. This module never logs (GC-06):
+//! events carry ids, skip reasons and static text only.
+//!
+//! Layout: this file holds the public API (`CaptureHandle`, `ActorCommand`) and spawns the
+//! actor; `actor` (thread, run loop, gates, commands), `pending` (debounce, burst, supersede
+//! chain, heir, carried, excluded_recent), `pipeline` (snapshot → `decide_pre_read` → read →
+//! classify → sensitive → decode/hash → store), `copy_back`, `retention` and `wipe`. Every
+//! file under `capture/` is held to GC-03 (the only clipboard read/write path) and GC-06 (no
+//! logging).
+
+mod actor;
+mod copy_back;
+mod pending;
+mod pipeline;
+mod retention;
+#[cfg(test)]
+mod tests;
+mod wipe;
+
+use crate::config::CaptureConfig;
+use crate::events::{ApiError, AppEvent, SkipCounters};
+use actor::Actor;
+use darkclip_core::{CaptureMode, ClipId, Clock, Lang, PrivacyPolicy, RetentionPolicy};
+use darkclip_platform::{ChangeSignal, PlatformBundle};
+use darkclip_storage::Storage;
+#[cfg(test)]
+use darkclip_storage::StorageError;
+use pending::MAX_BURST_WAIT;
+#[cfg(test)]
+use std::sync::atomic::AtomicU32;
+use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+#[derive(Debug)]
+///
+/// Commands with a `reply` carry a `deadline`: the actor skips one that is already late, with
+/// no side effect, because its caller has given up. A caller that times out while the actor
+/// is executing the command cannot tell whether it ran: the outcome is unknown.
+pub enum ActorCommand {
+    /// Writes a stored clip back to the clipboard (`plain`: text/plain only).
+    CopyBack {
+        id: ClipId,
+        plain: bool,
+        deadline: Instant,
+        reply: Sender<Result<(), ApiError>>,
+    },
+    SetMode(CaptureMode),
+    /// Language for masked previews stored from now on.
+    SetLang(Lang),
+    /// Pin or unpin. Masked clips are rejected (pinning would not extend their expiry).
+    SetPinned {
+        id: ClipId,
+        pinned: bool,
+        deadline: Instant,
+        reply: Sender<Result<(), ApiError>>,
+    },
+    DeleteClip {
+        id: ClipId,
+        deadline: Instant,
+        reply: Sender<Result<(), ApiError>>,
+    },
+    /// Deletes the history; replies with the number of clips removed.
+    ClearHistory {
+        keep_pinned: bool,
+        deadline: Instant,
+        reply: Sender<Result<u64, ApiError>>,
+    },
+    UpdatePolicy(PrivacyPolicy, RetentionPolicy),
+    /// Processes every command queued before it, stops the monitor and ends the actor.
+    Shutdown {
+        reply: Sender<()>,
+    },
+}
+
+/// Retention instrumentation: an attempt counter, and (tests only) forced failure.
+#[derive(Default)]
+struct RetentionHooks {
+    #[cfg(test)]
+    attempts: AtomicU32,
+    #[cfg(test)]
+    fail: std::sync::atomic::AtomicBool,
+    /// Tests: errors the next `upsert_clip` calls return, in order, before touching storage.
+    #[cfg(test)]
+    inject: Mutex<std::collections::VecDeque<StorageError>>,
+    /// Tests: `next_expiry` fails after a successful retention.
+    #[cfg(test)]
+    expiry_fail: std::sync::atomic::AtomicBool,
+    /// Tests: the actor stalls this long when it dequeues the signal for this seq (as if
+    /// preempted), before it looks at the clock.
+    #[cfg(test)]
+    stall_on_signal: Mutex<Option<(u64, Duration)>>,
+}
+
+/// What the actor's queue carries.
+enum Msg {
+    Cmd(ActorCommand),
+    Signal(ChangeSignal),
+    MonitorGone,
+}
+
+/// Owner side of the capture actor.
+pub struct CaptureHandle {
+    tx: Option<Sender<Msg>>,
+    join: Option<JoinHandle<()>>,
+    counters: Arc<Mutex<SkipCounters>>,
+    #[cfg(test)]
+    hooks: Arc<RetentionHooks>,
+}
+
+impl CaptureHandle {
+    /// Starts the actor thread, which starts the monitor and runs retention once.
+    pub fn spawn(
+        bundle: PlatformBundle,
+        storage: Storage,
+        clock: Arc<dyn Clock>,
+        cfg: CaptureConfig,
+        policy: PrivacyPolicy,
+        retention: RetentionPolicy,
+        events: Sender<AppEvent>,
+    ) -> Result<Self, ApiError> {
+        Self::spawn_inner(
+            bundle,
+            storage,
+            clock,
+            cfg,
+            policy,
+            retention,
+            events,
+            MAX_BURST_WAIT,
+        )
+    }
+
+    /// `spawn` with the burst cap as a parameter (tests shorten it).
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_inner(
+        bundle: PlatformBundle,
+        storage: Storage,
+        clock: Arc<dyn Clock>,
+        cfg: CaptureConfig,
+        policy: PrivacyPolicy,
+        retention: RetentionPolicy,
+        events: Sender<AppEvent>,
+        max_burst_wait: Duration,
+    ) -> Result<Self, ApiError> {
+        let (tx, rx) = mpsc::channel::<Msg>();
+        let (ready_tx, ready_rx) = mpsc::channel::<Result<(), ApiError>>();
+        let counters = Arc::new(Mutex::new(SkipCounters::default()));
+        let hooks = Arc::new(RetentionHooks::default());
+        let PlatformBundle {
+            monitor,
+            access,
+            source,
+            ..
+        } = bundle;
+        let actor = Actor {
+            monitor,
+            access,
+            source,
+            storage,
+            clock,
+            cfg,
+            max_burst_wait,
+            policy,
+            retention,
+            events,
+            counters: Arc::clone(&counters),
+            hooks: Arc::clone(&hooks),
+            last_processed_seq: None,
+            last_self_write_seq: None,
+            pending: None,
+            carried: None,
+            excluded_recent: None,
+            next_retention: Instant::now(),
+            next_expiry: None,
+            retention_retry_at: None,
+            retention_backoff: None,
+        };
+        let fwd_tx = tx.clone();
+        #[cfg(not(test))]
+        drop(hooks);
+        let join = std::thread::Builder::new()
+            .name("darkclip-capture".into())
+            .spawn(move || actor.start(fwd_tx, rx, ready_tx))
+            .map_err(|_| ApiError::Internal)?;
+        match ready_rx.recv() {
+            Ok(Ok(())) => Ok(Self {
+                tx: Some(tx),
+                join: Some(join),
+                counters,
+                #[cfg(test)]
+                hooks,
+            }),
+            Ok(Err(e)) => {
+                let _ = join.join();
+                Err(e)
+            }
+            Err(_) => {
+                let _ = join.join();
+                Err(ApiError::Internal)
+            }
+        }
+    }
+
+    pub fn send(&self, cmd: ActorCommand) -> Result<(), ApiError> {
+        let tx = self.tx.as_ref().ok_or(ApiError::AppNotRunning)?;
+        tx.send(Msg::Cmd(cmd)).map_err(|_| ApiError::AppNotRunning)
+    }
+
+    /// A copy of the in-memory skip counters (for `get_storage_stats`, Task 011).
+    pub fn skip_counters(&self) -> SkipCounters {
+        self.counters
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Drains queued commands, stops the monitor and joins the actor within `deadline`
+    /// (callers use 2 s). On timeout the actor thread is left to finish on its own.
+    pub fn shutdown(mut self, deadline: Duration) -> Result<(), ApiError> {
+        let (reply, done) = mpsc::channel();
+        let sent = self.send(ActorCommand::Shutdown { reply });
+        self.tx = None;
+        sent?;
+        done.recv_timeout(deadline)
+            .map_err(|_| ApiError::Internal)?;
+        match self.join.take() {
+            Some(j) => j.join().map_err(|_| ApiError::Internal),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for CaptureHandle {
+    /// Dropped without `shutdown`: ask the actor to stop, without blocking the caller.
+    fn drop(&mut self) {
+        if let Some(tx) = self.tx.take() {
+            let (reply, _done) = mpsc::channel();
+            let _ = tx.send(Msg::Cmd(ActorCommand::Shutdown { reply }));
+        }
+    }
+}

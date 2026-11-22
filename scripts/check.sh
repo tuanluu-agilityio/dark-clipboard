@@ -26,7 +26,7 @@ rs_files() { find crates apps -name '*.rs' -not -path '*/target/*' 2>/dev/null; 
 
 echo "== no logging in privacy-critical modules (GC-06)"
 # Also the platform adapters and the app's image decoder (Task 110).
-hits="$(rs_files | grep -E '^(crates/darkclip-app/src/capture\.rs|crates/darkclip-app/src/image\.rs|crates/darkclip-core/src/policy\.rs|crates/darkclip-core/src/sensitive/.*\.rs|crates/darkclip-(windows|macos|linux)/src/.*\.rs)$' \
+hits="$(rs_files | grep -E '^(crates/darkclip-app/src/capture/.*\.rs|crates/darkclip-app/src/image\.rs|crates/darkclip-core/src/policy\.rs|crates/darkclip-core/src/sensitive/.*\.rs|crates/darkclip-(windows|macos|linux)/src/.*\.rs)$' \
   | xargs -r grep -nE '\b(e?println|e?print|dbg)!|\b(log|tracing)::(trace|debug|info|warn|error)!|\b(trace|debug|info|warn|error)!\s*\(' || true)"
 [ -z "$hits" ] || { echo "CHECK FAILED: logging macro:"; echo "$hits"; exit 1; }
 
@@ -38,11 +38,11 @@ hits="$(find apps -path '*/src/*' -name '*.rs' -not -path '*/target/*' 2>/dev/nu
 [ -z "$hits" ] || { echo "CHECK FAILED: content-like word in log/print line:"; echo "$hits"; exit 1; }
 
 echo "== clipboard read/write only from the capture actor (GC-03)"
-hits="$(rs_files | grep -vE '^(crates/darkclip-app/src/capture\.rs|crates/darkclip-platform/src/.*|crates/darkclip-(windows|macos|linux)/src/.*)$' \
+hits="$(rs_files | grep -vE '^(crates/darkclip-app/src/capture/.*|crates/darkclip-platform/src/.*|crates/darkclip-(windows|macos|linux)/src/.*)$' \
   | xargs -r grep -nE '\b(access|acc|clipboard_access)\s*\.\s*(read|write)\s*\(' || true)"
 [ -z "$hits" ] || { echo "CHECK FAILED: clipboard access outside capture actor:"; echo "$hits"; exit 1; }
 # Hardening (Task 010 review): ClipboardAccess type or `.access` field outside the allowed files; comment lines ignored.
-hits="$(rs_files | grep -vE '^(crates/darkclip-app/src/capture\.rs|crates/darkclip-platform/src/.*|crates/darkclip-(windows|macos|linux)/src/.*)$' \
+hits="$(rs_files | grep -vE '^(crates/darkclip-app/src/capture/.*|crates/darkclip-platform/src/.*|crates/darkclip-(windows|macos|linux)/src/.*)$' \
   | xargs -r grep -nE '\bClipboardAccess\b|\.access\b|\baccess[[:space:]]*:' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)"
 [ -z "$hits" ] || { echo "CHECK FAILED: ClipboardAccess used outside capture actor:"; echo "$hits"; exit 1; }
 

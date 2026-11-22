@@ -6,13 +6,13 @@ Every task package links here. A reviewer treats a violation as **blocking**.
 
 - GC-01 `darkclip-core`, `darkclip-platform`, `darkclip-storage`, `darkclip-app` must not depend on `windows`, `windows-sys`, `objc2*`, `core-foundation*`, `x11rb`, `wayland-*`, `gtk*`, `slint`, `tauri*`, `tokio`. `check.ps1` enforces this with `cargo tree`.
 - GC-02 `darkclip-core` performs no I/O: no filesystem, no network, no clock (time comes through the `Clock` trait), no environment variables. OS entropy for the random bits of UUID v7 ids (`uuid` → `getrandom`) is allowed; ids are therefore not deterministic (D-017).
-- GC-03 Only `darkclip-app/src/capture.rs` may call `ClipboardAccess::read` or `ClipboardAccess::write`, and only after a `Decision::Read` from `darkclip_core::policy::decide_pre_read` (for reads). `check.ps1` enforces this.
+- GC-03 Only the capture actor, `darkclip-app/src/capture/` (any file in that directory), may call `ClipboardAccess::read` or `ClipboardAccess::write`, and only after a `Decision::Read` from `darkclip_core::policy::decide_pre_read` (for reads). `check.ps1` enforces this. (Changed by D-044, 2026-11-23: `capture.rs` was split into the `capture/` directory by Task 200.)
 - GC-04 Adapters contain no policy decisions (they report markers; they never skip).
 - GC-05 No async runtime in P0/P1. Threads and `std::sync::mpsc` only.
 
 ## Privacy and security
 
-- GC-06 Never log, print, `Debug`-format, or include in error messages: clip content, previews, file paths from `files` clips, search queries, window titles. Model types implement `Debug` manually. No `println!`, `eprintln!`, `dbg!` or `log`/`tracing` macros in `darkclip-app/src/capture.rs`, `darkclip-core/src/sensitive/`, `darkclip-core/src/policy.rs` (check enforced).
+- GC-06 Never log, print, `Debug`-format, or include in error messages: clip content, previews, file paths from `files` clips, search queries, window titles. Model types implement `Debug` manually. No `println!`, `eprintln!`, `dbg!` or `log`/`tracing` macros in any file under `darkclip-app/src/capture/`, `darkclip-core/src/sensitive/`, `darkclip-core/src/policy.rs` (check enforced). (Changed by D-044, 2026-11-23: was `darkclip-app/src/capture.rs` before Task 200.)
 - GC-07 The mandatory marker list (`docs/security/privacy-design.md` §3) is never made configurable. No flag, setting, env var or debug mode bypasses it.
 - GC-08 No network access in any crate in P0/P1. No telemetry. No crash upload.
 - GC-09 Test data is synthetic. Secret-shaped test strings are assembled at runtime (`concat!`/`format!`) so secret scanners do not fire (Darkshot practice).

@@ -46,7 +46,7 @@ function Rel($f) { $f.FullName.Substring($root.Length + 1).Replace('\', '/') }
 Write-Host '== no logging in privacy-critical modules (GC-06)'
 $logPattern = '\b(e?println|e?print|dbg)!|\b(log|tracing)::(trace|debug|info|warn|error)!|\b(trace|debug|info|warn|error)!\s*\('
 # Also the platform adapters and the app's image decoder (Task 110).
-$quiet = '^(crates/darkclip-app/src/capture\.rs|crates/darkclip-app/src/image\.rs|crates/darkclip-core/src/policy\.rs|crates/darkclip-core/src/sensitive/.*\.rs|crates/darkclip-(windows|macos|linux)/src/.*\.rs)$'
+$quiet = '^(crates/darkclip-app/src/capture/.*\.rs|crates/darkclip-app/src/image\.rs|crates/darkclip-core/src/policy\.rs|crates/darkclip-core/src/sensitive/.*\.rs|crates/darkclip-(windows|macos|linux)/src/.*\.rs)$'
 $bad = $false
 foreach ($f in $rs) {
     $rel = Rel $f
@@ -73,10 +73,10 @@ foreach ($f in $rs) {
 if ($bad) { exit 1 }
 
 Write-Host '== clipboard read/write only from the capture actor (GC-03)'
-# Calls like `.read(&plan)` / `.write(&reps)` on ClipboardAccess are allowed only in capture.rs, the adapters
+# Calls like `.read(&plan)` / `.write(&reps)` on ClipboardAccess are allowed only under capture/, the adapters
 # (which implement them) and the platform crate's fake. Heuristic: method call on a variable named access/acc.
 $accessCall = '\b(access|acc|clipboard_access)\s*\.\s*(read|write)\s*\('
-$allowed = '^(crates/darkclip-app/src/capture\.rs|crates/darkclip-platform/src/.*|crates/darkclip-(windows|macos|linux)/src/.*)$'
+$allowed = '^(crates/darkclip-app/src/capture/.*|crates/darkclip-platform/src/.*|crates/darkclip-(windows|macos|linux)/src/.*)$'
 foreach ($f in $rs) {
     $rel = Rel $f
     if ($rel -match $allowed) { continue }
