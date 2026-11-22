@@ -17,7 +17,7 @@ Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers sub
 | 001 Workspace bootstrap | task/001-workspace-bootstrap | scaffolder | sonnet | done | 59,266 | 29,555 (reviewer sonnet; fix verified by orchestrator) | 65,321 | 154,142 |
 | 002 Core model, i18n | task/002-core-model-i18n | builder | sonnet | done | 97,136 | 47,499 (reviewer sonnet: APPROVED) | 102,081 | 246,716 |
 | 003 Core policy | task/003-core-policy | specialist | opus | in progress | | | | |
-| 004 Classify, hash | task/004-core-classify-hash | builder | sonnet | in progress | | | | |
+| 004 Classify, hash | task/004-core-classify-hash | builder | sonnet | done | 79,309 | 27,404 (reviewer sonnet: APPROVED) | 83,194 | 189,907 |
 | 005 Sensitive detection | task/005-core-sensitive | specialist | opus | in progress | | | | |
 | 006 Platform traits, fake | task/006-platform-traits-fake | builder | sonnet | pending | | | | |
 | 007 Storage schema | task/007-storage-schema | specialist | opus | pending | | | | |
@@ -32,5 +32,5 @@ Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers sub
 | Model | Tokens |
 |---|---|
 | opus | 0 |
-| sonnet | 400,858 |
+| sonnet | 590,765 |
 | haiku | 0 |
