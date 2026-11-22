@@ -54,9 +54,20 @@ impl std::error::Error for ApiError {}
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SkipCounters {
     counts: HashMap<SkipReason, u64>,
+    /// Reads discarded because the clipboard changed between snapshot and read.
+    changed_during_read: u64,
 }
 
 impl SkipCounters {
+    pub fn count_changed_during_read(&mut self) {
+        self.changed_during_read = self.changed_during_read.saturating_add(1);
+    }
+
+    /// Not a `SkipReason`: no event is sent (the newer change brings its own signal).
+    pub fn changed_during_read(&self) -> u64 {
+        self.changed_during_read
+    }
+
     pub fn increment(&mut self, reason: SkipReason) {
         let n = self.counts.entry(reason).or_insert(0);
         *n = n.saturating_add(1);
@@ -91,6 +102,9 @@ mod tests {
         assert_eq!(c.get(SkipReason::Paused), 0);
         assert_eq!(c.total(), 3);
         assert_eq!(c.iter().count(), 2);
+        c.count_changed_during_read();
+        assert_eq!(c.changed_during_read(), 1);
+        assert_eq!(c.total(), 3);
     }
 
     #[test]

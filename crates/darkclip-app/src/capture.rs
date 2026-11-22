@@ -16,17 +16,17 @@ use crate::events::{ApiError, AppEvent, SkipCounters};
 use darkclip_core::policy::{
     decide_pre_read, AvailableFormat, Decision, PreReadInput, SizeCaps, SkipReason,
 };
-use darkclip_core::sensitive::{masked_preview, scan, MaskHint, ScanResult};
+use darkclip_core::sensitive::{masked_preview, scan, MaskHint, ScanResult, MAX_SCAN_BYTES};
 use darkclip_core::{
     canonical_hash, classify, CaptureMode, ClipId, ClipboardSource, Clock, Lang, Mime,
-    PrivacyPolicy, RawRepresentation, RetentionPolicy, SensitiveHandling, Sensitivity,
-    SensitivityLevel, Timestamp,
+    PrivacyPolicy, RawRepresentation, RetentionPolicy, SensitiveCategory, SensitiveHandling,
+    Sensitivity, SensitivityLevel, Timestamp,
 };
 use darkclip_platform::{
     ChangeSignal, ClipboardAccess, ClipboardMeta, ClipboardMonitor, PlatformBundle, PlatformError,
     SourceResolver,
 };
-use darkclip_storage::{NewClip, Storage, StorageError, UpsertOutcome};
+use darkclip_storage::{NewClip, SearchQuery, Storage, StorageError, UpsertOutcome};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
@@ -34,6 +34,9 @@ use std::time::{Duration, Instant};
 
 /// Retention runs on start, after an insert that exceeds a limit, and at this interval.
 const RETENTION_EVERY: Duration = Duration::from_secs(10 * 60);
+
+/// Longest wait from the first signal of a burst, so a noisy writer cannot starve capture.
+const MAX_BURST_WAIT: Duration = Duration::from_millis(500);
 
 /// Language of stored masked previews. The UI language arrives with settings (Task 011).
 const MASK_LANG: Lang = Lang::En;
@@ -79,6 +82,30 @@ impl CaptureHandle {
         retention: RetentionPolicy,
         events: Sender<AppEvent>,
     ) -> Result<Self, ApiError> {
+        Self::spawn_inner(
+            bundle,
+            storage,
+            clock,
+            cfg,
+            policy,
+            retention,
+            events,
+            MAX_BURST_WAIT,
+        )
+    }
+
+    /// `spawn` with the burst cap as a parameter (tests shorten it).
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_inner(
+        bundle: PlatformBundle,
+        storage: Storage,
+        clock: Arc<dyn Clock>,
+        cfg: CaptureConfig,
+        policy: PrivacyPolicy,
+        retention: RetentionPolicy,
+        events: Sender<AppEvent>,
+        max_burst_wait: Duration,
+    ) -> Result<Self, ApiError> {
         let (tx, rx) = mpsc::channel::<Msg>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), ApiError>>();
         let counters = Arc::new(Mutex::new(SkipCounters::default()));
@@ -95,6 +122,7 @@ impl CaptureHandle {
             storage,
             clock,
             cfg,
+            max_burst_wait,
             policy,
             retention,
             events,
@@ -104,6 +132,7 @@ impl CaptureHandle {
             pending: None,
             carried: None,
             next_retention: Instant::now(),
+            expiries: Vec::new(),
         };
         let fwd_tx = tx.clone();
         let join = std::thread::Builder::new()
@@ -197,6 +226,54 @@ fn gate_without_formats(
     }
 }
 
+/// `decide_pre_read` with the primary source, then the excluded-app check against every
+/// other source seen for the same change: if any of them is excluded, the change is skipped.
+/// Steps before the app check do not depend on the source, so precedence is unchanged.
+fn decide_all_sources(input: &PreReadInput<'_>, others: &[&ClipboardSource]) -> Decision {
+    let d = decide_pre_read(input);
+    for other in others {
+        let alt = decide_pre_read(&PreReadInput {
+            source: Some(*other),
+            ..*input
+        });
+        if alt == Decision::Skip(SkipReason::ExcludedApp) {
+            return alt;
+        }
+    }
+    d
+}
+
+/// Sensitive scan of the clip's text: the plain text, or, when that is empty, the HTML/RTF
+/// bodies decoded as lossy UTF-8 (at most `MAX_SCAN_BYTES` each, like the plain text).
+fn scan_clip(
+    plain: Option<&str>,
+    reps: &[RawRepresentation],
+    enabled: &[SensitiveCategory],
+) -> ScanResult {
+    if let Some(t) = plain.filter(|t| !t.trim().is_empty()) {
+        return scan(t, enabled);
+    }
+    let mut out = ScanResult::default();
+    for r in reps
+        .iter()
+        .filter(|r| matches!(r.mime, Mime::TextHtml | Mime::TextRtf))
+    {
+        let n = r.bytes.len().min(MAX_SCAN_BYTES);
+        let mut text = String::from_utf8_lossy(r.bytes.get(..n).unwrap_or_default()).into_owned();
+        let found = scan(&text, enabled);
+        wipe_string(&mut text);
+        for c in found.categories {
+            if !out.categories.contains(&c) {
+                out.categories.push(c);
+            }
+        }
+        if out.mask_hint.is_none() {
+            out.mask_hint = found.mask_hint;
+        }
+    }
+    out
+}
+
 fn size_caps(r: &RetentionPolicy) -> SizeCaps {
     SizeCaps {
         text_max_bytes: u64::from(r.text_max_kb).saturating_mul(1024),
@@ -241,8 +318,10 @@ fn wipe_reps(reps: &mut [RawRepresentation]) {
 /// A burst of change signals that is waiting for its quiet period.
 struct Pending {
     seq: u64,
-    /// Source at the first signal of the burst (the owner may be gone by the last one).
+    /// Source at the first signal for `seq` (the owner may be gone by the last one).
     source: Option<ClipboardSource>,
+    /// First signal of the burst, for the `max_burst_wait` cap.
+    first_at: Instant,
     due: Instant,
 }
 
@@ -253,6 +332,7 @@ struct Actor {
     storage: Storage,
     clock: Arc<dyn Clock>,
     cfg: CaptureConfig,
+    max_burst_wait: Duration,
     policy: PrivacyPolicy,
     retention: RetentionPolicy,
     events: Sender<AppEvent>,
@@ -264,6 +344,9 @@ struct Actor {
     /// later burst with the same sequence number.
     carried: Option<(u64, Option<ClipboardSource>)>,
     next_retention: Instant,
+    /// Expiry times (clock time) of masked clips not yet removed; retention runs at the
+    /// earliest one so a masked clip does not outlive its TTL.
+    expiries: Vec<Timestamp>,
 }
 
 impl Actor {
@@ -295,15 +378,16 @@ impl Actor {
         }
         let _ = ready.send(Ok(()));
         self.run_retention();
+        self.load_expiries();
         self.run(&rx);
     }
 
     fn run(&mut self, rx: &Receiver<Msg>) {
         loop {
-            let wake = match &self.pending {
-                Some(p) => p.due.min(self.next_retention),
-                None => self.next_retention,
-            };
+            let mut wake = self.next_retention.min(self.expiry_wake());
+            if let Some(p) = &self.pending {
+                wake = wake.min(p.due);
+            }
             match rx.recv_timeout(wake.saturating_duration_since(Instant::now())) {
                 Ok(Msg::Signal(s)) => self.on_signal(s),
                 Ok(Msg::Cmd(ActorCommand::Shutdown { reply })) => {
@@ -327,8 +411,59 @@ impl Actor {
                     self.process(p);
                 }
             }
-            if self.next_retention <= now {
+            if self.next_retention <= now || self.expiry_due() {
                 self.run_retention();
+            }
+        }
+    }
+
+    fn expiry_due(&self) -> bool {
+        let now = self.clock.now();
+        self.expiries.iter().any(|t| *t <= now)
+    }
+
+    /// Real-time estimate of the earliest expiry (the clock may be a test clock: the loop
+    /// also re-checks `expiry_due` after every message).
+    fn expiry_wake(&self) -> Instant {
+        let now = Instant::now();
+        let Some(next) = self.expiries.iter().min() else {
+            return self.next_retention;
+        };
+        let ms = u64::try_from(next.0.saturating_sub(self.clock.now().0)).unwrap_or(0);
+        now.checked_add(Duration::from_millis(ms))
+            .unwrap_or(self.next_retention)
+    }
+
+    /// Masked clips stored by an earlier run: their expiry times, for `expiries`.
+    fn load_expiries(&mut self) {
+        let mut cursor = None;
+        // Bounded: masked clips live minutes; 50 pages of 200 is far beyond normal.
+        for _ in 0..50 {
+            let q = SearchQuery {
+                text: None,
+                kinds: Vec::new(),
+                pinned_only: false,
+                since: None,
+                include_masked: true,
+                limit: 200,
+                cursor,
+            };
+            let Ok((rows, next)) = self.storage.search(&q) else {
+                return;
+            };
+            for r in rows
+                .iter()
+                .filter(|r| r.sensitivity == SensitivityLevel::Masked)
+            {
+                if let Ok(Some(clip)) = self.storage.get_clip(&r.id) {
+                    if let Some(t) = clip.expires_at {
+                        self.expiries.push(t);
+                    }
+                }
+            }
+            match next {
+                Some(c) => cursor = Some(c),
+                None => return,
             }
         }
     }
@@ -374,20 +509,40 @@ impl Actor {
             self.drop_gated(s.seq, reason);
             return;
         }
-        let due = Instant::now() + Duration::from_millis(self.cfg.debounce_ms);
-        if let Some(p) = &mut self.pending {
-            p.seq = s.seq;
-            p.due = due;
-            return;
+        let now = Instant::now();
+        if let Some(p) = &self.pending {
+            if p.seq == s.seq {
+                let due = self.due_at(now, p.first_at);
+                if let Some(p) = &mut self.pending {
+                    p.due = due;
+                }
+                return;
+            }
         }
+        // A stale signal for a change already handled must not discard a pending one.
         if self.last_processed_seq == Some(s.seq) {
             return;
         }
+        // A different change: never carry the previous change's source over to it. The
+        // burst start is kept so the cap still bounds the wait.
+        let first_at = self.pending.take().map_or(now, |p| p.first_at);
         self.pending = Some(Pending {
             seq: s.seq,
             source: self.source.resolve(),
-            due,
+            first_at,
+            due: self.due_at(now, first_at),
         });
+    }
+
+    /// Debounce deadline, capped at `max_burst_wait` after the burst's first signal.
+    fn due_at(&self, now: Instant, first_at: Instant) -> Instant {
+        let quiet = now
+            .checked_add(Duration::from_millis(self.cfg.debounce_ms))
+            .unwrap_or(now);
+        let cap = first_at
+            .checked_add(self.max_burst_wait)
+            .unwrap_or(first_at);
+        quiet.min(cap)
     }
 
     /// Calls `f` and retries while the clipboard is `Busy`, at most `open_retries` times.
@@ -450,7 +605,17 @@ impl Actor {
             Some((s, src)) if s == seq => src,
             _ => None,
         };
-        let source = carried.or(p.source).or(meta.source);
+        // Every source seen for this change; the first one seen is the primary.
+        let mut seen: Vec<ClipboardSource> = Vec::new();
+        for s in [carried, p.source, meta.source].into_iter().flatten() {
+            if !seen.contains(&s) {
+                seen.push(s);
+            }
+        }
+        let mut seen = seen.into_iter();
+        let source = seen.next();
+        let others: Vec<ClipboardSource> = seen.collect();
+        let others: Vec<&ClipboardSource> = others.iter().collect();
         let available: Vec<AvailableFormat> = meta
             .formats
             .iter()
@@ -463,19 +628,22 @@ impl Actor {
             })
             .collect();
         let now = self.clock.now();
-        let decision = decide_pre_read(&PreReadInput {
-            seq,
-            last_self_write_seq: self.last_self_write_seq,
-            mode: &self.policy.mode,
-            now,
-            capture_enabled: self.policy.capture_enabled,
-            markers: &meta.markers,
-            source: source.as_ref(),
-            excluded: &self.policy.excluded_apps,
-            available: &available,
-            enabled_kinds: &self.policy.capture_kinds,
-            caps: size_caps(&self.retention),
-        });
+        let decision = decide_all_sources(
+            &PreReadInput {
+                seq,
+                last_self_write_seq: self.last_self_write_seq,
+                mode: &self.policy.mode,
+                now,
+                capture_enabled: self.policy.capture_enabled,
+                markers: &meta.markers,
+                source: source.as_ref(),
+                excluded: &self.policy.excluded_apps,
+                available: &available,
+                enabled_kinds: &self.policy.capture_kinds,
+                caps: size_caps(&self.retention),
+            },
+            &others,
+        );
         let plan = match decision {
             Decision::Read(plan) => plan,
             Decision::Skip(SkipReason::NothingReadable) => {
@@ -506,6 +674,10 @@ impl Actor {
         // its own signal.
         if self.access.sequence().ok() != Some(seq) {
             wipe_reps(&mut reps);
+            self.counters
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .count_changed_during_read();
             return;
         }
         if reps.is_empty() {
@@ -531,11 +703,11 @@ impl Actor {
             self.skip(SkipReason::KindDisabled);
             return;
         }
-        let found: ScanResult = classified
-            .plain_text
-            .as_deref()
-            .map(|t| scan(t, &self.policy.sensitive_categories_enabled))
-            .unwrap_or_default();
+        let found = scan_clip(
+            classified.plain_text.as_deref(),
+            &reps,
+            &self.policy.sensitive_categories_enabled,
+        );
         let (sensitivity, expires_at) = if found.categories.is_empty() {
             (Sensitivity::default(), None)
         } else {
@@ -556,7 +728,7 @@ impl Actor {
                             .categories
                             .first()
                             .copied()
-                            .unwrap_or(darkclip_core::SensitiveCategory::Password),
+                            .unwrap_or(SensitiveCategory::Password),
                     });
                     let mut old = std::mem::replace(
                         &mut classified.preview,
@@ -592,6 +764,11 @@ impl Actor {
             expires_at,
             thumbnail_png: None,
         });
+        if outcome.is_ok() {
+            if let Some(t) = expires_at {
+                self.expiries.push(t);
+            }
+        }
         match outcome {
             Ok(UpsertOutcome::Inserted(id)) => {
                 self.emit(AppEvent::ClipAdded(id));
@@ -629,7 +806,10 @@ impl Actor {
     }
 
     fn run_retention(&mut self) {
-        if self.storage.apply_retention(&self.retention).is_err() {
+        if self.storage.apply_retention(&self.retention).is_ok() {
+            let now = self.clock.now();
+            self.expiries.retain(|t| *t > now);
+        } else {
             self.emit(AppEvent::Unavailable("retention failed"));
         }
         let now = Instant::now();
@@ -837,6 +1017,16 @@ mod tests {
         cfg: CaptureConfig,
         seed: impl FnOnce(&mut Storage),
     ) -> H {
+        start_full(policy, retention, cfg, MAX_BURST_WAIT, seed)
+    }
+
+    fn start_full(
+        policy: PrivacyPolicy,
+        retention: RetentionPolicy,
+        cfg: CaptureConfig,
+        max_burst_wait: Duration,
+        seed: impl FnOnce(&mut Storage),
+    ) -> H {
         let dir = tempfile::tempdir().unwrap();
         let clock = Arc::new(TestClock(AtomicI64::new(T0)));
         let dyn_clock: Arc<dyn Clock> = clock.clone();
@@ -845,7 +1035,7 @@ mod tests {
         seed(&mut storage);
         let (platform, fake) = FakePlatform::new();
         let (tx, events) = mpsc::channel();
-        let cap = CaptureHandle::spawn(
+        let cap = CaptureHandle::spawn_inner(
             platform.bundle(),
             storage,
             dyn_clock,
@@ -853,6 +1043,7 @@ mod tests {
             policy,
             retention,
             tx,
+            max_burst_wait,
         )
         .unwrap();
         H {
@@ -1252,12 +1443,368 @@ mod tests {
         h.fake.copy(text_copy("before shutdown"));
         h.wait_added();
         let cap = h.cap.take().unwrap();
+        // Queued before Shutdown: must be drained, not lost.
+        cap.send(ActorCommand::SetMode(CaptureMode::Private))
+            .unwrap();
         let t = Instant::now();
         cap.shutdown(Duration::from_secs(2)).unwrap();
         assert!(t.elapsed() < Duration::from_secs(2));
-        // The monitor was stopped: a later copy is not delivered anywhere.
+        // `shutdown` consumes the handle, so no later `send` can compile; the actor is gone:
+        // the drained event arrived and then the event channel closed.
+        assert_eq!(
+            h.events.recv_timeout(WAIT),
+            Ok(AppEvent::ModeChanged(CaptureMode::Private))
+        );
+        assert_eq!(
+            h.events.recv_timeout(WAIT),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        );
+        // The monitor was stopped: a later copy reaches nobody.
+        let (meta, reads) = (h.fake.snapshot_meta_calls(), h.fake.read_calls());
         h.fake.copy(text_copy("after shutdown"));
+        h.fake.signal_again(3);
+        assert_eq!(h.fake.snapshot_meta_calls(), meta);
+        assert_eq!(h.fake.read_calls(), reads);
         assert_eq!(h.clip_count(), 1);
+    }
+
+    fn slow_cfg() -> CaptureConfig {
+        // Wide enough that two back-to-back copies land in one debounce window.
+        CaptureConfig {
+            debounce_ms: 100,
+            ..test_cfg()
+        }
+    }
+
+    /// Waits until the actor has resolved the source `n` times (it has dequeued a signal).
+    fn wait_resolved(h: &H, n: u32) {
+        let deadline = Instant::now() + WAIT;
+        while h.fake.resolve_calls() < n {
+            assert!(Instant::now() < deadline, "source never resolved");
+            std::thread::yield_now();
+        }
+    }
+
+    fn excluded_copy(s: &str) -> FakeCopy {
+        let mut c = text_copy(s);
+        // In the default exclusion list; case differs on purpose (Windows match is insensitive).
+        c.source = Some(src("KeePassXC.exe"));
+        c
+    }
+
+    #[test]
+    fn excluded_app_after_other_copy_in_window_is_skipped() {
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            slow_cfg(),
+            |_| {},
+        );
+        let mut c = text_copy("notepad text");
+        c.source = Some(src("notepad.exe"));
+        h.fake.copy(c);
+        // The actor has taken the first signal and resolved notepad.exe; the window is open.
+        wait_resolved(&h, 1);
+        h.fake.copy(excluded_copy("vault entry"));
+        let seen = h.wait_skip(SkipReason::ExcludedApp);
+        assert!(no_store_events(&seen), "{seen:?}");
+        assert_eq!(h.fake.read_calls(), 0);
+        assert_eq!(h.clip_count(), 0);
+    }
+
+    #[test]
+    fn other_copy_after_excluded_app_in_window_is_not_mistagged() {
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            slow_cfg(),
+            |_| {},
+        );
+        h.fake.copy(excluded_copy("vault entry"));
+        wait_resolved(&h, 1);
+        let mut c = text_copy("notepad text");
+        c.source = Some(src("notepad.exe"));
+        h.fake.copy(c);
+        let (id, before) = h.wait_added();
+        // One window: the excluded change was superseded, never inspected on its own.
+        assert!(before.is_empty(), "{before:?}");
+        assert_eq!(h.fake.snapshot_meta_calls(), 1);
+        let clip = h.ro().get_clip(&id).unwrap().unwrap();
+        assert_eq!(clip.preview, "notepad text");
+        assert_eq!(
+            clip.source.as_ref().map(|s| s.app_id.as_str()),
+            Some("notepad.exe")
+        );
+    }
+
+    #[test]
+    fn excluded_app_matches_any_source_of_the_change() {
+        let policy = PrivacyPolicy::default();
+        let (notepad, vault) = (src("notepad.exe"), src("KeePassXC.exe"));
+        let available = [AvailableFormat {
+            mime: Mime::TextPlain,
+            platform_format: "CF_UNICODETEXT".into(),
+            size_hint: Some(4),
+        }];
+        let decide = |source: Option<&ClipboardSource>,
+                      markers: &[PrivacyMarker],
+                      others: &[&ClipboardSource]| {
+            decide_all_sources(
+                &PreReadInput {
+                    seq: 9,
+                    last_self_write_seq: None,
+                    mode: &policy.mode,
+                    now: Timestamp(T0),
+                    capture_enabled: true,
+                    markers,
+                    source,
+                    excluded: &policy.excluded_apps,
+                    available: &available,
+                    enabled_kinds: &policy.capture_kinds,
+                    caps: caps(),
+                },
+                others,
+            )
+        };
+        assert_eq!(
+            decide(Some(&notepad), &[], &[&vault]),
+            Decision::Skip(SkipReason::ExcludedApp)
+        );
+        assert_eq!(
+            decide(None, &[], &[&vault]),
+            Decision::Skip(SkipReason::ExcludedApp)
+        );
+        // Precedence unchanged: a mandatory marker still reports as concealed.
+        assert_eq!(
+            decide(
+                Some(&notepad),
+                &[PrivacyMarker::PasswordManagerHint],
+                &[&vault]
+            ),
+            Decision::Skip(SkipReason::OsConcealed)
+        );
+        assert!(matches!(
+            decide(Some(&notepad), &[], &[]),
+            Decision::Read(_)
+        ));
+    }
+
+    #[test]
+    fn excluded_source_seen_at_any_point_of_the_change_skips() {
+        // The first-signal source is excluded, the snapshot's owner is not (or is gone).
+        let h = start(PrivacyPolicy::default());
+        h.fake.copy(excluded_copy("vault entry"));
+        wait_resolved(&h, 1);
+        h.fake.clear_source();
+        let seen = h.wait_skip(SkipReason::ExcludedApp);
+        assert!(no_store_events(&seen), "{seen:?}");
+        assert_eq!(h.fake.read_calls(), 0);
+    }
+
+    #[test]
+    fn signal_storm_is_capped() {
+        let cfg = CaptureConfig {
+            debounce_ms: 10,
+            ..test_cfg()
+        };
+        let h = start_full(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            cfg,
+            Duration::from_millis(40),
+            |_| {},
+        );
+        h.fake.copy(text_copy("noisy writer"));
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let storm = {
+            let (fake, stop, ended) = (h.fake.clone(), Arc::clone(&stop), Arc::clone(&ended));
+            std::thread::spawn(move || {
+                // Same seq every 0.5 ms (busy-wait: OS sleeps may be coarser than the debounce).
+                let start = Instant::now();
+                while start.elapsed() < Duration::from_millis(300) {
+                    if stop.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    fake.signal_again(1);
+                    let t = Instant::now();
+                    while t.elapsed() < Duration::from_micros(500) {
+                        std::hint::spin_loop();
+                    }
+                }
+                ended.store(true, Ordering::SeqCst);
+            })
+        };
+        h.wait_added();
+        let storm_was_running = !ended.load(Ordering::SeqCst);
+        stop.store(true, Ordering::SeqCst);
+        storm.join().unwrap();
+        assert!(storm_was_running, "capture waited for the storm to end");
+        assert_eq!(h.clip_count(), 1);
+    }
+
+    fn masked_policy() -> PrivacyPolicy {
+        PrivacyPolicy {
+            sensitive_handling: SensitiveHandling::StoreMasked,
+            ..PrivacyPolicy::default()
+        }
+    }
+
+    #[test]
+    fn masked_clip_removed_at_expiry_not_ten_minutes_later() {
+        let h = start(masked_policy());
+        h.fake.copy(text_copy(&api_key_text()));
+        let (id, _) = h.wait_added();
+        let ttl = i64::from(RetentionPolicy::default().sensitive_ttl_seconds);
+        h.clock.set(T0 + ttl * 1000);
+        h.sentinel();
+        assert!(h.ro().get_clip(&id).unwrap().is_none());
+        assert_eq!(h.clip_count(), 1);
+    }
+
+    #[test]
+    fn masked_clip_from_earlier_session_removed_at_expiry() {
+        let seed = |s: &mut Storage| {
+            let reps = vec![RawRepresentation {
+                mime: Mime::TextPlain,
+                platform_format: "CF_UNICODETEXT".into(),
+                bytes: b"masked from last run".to_vec(),
+                width: None,
+                height: None,
+                truncated: false,
+            }];
+            let classified = classify(&reps);
+            let hash = canonical_hash(classified.kind, &reps, None);
+            s.upsert_clip(NewClip {
+                classified,
+                hash,
+                reps,
+                source: None,
+                sensitivity: Sensitivity {
+                    level: SensitivityLevel::Masked,
+                    categories: vec![SensitiveCategory::ApiKey],
+                },
+                expires_at: Some(Timestamp(T0 + 5_000)),
+                thumbnail_png: None,
+            })
+            .unwrap();
+        };
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            test_cfg(),
+            seed,
+        );
+        // Not expired yet: survives the start-up retention.
+        h.sentinel();
+        assert_eq!(h.clip_count(), 2);
+        h.clock.set(T0 + 5_000);
+        h.fake.copy(text_copy("second sentinel"));
+        h.wait_added();
+        assert_eq!(h.clip_count(), 2);
+        let ro = h.ro();
+        let (rows, _) = ro
+            .search(&SearchQuery {
+                text: None,
+                kinds: Vec::new(),
+                pinned_only: false,
+                since: None,
+                include_masked: true,
+                limit: 10,
+                cursor: None,
+            })
+            .unwrap();
+        assert!(rows.iter().all(|r| r.sensitivity == SensitivityLevel::None));
+    }
+
+    #[test]
+    fn html_only_api_key_dropped() {
+        let h = start(PrivacyPolicy::default());
+        let html = format!("<p>{}</p>", api_key_text());
+        h.fake.copy(FakeCopy {
+            formats: vec![(
+                pf("HTML Format", Some(Mime::TextHtml), html.len()),
+                html.into_bytes(),
+            )],
+            markers: Vec::new(),
+            source: None,
+        });
+        let seen = h.wait_skip(SkipReason::Sensitive);
+        assert!(no_store_events(&seen), "{seen:?}");
+        assert_eq!(h.fake.read_calls(), 1);
+        assert_eq!(h.clip_count(), 0);
+    }
+
+    #[test]
+    fn seq_change_during_read_drops_bytes() {
+        let h = start(PrivacyPolicy::default());
+        h.fake.bump_seq_on_next_read();
+        h.fake.copy(text_copy("raced text"));
+        let deadline = Instant::now() + WAIT;
+        while h.cap().skip_counters().changed_during_read() == 0 {
+            assert!(Instant::now() < deadline, "no changed-during-read count");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(h.fake.read_calls(), 1);
+        let between = h.sentinel();
+        assert!(no_store_events(&between), "{between:?}");
+        assert_eq!(h.clip_count(), 1);
+        let ro = h.ro();
+        let (rows, _) = ro
+            .search(&SearchQuery {
+                text: Some("raced".into()),
+                kinds: Vec::new(),
+                pinned_only: false,
+                since: None,
+                include_masked: true,
+                limit: 10,
+                cursor: None,
+            })
+            .unwrap();
+        assert!(rows.is_empty());
+        assert_eq!(h.cap().skip_counters().changed_during_read(), 1);
+    }
+
+    #[test]
+    fn ole_three_phases_in_one_window() {
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            slow_cfg(),
+            |_| {},
+        );
+        h.fake.copy(FakeCopy {
+            formats: vec![
+                (pf("DataObject", None, 8), Vec::new()),
+                (pf("Ole Private Data", None, 8), Vec::new()),
+            ],
+            markers: Vec::new(),
+            source: Some(src("winword.exe")),
+        });
+        // The actor has taken the first signal (and resolved the owner); the window is open.
+        wait_resolved(&h, 1);
+        h.fake.render(vec![
+            (pf("DataObject", None, 8), Vec::new()),
+            (
+                pf("CF_UNICODETEXT", Some(Mime::TextPlain), 8),
+                b"ole text".to_vec(),
+            ),
+        ]);
+        h.fake.clear_source();
+        h.fake.signal_again(1);
+        let (id, before) = h.wait_added();
+        // One window: phase 1 was never inspected on its own.
+        assert!(before.is_empty(), "{before:?}");
+        assert_eq!(h.fake.snapshot_meta_calls(), 1);
+        let clip = h.ro().get_clip(&id).unwrap().unwrap();
+        assert_eq!(clip.preview, "ole text");
+        assert_eq!(
+            clip.source.as_ref().map(|s| s.app_id.as_str()),
+            Some("winword.exe")
+        );
+        let between = h.sentinel();
+        assert!(no_store_events(&between), "{between:?}");
+        assert_eq!(h.clip_count(), 2);
     }
 
     #[test]
