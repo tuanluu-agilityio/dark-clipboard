@@ -56,13 +56,14 @@ Phase 2 complete 2026-11-23 (Bitwarden/1Password rows n/a on the test machine; s
 | 203 Shortcut | task/203-shortcut | builder | sonnet | done | 124,733 | 62,231 (reviewer opus: APPROVED, nits fixed) | 4,061 | 191,025 |
 | 204 Popup | task/204-popup | specialist | opus | done | 335,455 | 151,701 (reviewer opus ×2: APPROVED with should-fix → fixed, APPROVED) | 37,299 | 524,455 |
 | 205 Paste back | task/205-paste-back | specialist | opus | done | 225,505 | 95,918 (security-reviewer opus ×2: APPROVED with should-fix → fixed, APPROVED) | 13,786 | 335,209 |
-| 206 Previews | task/206-previews | builder | sonnet | in progress | | | | |
+| 206 Previews | task/206-previews | builder | sonnet | done | 230,796 | 124,502 (security-reviewer opus ×2: APPROVED with should-fix → fixed, APPROVED) | 40,923 | 396,221 |
+| 211 History window | task/211-history-window | builder | sonnet | next | | | | |
 
 ## Totals by model
 
 | Model | Tokens |
 |---|---|
-| opus | 6,866,563 |
-| sonnet | 2,562,072 |
+| opus | 6,991,065 |
+| sonnet | 2,833,791 |
 | haiku | 0 |
-| **Total** | **9,428,635** (subagents only; orchestrator not measured) |
+| **Total** | **9,824,856** (subagents only; orchestrator not measured) |
