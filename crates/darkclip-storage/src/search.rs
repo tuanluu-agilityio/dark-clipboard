@@ -1,10 +1,14 @@
 //! Full-text search and listing (`docs/architecture/data-model.md` §4).
 //!
 //! Ranking: pinned first (`pin_order`), then bm25 for text queries, then
-//! `last_copied_at DESC`. Text queries rank a bounded candidate set: the best
-//! [`FTS_CANDIDATES`] FTS matches by bm25 (FTS5 `ORDER BY rank LIMIT`), which are then
-//! joined to `clips` for filters, pinned-first order and `limit`. A match outside that
-//! set is not returned, even when pinned or when filters remove candidates.
+//! `last_copied_at DESC`. Text queries fetch every pinned match without a cap (ordered by
+//! `pin_order`, then bm25), then fill the page with unpinned matches from a bounded
+//! candidate set: the best [`FTS_CANDIDATES`] FTS matches by bm25 (FTS5 `ORDER BY rank
+//! LIMIT`), joined to `clips` for filters and `limit`. When a narrowing filter (`kinds`,
+//! `since`) leaves that page short and the cap was reached, the unpinned part is re-run
+//! over all matches. Without such a filter, an unpinned match outside the candidate set
+//! can be missing only if the masked or expiry filters removed more candidates than the
+//! page needs.
 //!
 //! Clips with `expires_at <= now` (storage clock) are never returned, before any
 //! retention run deletes them.
@@ -291,20 +295,7 @@ impl Storage {
         };
         let fts = match_expr(text).filter(|_| text.chars().count() >= 3);
         let rows = if let Some(expr) = fts {
-            // The MATCH placeholder comes first in the statement, so its value does too.
-            args.insert(0, Value::Text(expr));
-            let sql = format!(
-                "SELECT {COLS} FROM (SELECT rowid AS frow, rank AS score FROM clips_fts \
-                 WHERE clips_fts MATCH ? AND rank MATCH '{RANK_FN}' \
-                 ORDER BY rank LIMIT {FTS_CANDIDATES}) f \
-                 JOIN clip_rowid r ON r.rowid = f.frow \
-                 JOIN clips c ON c.id = r.clip_id \
-                 WHERE 1 = 1 {filt} \
-                 ORDER BY c.pinned DESC, c.pin_order ASC, f.score ASC, \
-                 c.last_copied_at DESC, c.id DESC \
-                 LIMIT {limit}"
-            );
-            self.collect(&sql, args)?
+            self.ranked(&expr, &filt, &args, limit, q)?
         } else {
             // The window subquery has no placeholders, so filter values stay in order.
             args.push(Value::Text(format!("%{}%", like_escape(text))));
@@ -318,6 +309,94 @@ impl Storage {
             self.collect(&sql, args)?
         };
         Ok((rows, None))
+    }
+
+    /// Text query rows: every pinned match (no cap; `pin_order`, then bm25), then the best
+    /// unpinned matches among the [`FTS_CANDIDATES`] best FTS rows. When a narrowing
+    /// filter (`kinds`, `since`) leaves that page short and the cap was reached, the
+    /// unpinned part is re-run without the cap. The masked and expiry filters alone do
+    /// not trigger the re-run.
+    fn ranked(
+        &self,
+        expr: &str,
+        filt: &str,
+        filt_args: &[Value],
+        limit: usize,
+        q: &SearchQuery,
+    ) -> Result<Vec<ClipSummary>, StorageError> {
+        // Placeholders in statement order: score MATCH, filters, rowid-set MATCH.
+        let mut a = Vec::with_capacity(filt_args.len() + 2);
+        a.push(Value::Text(expr.to_owned()));
+        a.extend_from_slice(filt_args);
+        a.push(Value::Text(expr.to_owned()));
+        let sql = format!(
+            "SELECT {COLS}, (SELECT rank FROM clips_fts WHERE clips_fts MATCH ? \
+             AND rank MATCH '{RANK_FN}' AND rowid = r.rowid) AS score \
+             FROM clips c JOIN clip_rowid r ON r.clip_id = c.id \
+             WHERE c.pinned = 1 {filt} \
+             AND r.rowid IN (SELECT rowid FROM clips_fts WHERE clips_fts MATCH ?) \
+             ORDER BY COALESCE(c.pin_order, 0) ASC, score ASC, \
+             c.last_copied_at DESC, c.id DESC \
+             LIMIT {limit}"
+        );
+        let mut out = self.collect(&sql, a)?;
+        if q.pinned_only || out.len() >= limit {
+            return Ok(out);
+        }
+        let want = limit - out.len();
+        let mut rest = self.unpinned(expr, filt, filt_args, want, true)?;
+        let narrowing = !q.kinds.is_empty() || q.since.is_some();
+        if rest.len() < want && narrowing && self.candidates_capped(expr)? {
+            rest = self.unpinned(expr, filt, filt_args, want, false)?;
+        }
+        out.extend(rest);
+        Ok(out)
+    }
+
+    /// Unpinned matches by bm25, then recency; among the best [`FTS_CANDIDATES`] FTS rows
+    /// when `capped`, else among all of them.
+    fn unpinned(
+        &self,
+        expr: &str,
+        filt: &str,
+        filt_args: &[Value],
+        want: usize,
+        capped: bool,
+    ) -> Result<Vec<ClipSummary>, StorageError> {
+        let cap = if capped {
+            format!(" ORDER BY rank LIMIT {FTS_CANDIDATES}")
+        } else {
+            String::new()
+        };
+        // The MATCH placeholder comes first in the statement, so its value does too.
+        // CROSS JOIN keeps the FTS rows as the outer loop; otherwise the planner may scan
+        // every unpinned clip through `clips_recent` and probe the FTS rows.
+        let mut a = Vec::with_capacity(filt_args.len() + 1);
+        a.push(Value::Text(expr.to_owned()));
+        a.extend_from_slice(filt_args);
+        let sql = format!(
+            "SELECT {COLS} FROM (SELECT rowid AS frow, rank AS score FROM clips_fts \
+             WHERE clips_fts MATCH ? AND rank MATCH '{RANK_FN}'{cap}) f \
+             CROSS JOIN clip_rowid r ON r.rowid = f.frow \
+             CROSS JOIN clips c ON c.id = r.clip_id \
+             WHERE c.pinned = 0 {filt} \
+             ORDER BY f.score ASC, c.last_copied_at DESC, c.id DESC \
+             LIMIT {want}"
+        );
+        self.collect(&sql, a)
+    }
+
+    /// Whether `expr` has at least [`FTS_CANDIDATES`] matches (the cap may hide some).
+    fn candidates_capped(&self, expr: &str) -> Result<bool, StorageError> {
+        let n: i64 = self.conn.query_row(
+            &format!(
+                "SELECT count(*) FROM (SELECT rowid FROM clips_fts \
+                 WHERE clips_fts MATCH ?1 LIMIT {FTS_CANDIDATES})"
+            ),
+            [expr],
+            |r| r.get(0),
+        )?;
+        Ok(usize::try_from(n).unwrap_or(0) >= FTS_CANDIDATES)
     }
 
     fn collect(&self, sql: &str, args: Vec<Value>) -> Result<Vec<ClipSummary>, StorageError> {
@@ -363,11 +442,14 @@ impl Storage {
                     a.push(Value::Integer(v));
                 }
                 a.push(Value::Text(c.id.to_string()));
-                keyset = " AND (COALESCE(c.pin_order, 0) > ? OR (COALESCE(c.pin_order, 0) = ?                           AND (c.last_copied_at < ? OR (c.last_copied_at = ? AND c.id < ?))))"
+                keyset = " AND (COALESCE(c.pin_order, 0) > ? OR (COALESCE(c.pin_order, 0) = ? \
+                 AND (c.last_copied_at < ? OR (c.last_copied_at = ? AND c.id < ?))))"
                     .into();
             }
             let sql = format!(
-                "SELECT {COLS} FROM clips c WHERE c.pinned = 1 {filt} {keyset}                  ORDER BY COALESCE(c.pin_order, 0) ASC, c.last_copied_at DESC, c.id DESC                  LIMIT {}",
+                "SELECT {COLS} FROM clips c WHERE c.pinned = 1 {filt} {keyset} \
+                 ORDER BY COALESCE(c.pin_order, 0) ASC, c.last_copied_at DESC, c.id DESC \
+                 LIMIT {}",
                 limit + 1
             );
             out = self.collect(&sql, a)?;
@@ -382,7 +464,8 @@ impl Storage {
                 keyset = " AND (c.last_copied_at < ? OR (c.last_copied_at = ? AND c.id < ?))";
             }
             let sql = format!(
-                "SELECT {COLS} FROM clips c WHERE c.pinned = 0 {filt} {keyset}                  ORDER BY c.last_copied_at DESC, c.id DESC LIMIT {}",
+                "SELECT {COLS} FROM clips c WHERE c.pinned = 0 {filt} {keyset} \
+                 ORDER BY c.last_copied_at DESC, c.id DESC LIMIT {}",
                 limit + 1 - out.len()
             );
             out.extend(self.collect(&sql, a)?);
@@ -799,6 +882,84 @@ mod tests {
             ids(s.search(&q("needle")).unwrap()),
             vec![weak, newer, older]
         );
+        // Two pinned matches: `pin_order` (pin sequence) decides, not bm25 or recency.
+        s.set_pinned(&older, true).unwrap();
+        assert_eq!(
+            ids(s.search(&q("needle")).unwrap()),
+            vec![weak, older, newer]
+        );
+        s.set_pinned(&newer, true).unwrap();
+        assert_eq!(
+            ids(s.search(&q("needle")).unwrap()),
+            vec![weak, older, newer]
+        );
+    }
+
+    /// 600 strong "token" matches, so anything scoring worse falls outside the
+    /// [`FTS_CANDIDATES`] best.
+    fn crowded(s: &mut Storage) {
+        for i in 0..600 {
+            s.upsert_clip(text_clip(&format!("token token clip{i}")))
+                .unwrap();
+        }
+    }
+
+    /// True when `id` is among the [`FTS_CANDIDATES`] best matches of `expr`.
+    fn in_top_candidates(s: &Storage, expr: &str, id: &ClipId) -> bool {
+        let sql = format!(
+            "SELECT count(*) FROM (SELECT rowid FROM clips_fts \
+             WHERE clips_fts MATCH ?1 AND rank MATCH '{RANK_FN}' \
+             ORDER BY rank LIMIT {FTS_CANDIDATES}) f \
+             JOIN clip_rowid r ON r.rowid = f.rowid WHERE r.clip_id = ?2"
+        );
+        let n: i64 = s
+            .conn
+            .query_row(&sql, rusqlite::params![expr, id.to_string()], |r| r.get(0))
+            .unwrap();
+        n == 1
+    }
+
+    #[test]
+    fn kinds_filter_beyond_candidate_cap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path());
+        crowded(&mut s);
+        let reps = vec![raw(Mime::ImagePng, b"synthetic image bytes")];
+        let mut classified = classify(&reps);
+        assert_eq!(classified.kind, ClipType::Image);
+        classified.preview = format!("token {}", "filler ".repeat(30));
+        let hash = canonical_hash(classified.kind, &reps, None);
+        let img = NewClip {
+            classified,
+            hash,
+            reps,
+            ..text_clip("unused")
+        };
+        let img = id_of(s.upsert_clip(img).unwrap());
+        assert!(!in_top_candidates(&s, "\"token\"*", &img), "precondition");
+        let mut query = q("token");
+        query.kinds = vec![ClipType::Image];
+        let r = s.search(&query).unwrap();
+        assert_eq!(r.0.iter().map(|c| c.id).collect::<Vec<_>>(), vec![img]);
+    }
+
+    #[test]
+    fn pinned_beyond_candidate_cap_is_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path());
+        crowded(&mut s);
+        let weak = format!("token {}", "filler ".repeat(60));
+        let weak = id_of(s.upsert_clip(text_clip(&weak)).unwrap());
+        s.set_pinned(&weak, true).unwrap();
+        assert!(!in_top_candidates(&s, "\"token\"*", &weak), "precondition");
+        let r = s.search(&q("token")).unwrap();
+        assert_eq!(r.0.len(), 50);
+        assert_eq!(r.0[0].id, weak);
+        assert!(r.0[1..].iter().all(|c| !c.pinned));
+        let mut only = q("token");
+        only.pinned_only = true;
+        let r = s.search(&only).unwrap();
+        assert_eq!(r.0.iter().map(|c| c.id).collect::<Vec<_>>(), vec![weak]);
     }
 
     #[test]
