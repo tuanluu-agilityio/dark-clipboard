@@ -49,7 +49,7 @@ Transport: stdio (`darkclip mcp serve --client <id>`). Server name `dark-clipboa
 
 | Tool | Class | Required scope | Inputs | Output | Notes |
 |---|---|---|---|---|---|
-| `get_storage_stats` | read | none (counts only) | — | clip count by kind, storage MB, capture mode, skip counters | Works without any grant; tells the agent access is not granted |
+| `get_storage_stats` | read | none (counts only) | — | clip count by kind, storage MB, capture mode, skip counters (keys: `disabled`, `paused`, `private`, `self_write`, `os_concealed`, `darkshot_excluded`, `transient`, `excluded_app`, `kind_disabled`, `too_large`, `nothing_readable`, `sensitive`, `busy`; stable within `api_version`) | Works without any grant; tells the agent access is not granted |
 | `search_clips` | read | `clips:read-metadata` | `query?`, `kinds?`, `collection_id?`, `tag?`, `pinned_only?`, `since?`, `limit≤50`, `cursor?` | `ClipSummary[]` (id, kind, preview, times, pinned, tags) | `preview` counts as metadata. It is the first 512 chars, so users are told that metadata access shows previews |
 | `get_clip` | read | `clips:read-metadata`; content needs `clips:read-content` | `id`, `include_content?` | `Clip` (+ `content.text` ≤ 100 KiB) | Images: dimensions and hash only. Files: paths only |
 | `list_collections` | read | `collections:read` | — | `Collection[]` | Filtered by grant's collection filter |
