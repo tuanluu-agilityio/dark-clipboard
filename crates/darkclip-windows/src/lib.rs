@@ -10,6 +10,8 @@
 
 #[cfg(windows)]
 mod access;
+// Pure format/marker mapping: compiled on every OS so its tests run everywhere.
+mod formats;
 #[cfg(windows)]
 mod monitor;
 #[cfg(windows)]
