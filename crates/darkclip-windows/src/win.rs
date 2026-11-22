@@ -2,8 +2,10 @@
 //! here; every block has a `// SAFETY:` line. Every OS handle is owned by an RAII guard and
 //! released on every path, errors included (GC-13).
 //!
-//! Nothing here reads clipboard content or window titles (GC-06). The only clipboard data
-//! read outside the test writer is a 4-byte marker DWORD (`ClipboardGuard::dword_value`).
+//! Nothing here reads window titles (GC-06). Clipboard data is read only by
+//! `ClipboardGuard::dword_value` (a 4-byte marker DWORD, `snapshot_meta`) and by `data_size` /
+//! `copy_data`, which `access::read_plan` calls only for planned formats after
+//! the policy decision (GC-03). Content buffers are wiped on drop and never logged.
 
 use darkclip_platform::PlatformError;
 use std::cell::RefCell;
@@ -32,6 +34,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowThreadProcessId, PostMessageW, PostQuitMessage, RegisterClassExW, UnregisterClassW,
     HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLIPBOARDUPDATE, WNDCLASSEXW,
 };
+use zeroize::Zeroizing;
 
 /// Private message that ends the message loop (posted by `RawWindow::post_stop`).
 const WM_DARKCLIP_STOP: u32 = WM_APP + 0x0D1;
@@ -160,6 +163,46 @@ impl ClipboardGuard {
         unsafe { std::ptr::copy_nonoverlapping(lock.ptr.cast::<u8>(), bytes.as_mut_ptr(), 4) };
         drop(lock);
         Some(u32::from_le_bytes(bytes))
+    }
+
+    /// The data handle of a format as a global memory handle, or `None` when the format has
+    /// no data. If the owner uses delayed rendering, this blocks until it renders (capture
+    /// actor thread only, see `dword_value`).
+    fn data_handle(&self, id: u32) -> Option<HGLOBAL> {
+        // SAFETY: the clipboard is open by this thread (owned by `self`). The handle stays
+        // owned by the clipboard and is never freed here.
+        let handle = unsafe { GetClipboardData(id) }.ok()?;
+        (!handle.0.is_null()).then_some(HGLOBAL(handle.0))
+    }
+
+    /// `GlobalSize` of a format's data block; `None` when there is no data or the size is 0.
+    /// Reads no bytes. Only for HGLOBAL formats (text, registered formats, DIBs, `CF_HDROP`).
+    pub(crate) fn data_size(&self, id: u32) -> Option<u64> {
+        let mem = self.data_handle(id)?;
+        // SAFETY: `mem` is the clipboard's data handle of an HGLOBAL format; an invalid
+        // handle only makes the call return 0.
+        let size = unsafe { GlobalSize(mem) };
+        u64::try_from(size).ok().filter(|&s| s > 0)
+    }
+
+    /// The first `min(GlobalSize, max)` bytes of a format's data, in a buffer wiped on drop.
+    /// The size is checked before locking, the buffer is never larger than `max`, and the
+    /// lock is released on every path.
+    pub(crate) fn copy_data(&self, id: u32, max: usize) -> Option<Zeroizing<Vec<u8>>> {
+        let mem = self.data_handle(id)?;
+        // SAFETY: as in `data_size`.
+        let size = unsafe { GlobalSize(mem) };
+        let n = size.min(max);
+        if n == 0 {
+            return None;
+        }
+        let lock = GlobalLockGuard::lock(mem)?;
+        let mut out = Zeroizing::new(vec![0u8; n]);
+        // SAFETY: `lock.ptr` points to the locked block of `size >= n` readable bytes; `out`
+        // is a distinct buffer of exactly `n` bytes.
+        unsafe { std::ptr::copy_nonoverlapping(lock.ptr.cast::<u8>(), out.as_mut_ptr(), n) };
+        drop(lock);
+        Some(out)
     }
 }
 
@@ -553,6 +596,20 @@ pub(crate) mod test_support {
     /// Writes `text` as `CF_UNICODETEXT`; returns the sequence number after the write.
     pub(crate) fn write_text(text: &str) -> Result<u32, PlatformError> {
         write_formats(vec![(CF_UNICODETEXT, utf16z(text))])
+    }
+
+    /// Writes a packed DIB as `CF_DIB` only (the system synthesizes `CF_DIBV5` on request).
+    pub(crate) fn write_dib(dib: &[u8]) -> Result<u32, PlatformError> {
+        write_formats(vec![(crate::formats::CF_DIB, dib.to_vec())])
+    }
+
+    /// Writes `html` (a full CF_HTML payload, UTF-8) as `HTML Format`, NUL-terminated.
+    pub(crate) fn write_html(html: &str) -> Result<u32, PlatformError> {
+        let id = register_clipboard_format(crate::formats::HTML_FORMAT)
+            .ok_or(PlatformError::Backend { code: -1 })?;
+        let mut bytes = html.as_bytes().to_vec();
+        bytes.push(0);
+        write_formats(vec![(id, bytes)])
     }
 
     /// Writes `text` plus Darkshot's exclusion set as `darkshot-windows/src/clipboard.rs` does:
