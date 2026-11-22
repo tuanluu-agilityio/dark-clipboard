@@ -465,6 +465,7 @@ fn handle_tray_action(action: MenuAction, window: &Weak<MainWindow>, poster: &Po
         }
         MenuAction::Settings => settings_host::show(),
         MenuAction::History => history_host::show(),
+        MenuAction::StartCapturing => welcome_host::show(),
         MenuAction::Quit => {
             log.event("tray_quit", &[]);
             let _ = slint::quit_event_loop();

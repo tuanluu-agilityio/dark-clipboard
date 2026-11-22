@@ -147,6 +147,15 @@ impl Settings {
         s
     }
 
+    /// Defaults for a file that cannot be written (unreadable, newer version, unmovable corrupt
+    /// file). Nothing was consented to, so capture is off (`capture_enabled` is the newer
+    /// file's own flag when it could be parsed); no welcome, as its answer could not be saved.
+    pub fn read_only_default(capture_enabled: bool) -> Settings {
+        let mut s = Settings::default();
+        s.privacy.capture_enabled = capture_enabled;
+        s
+    }
+
     /// True while the first-run welcome has not been answered.
     pub fn needs_welcome(&self) -> bool {
         !self.onboarding_done
@@ -200,7 +209,7 @@ impl Settings {
             }
             Err(_) => {
                 return (
-                    Settings::default(),
+                    Settings::read_only_default(false),
                     LoadOutcome::DefaultedReadOnly("settings file unreadable"),
                 )
             }
@@ -230,8 +239,8 @@ impl Settings {
                 (s, outcome)
             }
             // A newer version wrote it: leave the file alone, never overwrite it.
-            Ok(_) => (
-                Settings::default(),
+            Ok(newer) => (
+                Settings::read_only_default(newer.privacy.capture_enabled),
                 LoadOutcome::DefaultedReadOnly("settings file is from a newer version"),
             ),
             Err(_) => Self::recover(path, |from, to| std::fs::rename(from, to)),
@@ -248,7 +257,7 @@ impl Settings {
         if rename(path, &backup).is_err() {
             // Still in place: saving would destroy the only copy.
             return (
-                Settings::default(),
+                Settings::read_only_default(false),
                 LoadOutcome::DefaultedReadOnly("corrupt settings file could not be moved"),
             );
         }
@@ -400,6 +409,19 @@ mod tests {
         let (s, o) = Settings::load(&p);
         assert!(matches!(o, LoadOutcome::DefaultedReadOnly(_)));
         assert!(!s.needs_welcome());
+        // The newer file's own capture flag wins (here: the field is missing, so its default).
+        let mut off = serde_json::to_value(Settings::first_run()).unwrap();
+        off["settings_version"] = 999.into();
+        off["onboarding_done"] = true.into();
+        std::fs::write(&p, off.to_string()).unwrap();
+        let (s, _) = Settings::load(&p);
+        assert!(!s.privacy.capture_enabled);
+        // Unreadable and unmovable files: nothing was consented to, so capture stays off.
+        std::fs::remove_file(&p).unwrap();
+        std::fs::create_dir(&p).unwrap();
+        let (s, o) = Settings::load(&p);
+        assert!(matches!(o, LoadOutcome::DefaultedReadOnly(_)));
+        assert!(!s.privacy.capture_enabled && !s.needs_welcome());
     }
 
     #[test]
@@ -563,7 +585,8 @@ mod tests {
         let p = d.path().join("settings.json");
         std::fs::create_dir(&p).unwrap();
         let (s, o) = Settings::load(&p);
-        assert_eq!(s, Settings::default());
+        assert_eq!(s, Settings::read_only_default(false));
+        assert!(!s.privacy.capture_enabled);
         assert!(matches!(o, LoadOutcome::DefaultedReadOnly(_)), "{o:?}");
         assert!(p.is_dir());
     }
@@ -576,7 +599,8 @@ mod tests {
         let (s, o) = Settings::recover(&p, |_, _| {
             Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
         });
-        assert_eq!(s, Settings::default());
+        assert_eq!(s, Settings::read_only_default(false));
+        assert!(!s.privacy.capture_enabled);
         assert!(matches!(o, LoadOutcome::DefaultedReadOnly(_)), "{o:?}");
         assert_eq!(std::fs::read(&p).unwrap(), b"garbage");
     }

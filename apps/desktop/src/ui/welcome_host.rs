@@ -11,6 +11,7 @@
 //! into log lines (GC-06).
 
 use super::{Poster, WText, WelcomeWindow};
+use crate::prefs::model::login_availability;
 use crate::prefs::welcome::{run_welcome, WelcomeResult};
 use darkclip_app::settings::Settings;
 use darkclip_app::App;
@@ -108,6 +109,7 @@ fn set_strings(w: &WelcomeWindow) {
     g.set_no_cloud(m(Msg::WelcomeNoCloud));
     g.set_capture_off(m(Msg::WelcomeCaptureOff));
     g.set_login(m(Msg::WelcomeAutostart));
+    g.set_login_note(m(Msg::SettingsStartAtLoginCustomProfile));
     g.set_start(m(Msg::WelcomeStart));
     g.set_not_now(m(Msg::WelcomeNotNow));
     g.set_close(m(Msg::UiClose));
@@ -121,7 +123,11 @@ fn create() -> Option<WelcomeWindow> {
     w.on_not_now(|| answer(false));
     w.on_dismiss(close);
     w.window().on_close_requested(|| {
-        // The window's own close button: the same as Esc.
+        // The window's own close button: the same as Esc, and like Esc not while an answer is
+        // being saved.
+        if window().is_some_and(|w| w.get_busy()) {
+            return slint::CloseRequestResponse::KeepWindowShown;
+        }
         close_answer();
         slint::CloseRequestResponse::HideWindow
     });
@@ -141,14 +147,20 @@ pub fn show() {
         }
     };
     if !w.window().is_visible() {
-        let (login, can_login) = SNAP.with(|s| {
-            s.borrow().as_ref().map_or((false, false), |s| {
-                (s.settings.startup.launch_at_login, s.can_register)
+        let (login, can_login, capture_off) = SNAP.with(|s| {
+            s.borrow().as_ref().map_or((false, false, true), |s| {
+                (
+                    s.settings.startup.launch_at_login,
+                    s.can_register,
+                    !s.settings.privacy.capture_enabled,
+                )
             })
         });
         set_strings(&w);
         w.set_login(login);
         w.set_can_login(can_login);
+        w.set_login_enabled(login_availability(can_login, crate::custom_profile()).editable());
+        w.set_show_capture_off(capture_off);
         w.set_error(SharedString::new());
         w.set_busy(false);
         w.set_finished(false);

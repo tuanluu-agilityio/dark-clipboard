@@ -45,6 +45,7 @@ export global SText {
     in property <string> lang-vi;
     in property <string> login;
     in property <string> login-note;
+    in property <string> login-drift;
     in property <string> pos-label;
     in property <string> pos-cursor;
     in property <string> pos-center;
@@ -56,6 +57,8 @@ export global SText {
     in property <string> mode-private;
     in property <string> mode-paused;
     in property <string> mode-current;
+    in property <string> capture-off-text;
+    in property <string> start-capturing;
     in property <string> markers-label;
     in property <string> markers-note;
     in property <string> sensitive-label;
@@ -164,6 +167,10 @@ export component SettingsWindow inherits Window {
     // 0 General, 1 Privacy, 2 History, 3 About.
     in-out property <int> section: 0;
     in property <bool> can-save: true;
+    // Capture is switched off (before the first-run Start): the Privacy section says so.
+    in property <bool> capture-off;
+    // False when start at login cannot be changed from this process (custom data folder).
+    in property <bool> login-enabled: true;
     // The form values (read by Rust on Save).
     in-out property <string> shortcut;
     in-out property <int> lang-index;
@@ -208,6 +215,7 @@ export component SettingsWindow inherits Window {
     callback revert();
     callback edited();
     callback set-mode(int);
+    callback start-capturing();
     callback add-app(string);
     callback remove-app(int);
     callback confirm-remove();
@@ -339,6 +347,7 @@ export component SettingsWindow inherits Window {
                             }
                             CheckBox {
                                 text: SText.login;
+                                enabled: root.login-enabled;
                                 checked <=> root.launch-at-login;
                                 toggled => {
                                     root.edited();
@@ -346,6 +355,10 @@ export component SettingsWindow inherits Window {
                             }
                             if SText.login-note != "": Caption {
                                 text: SText.login-note;
+                            }
+                            if SText.login-drift != "": Caption {
+                                text: SText.login-drift;
+                                color: Theme.warning;
                             }
                             Caption {
                                 text: SText.pos-label;
@@ -407,6 +420,33 @@ export component SettingsWindow inherits Window {
                             }
                             Caption {
                                 text: SText.mode-current;
+                            }
+                            if root.capture-off: Rectangle {
+                                background: Theme.warning.with-alpha(0.18);
+                                border-color: Theme.warning;
+                                border-width: 1px;
+                                border-radius: 6px;
+                                height: off-col.preferred-height + 20px;
+                                off-col := VerticalLayout {
+                                    padding: 10px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: SText.capture-off-text;
+                                        color: Theme.warning;
+                                        wrap: word-wrap;
+                                        accessible-role: text;
+                                    }
+                                    HorizontalLayout {
+                                        alignment: start;
+                                        Button {
+                                            text: SText.start-capturing;
+                                            primary: true;
+                                            clicked => {
+                                                root.start-capturing();
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
                             // The markers row: text only, by design (GC-07).

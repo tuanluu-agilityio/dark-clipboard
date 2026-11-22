@@ -992,8 +992,11 @@ pub(crate) fn reg_set_string(subkey: &str, name: &str, value: &str) -> Result<()
     }
 }
 
-/// Reads a `REG_SZ` value; `Ok(None)` when the key or the value is missing or not a string.
-pub(crate) fn reg_get_string(subkey: &str, name: &str) -> Result<Option<String>, PlatformError> {
+/// Reads a value's type and bytes; `Ok(None)` when the key or the value is missing.
+fn reg_get_raw(
+    subkey: &str,
+    name: &str,
+) -> Result<Option<(REG_VALUE_TYPE, Vec<u8>)>, PlatformError> {
     use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
     let Some(key) = reg_open(subkey, KEY_QUERY_VALUE)? else {
         return Ok(None);
@@ -1008,9 +1011,6 @@ pub(crate) fn reg_get_string(subkey: &str, name: &str) -> Result<Option<String>,
     }
     if r != ERROR_SUCCESS {
         return Err(reg_error(r));
-    }
-    if kind != REG_SZ {
-        return Ok(None);
     }
     let mut buf = vec![0u8; usize::try_from(size).unwrap_or(0)];
     // SAFETY: `buf` is `size` writable bytes; `size` is updated to the bytes written.
@@ -1028,6 +1028,17 @@ pub(crate) fn reg_get_string(subkey: &str, name: &str) -> Result<Option<String>,
         return Err(reg_error(r));
     }
     buf.truncate(usize::try_from(size).unwrap_or(0));
+    Ok(Some((kind, buf)))
+}
+
+/// Reads a `REG_SZ` value; `Ok(None)` when the key or the value is missing or not a string.
+pub(crate) fn reg_get_string(subkey: &str, name: &str) -> Result<Option<String>, PlatformError> {
+    let Some((kind, buf)) = reg_get_raw(subkey, name)? else {
+        return Ok(None);
+    };
+    if kind != REG_SZ {
+        return Ok(None);
+    }
     let wide: Vec<u16> = buf
         .as_chunks::<2>()
         .0
@@ -1036,6 +1047,11 @@ pub(crate) fn reg_get_string(subkey: &str, name: &str) -> Result<Option<String>,
         .take_while(|&c| c != 0)
         .collect();
     Ok(Some(String::from_utf16_lossy(&wide)))
+}
+
+/// The first byte of a value's data (any type); `Ok(None)` when missing or empty.
+pub(crate) fn reg_get_first_byte(subkey: &str, name: &str) -> Result<Option<u8>, PlatformError> {
+    Ok(reg_get_raw(subkey, name)?.and_then(|(_, b)| b.first().copied()))
 }
 
 /// Deletes a value; a missing key or value counts as done.

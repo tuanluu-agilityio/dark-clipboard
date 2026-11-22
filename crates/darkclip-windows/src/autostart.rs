@@ -9,6 +9,16 @@ use std::path::Path;
 pub const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 /// The value name this app uses inside the `Run` key.
 pub const VALUE_NAME: &str = "DarkClipboard";
+/// Where the shell (Task Manager > Startup, Settings > Apps > Startup) records that the user
+/// turned an entry off. A value with the same name as the `Run` entry holds a flag byte.
+pub const APPROVED_KEY: &str =
+    r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+
+/// True when the first byte of a `StartupApproved` value marks the entry as disabled (odd,
+/// `0x03`; enabled entries are even, `0x02`/`0x06`). A missing value means enabled.
+pub fn approved_disabled(first_byte: Option<u8>) -> bool {
+    first_byte.is_some_and(|b| b & 1 == 1)
+}
 
 /// The command the shell runs at login: the executable path in double quotes, no arguments.
 /// Quoting keeps a path with spaces (`C:\Program Files\...`) in one piece.
@@ -27,7 +37,9 @@ pub use registry::RegistryAutostart;
 
 #[cfg(windows)]
 mod registry {
-    use super::{is_our_command, run_command, RUN_KEY, VALUE_NAME};
+    use super::{
+        approved_disabled, is_our_command, run_command, APPROVED_KEY, RUN_KEY, VALUE_NAME,
+    };
     use crate::win;
     use darkclip_platform::{Autostart, PlatformError};
 
@@ -63,13 +75,20 @@ mod registry {
         fn is_enabled(&self) -> Result<bool, PlatformError> {
             let exe = current_exe()?;
             let stored = win::reg_get_string(RUN_KEY, &self.value_name)?;
-            Ok(stored.is_some_and(|s| is_our_command(&s, &exe)))
+            if !stored.is_some_and(|s| is_our_command(&s, &exe)) {
+                return Ok(false);
+            }
+            // Turned off by the user in Task Manager or Windows Settings: not enabled.
+            let flag = win::reg_get_first_byte(APPROVED_KEY, &self.value_name)?;
+            Ok(!approved_disabled(flag))
         }
 
         fn set_enabled(&self, enabled: bool) -> Result<(), PlatformError> {
             if enabled {
                 let exe = current_exe()?;
-                win::reg_set_string(RUN_KEY, &self.value_name, &run_command(&exe))
+                win::reg_set_string(RUN_KEY, &self.value_name, &run_command(&exe))?;
+                // Drop a "disabled" flag left by the user, so the entry runs again.
+                win::reg_delete_value(APPROVED_KEY, &self.value_name)
             } else {
                 win::reg_delete_value(RUN_KEY, &self.value_name)
             }
@@ -119,6 +138,18 @@ mod tests {
         assert!(!is_our_command(r#""C:\Other\dark-clipboard.exe""#, &exe));
         assert!(!is_our_command(r#""C:\Apps\dark-clipboard.exe" --x"#, &exe));
         assert!(!is_our_command("", &exe));
+    }
+
+    #[test]
+    fn a_disabled_startup_approved_flag_means_not_enabled() {
+        assert!(approved_disabled(Some(0x03)));
+        assert!(!approved_disabled(Some(0x02)));
+        assert!(!approved_disabled(Some(0x06)));
+        assert!(!approved_disabled(None));
+        assert_eq!(
+            APPROVED_KEY,
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+        );
     }
 
     #[test]

@@ -12,6 +12,8 @@ A local-first clipboard manager for Windows, macOS and Linux, written in Rust. I
 - No account, no cloud, no telemetry. Works offline.
 - AI tools (via MCP, later release) see nothing unless you grant access, and only what you grant.
 
+On first start a one-screen welcome explains what is never captured and where your data lives. **Nothing is captured until you press Start**; "Not now" keeps capture off, and the welcome stays reachable from Settings > About and the tray. Start at login is off unless you tick it.
+
 ## Platform status
 
 Only Windows has been tested so far. See `docs/architecture/platform-compatibility.md` for every capability with its evidence (tested, documented, reported or unknown). macOS and Linux are designed but untested. GNOME on Wayland may not support background capture.

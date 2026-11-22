@@ -14,6 +14,7 @@ export global WText {
     in property <string> no-cloud;
     in property <string> capture-off;
     in property <string> login;
+    in property <string> login-note;
     in property <string> start;
     in property <string> not-now;
     in property <string> close;
@@ -31,6 +32,10 @@ export component WelcomeWindow inherits Window {
     // The "Start with Windows" checkbox; hidden when the platform cannot register.
     in-out property <bool> login;
     in property <bool> can-login;
+    // False for a custom data folder: the login entry would start the default profile.
+    in property <bool> login-enabled: true;
+    // The "nothing is captured until Start" line: only while capture is really off.
+    in property <bool> show-capture-off: true;
     // Non-empty after a failed answer.
     in property <string> error;
     // An answer is being saved: the buttons wait.
@@ -92,7 +97,7 @@ export component WelcomeWindow inherits Window {
                 wrap: word-wrap;
                 accessible-role: text;
             }
-            if !root.finished: Text {
+            if !root.finished && root.show-capture-off: Text {
                 text: WText.capture-off;
                 color: Theme.text-muted;
                 wrap: word-wrap;
@@ -101,7 +106,13 @@ export component WelcomeWindow inherits Window {
             if root.can-login && !root.finished: CheckBox {
                 text: WText.login;
                 checked <=> root.login;
-                enabled: !root.busy;
+                enabled: !root.busy && root.login-enabled;
+            }
+            if root.can-login && !root.login-enabled && !root.finished: Text {
+                text: WText.login-note;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+                accessible-role: text;
             }
             if root.error != "": Text {
                 text: root.error;

@@ -498,4 +498,73 @@ mod login {
         assert!(matches!(r, SaveResult::Invalid(_)) && w.is_none());
         assert!(!fake.enabled());
     }
+
+    /// A registry that cannot be read but can be written, and remembers the last write.
+    struct WriteOnly(std::sync::Mutex<Option<bool>>);
+    impl Autostart for WriteOnly {
+        fn is_enabled(&self) -> Result<bool, darkclip_platform::PlatformError> {
+            Err(darkclip_platform::PlatformError::Backend { code: 5 })
+        }
+        fn set_enabled(&self, e: bool) -> Result<(), darkclip_platform::PlatformError> {
+            *self.0.lock().unwrap() = Some(e);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn rollback_restores_the_previous_state_not_the_opposite_of_the_request() {
+        // Unreadable registry, stored choice "on", the form keeps "on": the write succeeds and
+        // the settings write fails. The previous state was "on" (the stored choice), so that is
+        // what comes back; "off" would silently remove the user's entry.
+        let reg = WriteOnly(std::sync::Mutex::new(None));
+        let mut base = defaults();
+        base.startup.launch_at_login = true;
+        let d = Draft::from_settings(&base);
+        let (r, _) = save(false, &d, &base, Some(&reg), false);
+        assert!(matches!(r, SaveResult::Failed));
+        assert_eq!(*reg.0.lock().unwrap(), Some(true));
+    }
+
+    #[test]
+    fn the_toggle_shows_the_live_state_and_notes_a_difference() {
+        assert_eq!(login_view(true, Some(false)), (false, true));
+        assert_eq!(login_view(false, Some(true)), (true, true));
+        assert_eq!(login_view(true, Some(true)), (true, false));
+        // Unreadable registry: the stored choice, no claim about drift.
+        assert_eq!(login_view(true, None), (true, false));
+    }
+
+    #[test]
+    fn a_stored_on_choice_with_a_disabled_entry_is_rewritten_by_save() {
+        // The fake says "not enabled" (the entry is gone or disabled in Task Manager).
+        let fake = FakeAutostart::new(false, false);
+        let mut base = defaults();
+        base.startup.launch_at_login = true;
+        let d = Draft::from_settings(&base);
+        let (r, w) = save(false, &d, &base, Some(&fake), true);
+        assert!(matches!(r, SaveResult::Saved));
+        assert!(fake.enabled());
+        assert!(w.unwrap().startup.launch_at_login);
+    }
+
+    #[test]
+    fn a_custom_data_dir_instance_cannot_set_start_at_login() {
+        assert_eq!(login_availability(true, false), LoginAvail::Available);
+        assert_eq!(login_availability(false, false), LoginAvail::NoAdapter);
+        assert_eq!(login_availability(true, true), LoginAvail::CustomProfile);
+        // The note names the reason; Available has none.
+        assert!(LoginAvail::Available.note().is_none());
+        assert_eq!(
+            LoginAvail::CustomProfile.note(),
+            Some(Msg::SettingsStartAtLoginCustomProfile)
+        );
+        assert_eq!(
+            LoginAvail::NoAdapter.note(),
+            Some(Msg::SettingsStartAtLoginNote)
+        );
+        // Without an adapter the choice is only stored (the note says so); the toggle stays.
+        assert!(LoginAvail::Available.editable());
+        assert!(LoginAvail::NoAdapter.editable());
+        assert!(!LoginAvail::CustomProfile.editable());
+    }
 }

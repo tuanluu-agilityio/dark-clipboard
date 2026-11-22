@@ -6,6 +6,8 @@ Rules: no row is marked T without a run recorded here. Clip content is never pri
 ## Windows (Task 107, 2026-11-22)
 
 Machine: Windows 11 Home 10.0.26300 x64 (the owner's machine). Build: `dark-clipboard` 0.0.1, release, commit `694600f` + the Task 107 test fix.
+> Since Task 208 (D-054) a fresh data folder captures nothing: `--headless` logs `capture_off` and prints that capture is off until Start is pressed in the app. For any run that needs capture, first run the UI once with the same `--data-dir` (`dark-clipboard.exe --data-dir <scratch>`), press Start in the welcome, quit from the tray, then start `--headless` on that folder. There is no flag that skips the welcome.
+
 Method: the owner copied in each app while `dark-clipboard --headless --data-dir <scratch>` ran. A read-only watcher logged, for every clipboard sequence change, the **format names** and the owner process (no content). The scratch database was summarised with a query that selects kind, source, sensitivity, counts and MIME/format names only (no preview, no bytes). The scratch data was deleted afterwards. The verification was run interactively by the orchestrator, because it needed back-and-forth with the owner (D-041).
 
 ### Automated real-clipboard tests
@@ -156,6 +158,12 @@ Use a throwaway data folder for the welcome rows: `dark-clipboard.exe --data-dir
 | Start with the box checked, then look at `reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v DarkClipboard` | One value: the quoted path of dark-clipboard.exe, no arguments. Log out and in: the app starts (this row changes your login items; remove the entry afterwards with Settings or `reg delete`) | **untested** |
 | Settings > General > Start at login: switch on, Save, then off, Save | The Run value appears and disappears; the status line says Saved; no "not wired" note is shown | **untested** |
 | Run value made unwritable (for example a policy), then toggle | The status line says the change failed, and the toggle returns to the real state | **untested** |
+| Tray menu after Not now | The icon is the paused glyph (not the crossed one used for failures); "Start capturing..." is the first menu entry and opens the welcome; it disappears once capture is on | **untested** |
+| Settings > Privacy after Not now | A yellow note says capture is off, with a "Start capturing..." button that opens the welcome; gone after Start | **untested** |
+| Start at login drift: switch the entry off in Task Manager > Startup, reopen Settings | The toggle shows off, with a note that the real state differs from the saved setting; Save with the toggle on re-enables it | **untested** |
+| App started with `--data-dir` | The welcome check box and the Settings toggle are disabled with a note that a custom data folder cannot change the login entry | **untested** |
+| `--headless` on a fresh `--data-dir` | The console says capture is off until Start is pressed in the app; the log has `capture_off`; copies are not stored | **untested** |
+| Welcome opened again from About while capture is on | No "Nothing is captured until you press Start" line; Esc or X changes nothing | **untested** |
 | Screen reader (Narrator) on the welcome | Texts, the check box and both buttons are read | **untested** |
 
 The registry round trip also exists as an ignored test: `cargo test -p darkclip-windows -- --ignored autostart` (uses the value name `DarkClipboardTest`, removed at the end).

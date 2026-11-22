@@ -281,28 +281,80 @@ pub enum SaveResult {
     SavedLoginFailed,
 }
 
-/// Brings the start-at-login registration in line with `want`. `Ok(changed)`; `Err(actual)`
-/// when it failed, with the state to store instead (the registry's if it can be read, else
-/// `fallback`). Without an adapter (`None`) nothing happens.
-pub fn sync_login(auto: Option<&dyn Autostart>, want: bool, fallback: bool) -> Result<bool, bool> {
+/// Why start at login can or cannot be changed in this process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginAvail {
+    Available,
+    /// The platform adapter cannot register; the choice is only stored.
+    NoAdapter,
+    /// Started with `--data-dir`: the login entry would start the default profile, not this
+    /// one, so it cannot be changed from here.
+    CustomProfile,
+}
+
+pub fn login_availability(adapter_native: bool, custom_profile: bool) -> LoginAvail {
+    if custom_profile {
+        LoginAvail::CustomProfile
+    } else if adapter_native {
+        LoginAvail::Available
+    } else {
+        LoginAvail::NoAdapter
+    }
+}
+
+impl LoginAvail {
+    /// The note shown next to the toggle.
+    pub fn note(self) -> Option<Msg> {
+        match self {
+            LoginAvail::Available => None,
+            LoginAvail::NoAdapter => Some(Msg::SettingsStartAtLoginNote),
+            LoginAvail::CustomProfile => Some(Msg::SettingsStartAtLoginCustomProfile),
+        }
+    }
+
+    /// Whether the toggle can be used.
+    pub fn editable(self) -> bool {
+        !matches!(self, LoginAvail::CustomProfile)
+    }
+}
+
+/// What the toggle shows when the settings window opens: the live registry state when it could
+/// be read, else the stored choice. The flag says stored and live differ.
+pub fn login_view(stored: bool, live: Option<bool>) -> (bool, bool) {
+    match live {
+        Some(l) => (l, l != stored),
+        None => (stored, false),
+    }
+}
+
+/// Brings the start-at-login registration in line with `want`. `Ok(previous)` is the state it
+/// had before when it was changed (`None`: nothing to do); `Err(actual)` when it failed, with
+/// the state to store instead (the registry's if it can be read, else `fallback`). Without an
+/// adapter nothing happens.
+pub fn sync_login(
+    auto: Option<&dyn Autostart>,
+    want: bool,
+    fallback: bool,
+) -> Result<Option<bool>, bool> {
     let Some(auto) = auto else {
-        return Ok(false);
+        return Ok(None);
     };
     let current = auto.is_enabled();
     if current == Ok(want) {
-        return Ok(false);
+        return Ok(None);
     }
+    let before = current.unwrap_or(fallback);
     match auto.set_enabled(want) {
-        Ok(()) => Ok(true),
-        Err(_) => Err(current.unwrap_or(fallback)),
+        Ok(()) => Ok(Some(before)),
+        Err(_) => Err(before),
     }
 }
 
 /// Validates and saves, with the start-at-login registration (Task 208). `update` writes the
-/// settings (true = written); it is never called for a read-only file or invalid input. The registration changes before
-/// the file is written; if the write then fails it is put back. A failed registration still
-/// saves everything else, with the choice stored as the real state, and reports
-/// `SavedLoginFailed`. Read-only and invalid input never touch the registry.
+/// settings (true = written); it is never called for a read-only file or invalid input. The
+/// registration changes before the file is written; if the write then fails the previous state
+/// is put back. A failed registration still saves everything else, with the choice stored as
+/// the real state, and reports `SavedLoginFailed`.
 pub fn run_save_with_login(
     read_only: bool,
     draft: &Draft,
@@ -323,10 +375,8 @@ pub fn run_save_with_login(
         new.startup.launch_at_login = actual;
     }
     if !update(new) {
-        if login == Ok(true) {
-            if let Some(auto) = auto {
-                let _ = auto.set_enabled(!want);
-            }
+        if let (Ok(Some(before)), Some(auto)) = (login, auto) {
+            let _ = auto.set_enabled(before);
         }
         return SaveResult::Failed;
     }

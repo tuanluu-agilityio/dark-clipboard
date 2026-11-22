@@ -1430,6 +1430,8 @@ mod tests {
         h.fake.copy(text_copy("copied before Start"));
         std::thread::sleep(Duration::from_millis(300));
         assert_eq!(a.get_storage_stats(&Caller::Ui).unwrap().clips, 0);
+        // Not even read: the policy said no before any clipboard content was touched (GC-03).
+        assert_eq!(h.fake.read_calls(), 0);
         // Start: persisted, and capture begins.
         let mut s = a.settings();
         s.finish_onboarding(true);
@@ -1438,6 +1440,18 @@ mod tests {
         let (saved, o) = Settings::load(&h.dir.path().join("settings.json"));
         assert_eq!(o, crate::settings::LoadOutcome::Loaded);
         assert!(saved.privacy.capture_enabled && !saved.needs_welcome());
+        // A copy after Start is captured; the one from before is not in the history.
+        h.fake.copy(text_copy("copied after Start"));
+        let deadline = Instant::now() + WAIT;
+        let rows = loop {
+            let page = a.search_clips(&Caller::Ui, query(None)).unwrap();
+            if !page.items.is_empty() || Instant::now() > deadline {
+                break page.items;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].preview, "copied after Start");
     }
 
     #[test]

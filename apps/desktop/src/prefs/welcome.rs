@@ -33,12 +33,12 @@ pub fn run_welcome(
     }
     let mut new = base.clone();
     new.finish_onboarding(start);
-    let mut changed = false;
+    let mut before = None;
     let mut failed = false;
     if start {
         match sync_login(auto, login, base.startup.launch_at_login) {
-            Ok(c) => {
-                changed = c;
+            Ok(prev) => {
+                before = prev;
                 new.startup.launch_at_login = login;
             }
             Err(actual) => {
@@ -48,10 +48,8 @@ pub fn run_welcome(
         }
     }
     if !update(new) {
-        if changed {
-            if let Some(auto) = auto {
-                let _ = auto.set_enabled(!login);
-            }
+        if let (Some(before), Some(auto)) = (before, auto) {
+            let _ = auto.set_enabled(before);
         }
         return WelcomeResult::Failed;
     }

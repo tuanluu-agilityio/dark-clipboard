@@ -80,6 +80,10 @@ messages! {
         "Dark Clipboard does not support this operating system yet.",
         "Dark Clipboard chưa hỗ trợ hệ điều hành này."
     ),
+    CliCaptureOff => (
+        "Capture is off until you press Start in the app. Run the app (without --headless) once with the same --data-dir and press Start.",
+        "Chưa ghi lại gì cho đến khi bạn nhấn Bắt đầu trong ứng dụng. Hãy chạy ứng dụng (không có --headless) một lần với cùng --data-dir và nhấn Bắt đầu."
+    ),
     CliStartFailed => (
         "Dark Clipboard could not start.",
         "Dark Clipboard không thể khởi động."
@@ -204,6 +208,7 @@ messages! {
     CliSeedDone => ("Demo clips written:", "Đã ghi các mục mẫu:"),
     // Tray icon and menu (Task 202)
     TrayOpen => ("Open", "Mở"),
+    TrayStartCapturing => ("Start capturing...", "Bắt đầu ghi nhớ..."),
     TrayHistory => ("History...", "Lịch sử..."),
     TrayPause => ("Pause capture", "Tạm dừng ghi nhớ"),
     TrayPause5Min => ("5 minutes", "5 phút"),
@@ -454,6 +459,18 @@ messages! {
     SettingsDataFolder => ("Data folder", "Thư mục dữ liệu"),
     SettingsOpenFolder => ("Open folder", "Mở thư mục"),
     SettingsOpenFolderFailed => ("The folder could not be opened", "Không mở được thư mục"),
+    SettingsStartAtLoginCustomProfile => (
+        "Not available with a custom data folder: the login entry would start the default profile.",
+        "Không dùng được với thư mục dữ liệu tùy chọn: mục khởi động sẽ chạy hồ sơ mặc định."
+    ),
+    SettingsStartAtLoginDrift => (
+        "The system's real state is shown; it differs from the saved setting. Save to apply the toggle.",
+        "Đang hiện trạng thái thật của hệ thống, khác với cài đặt đã lưu. Nhấn Lưu để áp dụng công tắc."
+    ),
+    SettingsCaptureOff => (
+        "Capture is off: nothing is being saved. It starts only when you press Start.",
+        "Đang tắt ghi nhớ: chưa lưu gì cả. Chỉ bắt đầu khi bạn nhấn Bắt đầu."
+    ),
     SettingsShowWelcome => ("Show welcome", "Hiện màn hình chào mừng"),
     SettingsAutostartFailed => (
         "Saved, but start at login could not be changed. The toggle shows the real state.",
