@@ -244,16 +244,22 @@ impl Host {
                 on: f.source.as_ref() == Some(s),
             });
         }
-        // Only touch the model when something changed (keeps the chip focus stable).
-        let same = self.chips.row_count() == chips.len()
-            && chips
-                .iter()
-                .enumerate()
-                .all(|(i, c)| self.chips.row_data(i).as_ref() == Some(c));
-        if !same {
-            self.chip_focus
-                .retain(|id| chips.iter().any(|c| c.id == id));
-            self.chips.set_vec(chips);
+        // Changed chips are updated in place, so a toggled chip keeps the keyboard focus; the
+        // model is replaced only when the set of chips changes (e.g. other source apps).
+        let old: Vec<Chip> = self.chips.iter().collect();
+        match crate::popup::in_place_changes(&old, &chips, |c| c.id) {
+            Some(changed) => {
+                for i in changed {
+                    if let Some(c) = chips.get(i) {
+                        self.chips.set_row_data(i, c.clone());
+                    }
+                }
+            }
+            None => {
+                self.chip_focus
+                    .retain(|id| chips.iter().any(|c| c.id == id));
+                self.chips.set_vec(chips);
+            }
         }
     }
 

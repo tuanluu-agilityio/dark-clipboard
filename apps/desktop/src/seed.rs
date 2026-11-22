@@ -22,18 +22,32 @@ const SPREAD_MS: i64 = 30 * 86_400_000;
 /// True when seeding may write into `data_dir`: it must be given and must not be (or be inside)
 /// the default data dir. Paths are compared after canonicalisation when they exist.
 pub fn seed_target_allowed(data_dir: Option<&Path>, default: Option<&Path>) -> bool {
-    seed_target_allowed_with(data_dir, default, |p: &Path| std::fs::canonicalize(p))
+    let cwd = std::env::current_dir().ok();
+    seed_target_allowed_with(data_dir, default, cwd.as_deref(), |p: &Path| {
+        std::fs::canonicalize(p)
+    })
 }
 
-/// `seed_target_allowed` with the canonicalisation passed in (tests).
+/// `seed_target_allowed` with the working dir and the canonicalisation passed in (tests).
+/// A relative `data_dir` is taken from `cwd` (refused when the working dir is unknown).
 fn seed_target_allowed_with(
     data_dir: Option<&Path>,
     default: Option<&Path>,
+    cwd: Option<&Path>,
     canonicalize: impl Fn(&Path) -> std::io::Result<PathBuf>,
 ) -> bool {
     let Some(dir) = data_dir else {
         return false;
     };
+    let dir = if dir.is_absolute() {
+        dir.to_path_buf()
+    } else {
+        match cwd {
+            Some(cwd) => cwd.join(dir),
+            None => return false,
+        }
+    };
+    let dir = dir.as_path();
     let Some(default) = default else {
         return true;
     };
@@ -246,7 +260,38 @@ mod tests {
         assert!(!seed_target_allowed_with(
             Some(tmp.path()),
             Some(&default),
+            Some(tmp.path()),
             failing
+        ));
+    }
+
+    #[test]
+    fn a_relative_data_dir_is_resolved_from_the_working_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let default = tmp.path().join("DarkClipboard");
+        std::fs::create_dir_all(&default).unwrap();
+        let canon = |p: &Path| std::fs::canonicalize(p);
+        let rel = Path::new("newsub");
+        // Run from inside the default dir: `--data-dir newsub` is inside it, so refused.
+        assert!(!seed_target_allowed_with(
+            Some(rel),
+            Some(&default),
+            Some(&default),
+            canon
+        ));
+        // Run from elsewhere: allowed.
+        assert!(seed_target_allowed_with(
+            Some(rel),
+            Some(&default),
+            Some(tmp.path()),
+            canon
+        ));
+        // A relative dir without a known working dir is refused.
+        assert!(!seed_target_allowed_with(
+            Some(rel),
+            Some(&default),
+            None,
+            canon
         ));
     }
 
