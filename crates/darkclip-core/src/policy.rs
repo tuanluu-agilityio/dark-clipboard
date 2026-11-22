@@ -57,6 +57,27 @@ pub enum SkipReason {
     Busy,
 }
 
+impl SkipReason {
+    /// Stable `snake_case` name (stats keys, envelopes). Independent of `Debug`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::Paused => "paused",
+            Self::Private => "private",
+            Self::SelfWrite => "self_write",
+            Self::OsConcealed => "os_concealed",
+            Self::DarkshotExcluded => "darkshot_excluded",
+            Self::Transient => "transient",
+            Self::ExcludedApp => "excluded_app",
+            Self::KindDisabled => "kind_disabled",
+            Self::TooLarge => "too_large",
+            Self::NothingReadable => "nothing_readable",
+            Self::Sensitive => "sensitive",
+            Self::Busy => "busy",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadPlan {
     pub formats: Vec<AvailableFormat>,
@@ -199,6 +220,28 @@ mod tests {
     use super::*;
     use crate::markers::{linux_markers, macos_markers, windows_markers};
     use crate::model::SourceConfidence;
+
+    #[test]
+    fn skip_reason_names_are_fixed_snake_case() {
+        let expected = [
+            (SkipReason::Disabled, "disabled"),
+            (SkipReason::Paused, "paused"),
+            (SkipReason::Private, "private"),
+            (SkipReason::SelfWrite, "self_write"),
+            (SkipReason::OsConcealed, "os_concealed"),
+            (SkipReason::DarkshotExcluded, "darkshot_excluded"),
+            (SkipReason::Transient, "transient"),
+            (SkipReason::ExcludedApp, "excluded_app"),
+            (SkipReason::KindDisabled, "kind_disabled"),
+            (SkipReason::TooLarge, "too_large"),
+            (SkipReason::NothingReadable, "nothing_readable"),
+            (SkipReason::Sensitive, "sensitive"),
+            (SkipReason::Busy, "busy"),
+        ];
+        for (reason, name) in expected {
+            assert_eq!(reason.name(), name);
+        }
+    }
 
     const NOW: Timestamp = Timestamp(1_795_320_104_903);
     const ALL_KINDS: [ClipType; 7] = [
