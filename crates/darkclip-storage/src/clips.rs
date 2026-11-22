@@ -277,9 +277,10 @@ impl Storage {
         tx.commit()?;
 
         // After commit: unlink blobs the old representations or thumbnail used and
-        // nothing references any more. A failure here only leaves an orphan.
+        // nothing references any more (under BEGIN IMMEDIATE). A failure here only
+        // leaves an orphan for the next sweep.
         if !stale.is_empty() {
-            let _ = blobs::remove_unreferenced(&self.conn, &self.dir, &stale);
+            let _ = blobs::remove_unreferenced(&mut self.conn, &self.dir, &stale);
         }
         Ok(match existing {
             Some(_) => UpsertOutcome::Bumped(clip.id),
@@ -403,6 +404,11 @@ impl Storage {
     }
 
     /// The bytes of representation `ord`, from the row (inline) or its blob file.
+    ///
+    /// Reader race: another connection (the writer) may delete the clip, or replace
+    /// its representations on a bump, and unlink the blob between this connection
+    /// reading the row and opening the file. That surfaces as a transient
+    /// `StorageError::Io(ErrorKind::NotFound)`; callers treat it like a missing clip.
     pub fn read_representation(&self, id: &ClipId, ord: u32) -> Result<Vec<u8>, StorageError> {
         let row: Option<(InlineData, BlobRef)> = self
             .conn

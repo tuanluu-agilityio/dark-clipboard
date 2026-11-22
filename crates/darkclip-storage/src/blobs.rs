@@ -3,10 +3,19 @@
 //! A blob is written to `<file>.tmp`, flushed, then renamed into place, always before
 //! the transaction that references it commits. A crash in between leaves only an
 //! unreferenced file (or a `.tmp`), which `sweep` removes at the next read-write open.
-//! Unix: directories 0700, files 0600.
+//! Unix: directories 0700, files 0600; after a rename the shard directory is fsynced
+//! (and `blobs/` after a new shard), so the entry survives a power loss.
+//!
+//! Locking: blob files are written inside the writer's `BEGIN IMMEDIATE` transaction,
+//! and both the sweep and the post-commit unlink also hold `BEGIN IMMEDIATE` while
+//! they decide what is unreferenced and unlink it. So they can never remove a blob
+//! that another writer has written but not yet committed.
+//!
+//! Cleanup (sweep, unlink of unreferenced blobs) is best-effort: a file that cannot
+//! be removed is skipped and counted, and is retried at the next sweep.
 
 use crate::StorageError;
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
@@ -79,17 +88,38 @@ pub(crate) fn restrict_file(path: &Path) -> Result<(), StorageError> {
     Ok(())
 }
 
-/// Writes `bytes` (whose SHA-256 is `sha`) unless an identical blob already exists.
+/// Flushes a directory entry table (Unix only; Windows has no directory fsync).
+#[cfg(unix)]
+fn sync_dir(dir: &Path) -> Result<(), StorageError> {
+    fs::File::open(dir)?.sync_all()?;
+    Ok(())
+}
+
+/// Whether the file at `path` is exactly the blob `sha` of length `len`.
+fn is_intact(path: &Path, sha: &[u8; 32], len: usize) -> bool {
+    let same_size = fs::metadata(path)
+        .is_ok_and(|m| m.is_file() && u64::try_from(len).is_ok_and(|n| n == m.len()));
+    same_size && fs::read(path).is_ok_and(|b| sha256(&b) == *sha)
+}
+
+/// Writes `bytes` (whose SHA-256 is `sha`) unless an intact copy already exists.
+/// A same-named file with different content (corruption) is replaced.
 pub(crate) fn write(data_dir: &Path, sha: &[u8; 32], bytes: &[u8]) -> Result<(), StorageError> {
     let path = blob_path(data_dir, sha);
-    if let Ok(m) = fs::metadata(&path) {
-        if m.is_file() && u64::try_from(bytes.len()).is_ok_and(|n| n == m.len()) {
-            return Ok(());
-        }
+    if is_intact(&path, sha, bytes.len()) {
+        return Ok(());
     }
-    if let Some(parent) = path.parent() {
-        ensure_private_dir(parent)?;
+    let shard = path
+        .parent()
+        .ok_or(StorageError::Io(std::io::ErrorKind::InvalidInput))?;
+    let new_shard = !shard.is_dir();
+    ensure_private_dir(shard)?;
+    #[cfg(unix)]
+    if new_shard {
+        sync_dir(&data_dir.join(BLOBS_DIR))?;
     }
+    #[cfg(not(unix))]
+    let _ = new_shard;
     let mut tmp = path.clone().into_os_string();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
@@ -99,6 +129,8 @@ pub(crate) fn write(data_dir: &Path, sha: &[u8; 32], bytes: &[u8]) -> Result<(),
         f.sync_all()?;
         drop(f);
         fs::rename(&tmp, &path)?;
+        #[cfg(unix)]
+        sync_dir(shard)?;
         Ok(())
     })();
     if result.is_err() {
@@ -128,21 +160,47 @@ pub(crate) fn is_referenced(conn: &Connection, sha: &[u8; 32]) -> Result<bool, S
     Ok(referenced)
 }
 
-/// Unlinks each blob in `shas` that nothing references any more. Call after commit.
+/// Outcome of a best-effort cleanup pass. Callers in this task ignore it; tests read
+/// it, and Task 009's `sweep_orphan_blobs` reports `removed`.
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Cleanup {
+    pub removed: u64,
+    /// Entries that could not be inspected or removed (left for the next sweep),
+    /// or 1 when the pass was skipped because the write lock was unavailable.
+    pub failed: u64,
+}
+
+fn remove(path: &Path, out: &mut Cleanup) {
+    match fs::remove_file(path) {
+        Ok(()) => out.removed += 1,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => out.failed += 1,
+    }
+}
+
+/// Unlinks each blob in `shas` that nothing references any more, under
+/// `BEGIN IMMEDIATE`. Call after the commit that dropped the references.
 pub(crate) fn remove_unreferenced(
-    conn: &Connection,
+    conn: &mut Connection,
     data_dir: &Path,
     shas: &[[u8; 32]],
-) -> Result<(), StorageError> {
+) -> Cleanup {
+    let mut out = Cleanup::default();
+    let Ok(tx) = conn.transaction_with_behavior(TransactionBehavior::Immediate) else {
+        out.failed += 1;
+        return out;
+    };
     for sha in shas {
-        if !is_referenced(conn, sha)? {
-            match fs::remove_file(blob_path(data_dir, sha)) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
-                _ => {}
-            }
+        match is_referenced(&tx, sha) {
+            Ok(false) => remove(&blob_path(data_dir, sha), &mut out),
+            Ok(true) => {}
+            Err(_) => out.failed += 1,
         }
     }
-    Ok(())
+    // Nothing was written; dropping the transaction only releases the lock.
+    drop(tx);
+    out
 }
 
 fn referenced_set(conn: &Connection) -> Result<HashSet<String>, StorageError> {
@@ -171,37 +229,57 @@ fn is_blob_name(name: &str) -> bool {
     name.len() == 64 && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// Startup orphan sweep: removes `.tmp` leftovers and blob files no row references.
-/// Only touches files named like blobs inside two-hex-digit shard directories.
-/// Returns the number of files removed.
-pub(crate) fn sweep(conn: &Connection, data_dir: &Path) -> Result<u64, StorageError> {
-    let root = data_dir.join(BLOBS_DIR);
-    let referenced = referenced_set(conn)?;
-    let mut removed = 0u64;
-    for shard in fs::read_dir(&root)? {
-        let shard = shard?;
-        let shard_name = shard.file_name();
-        let is_shard = shard_name
+/// Startup orphan sweep: removes `.tmp` leftovers and blob files no row references,
+/// under `BEGIN IMMEDIATE`. Only touches files named like blobs inside
+/// two-hex-digit shard directories. Never fails: errors are skipped and counted.
+pub(crate) fn sweep(conn: &mut Connection, data_dir: &Path) -> Cleanup {
+    let mut out = Cleanup::default();
+    let Ok(tx) = conn.transaction_with_behavior(TransactionBehavior::Immediate) else {
+        out.failed += 1;
+        return out;
+    };
+    let Ok(referenced) = referenced_set(&tx) else {
+        out.failed += 1;
+        return out;
+    };
+    let Ok(shards) = fs::read_dir(data_dir.join(BLOBS_DIR)) else {
+        out.failed += 1;
+        return out;
+    };
+    for shard in shards {
+        let Ok(shard) = shard else {
+            out.failed += 1;
+            continue;
+        };
+        let is_shard = shard
+            .file_name()
             .to_str()
             .is_some_and(|s| s.len() == 2 && s.bytes().all(|b| b.is_ascii_hexdigit()));
-        if !is_shard || !shard.file_type()?.is_dir() {
+        if !is_shard || !shard.file_type().is_ok_and(|t| t.is_dir()) {
             continue;
         }
-        for entry in fs::read_dir(shard.path())? {
-            let entry = entry?;
+        let Ok(entries) = fs::read_dir(shard.path()) else {
+            out.failed += 1;
+            continue;
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                out.failed += 1;
+                continue;
+            };
             let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
-            if !entry.file_type()?.is_file() {
+            if !entry.file_type().is_ok_and(|t| t.is_file()) {
                 continue;
             }
             let stale_tmp = name.strip_suffix(".tmp").is_some_and(is_blob_name);
             let orphan = is_blob_name(&name) && !referenced.contains(&name);
             if stale_tmp || orphan {
-                fs::remove_file(entry.path())?;
-                removed += 1;
+                remove(&entry.path(), &mut out);
             }
         }
     }
-    Ok(removed)
+    drop(tx);
+    out
 }

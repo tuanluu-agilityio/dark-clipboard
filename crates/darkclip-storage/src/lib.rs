@@ -669,4 +669,147 @@ mod tests {
         let dbg = format!("{:?}", text_clip(secret));
         assert!(!dbg.contains(secret), "{dbg}");
     }
+
+    #[test]
+    fn sweep_failure_does_not_fail_open() {
+        let tmp = tempfile::tempdir().unwrap();
+        drop(open(tmp.path()));
+        let blobs = tmp.path().join("blobs");
+        // An orphan that cannot be removed: on Windows the file is held open without
+        // FILE_SHARE_DELETE (std deletes read-only files there, so the read-only
+        // attribute is not enough); on Unix its shard directory is read-only.
+        let stuck_dir = blobs.join("aa");
+        std::fs::create_dir_all(&stuck_dir).unwrap();
+        let stuck = stuck_dir.join("aa".repeat(32));
+        std::fs::write(&stuck, b"orphan").unwrap();
+        #[cfg(windows)]
+        let lock = {
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&stuck)
+                .unwrap()
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&stuck_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        }
+        // a removable orphan in another shard is still swept
+        let free_dir = blobs.join("bb");
+        std::fs::create_dir_all(&free_dir).unwrap();
+        let free = free_dir.join("bb".repeat(32));
+        std::fs::write(&free, b"orphan").unwrap();
+
+        let s = Storage::open(tmp.path(), OpenMode::ReadWrite, clock());
+        assert!(s.is_ok(), "open must not fail because of the sweep");
+        assert!(!free.exists(), "the removable orphan is swept");
+        let mut s = s.unwrap();
+        let again = blobs::sweep(&mut s.conn, tmp.path());
+        #[cfg(windows)]
+        assert_eq!(
+            again,
+            blobs::Cleanup {
+                removed: 0,
+                failed: 1
+            }
+        );
+        let _ = again;
+        drop(s);
+        #[cfg(windows)]
+        {
+            assert!(stuck.exists());
+            drop(lock);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&stuck_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        // the next open retries and succeeds
+        drop(open(tmp.path()));
+        assert!(!stuck.exists());
+    }
+
+    #[test]
+    fn stale_backup_removal_failure_is_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bak = tmp.path().join("history.db.pre-v1.bak");
+        {
+            let c = rusqlite::Connection::open(tmp.path().join("history.db")).unwrap();
+            c.execute_batch("CREATE TABLE legacy(x);").unwrap();
+        }
+        drop(open(tmp.path()));
+        assert!(bak.is_file());
+        // Make the removal fail on every OS: a non-empty directory at the backup path.
+        std::fs::remove_file(&bak).unwrap();
+        std::fs::create_dir(&bak).unwrap();
+        std::fs::write(bak.join("x"), b"x").unwrap();
+        let s = Storage::open(tmp.path(), OpenMode::ReadWrite, clock());
+        assert!(s.is_ok(), "open must not fail on a stuck backup");
+        drop(s);
+        assert!(bak.exists());
+        // once removable again, the next open deletes it
+        std::fs::remove_dir_all(&bak).unwrap();
+        std::fs::write(&bak, b"stale").unwrap();
+        drop(open(tmp.path()));
+        assert!(!bak.exists());
+    }
+
+    #[test]
+    fn corrupted_blob_is_repaired_on_rewrite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path());
+        let text = "r".repeat(70 * 1024);
+        let UpsertOutcome::Inserted(id) = s.upsert_clip(text_clip(&text)).unwrap() else {
+            panic!("expected Inserted");
+        };
+        let files = files_under(&tmp.path().join("blobs"));
+        assert_eq!(files.len(), 1);
+        // same size, different bytes
+        std::fs::write(&files[0], "s".repeat(70 * 1024)).unwrap();
+        assert_eq!(
+            s.read_representation(&id, 0),
+            Err(StorageError::Io(std::io::ErrorKind::InvalidData))
+        );
+        assert_eq!(
+            s.upsert_clip(text_clip(&text)).unwrap(),
+            UpsertOutcome::Bumped(id)
+        );
+        assert_eq!(s.read_representation(&id, 0).unwrap(), text.as_bytes());
+        assert_eq!(files_under(&tmp.path().join("blobs")).len(), 1);
+    }
+
+    #[test]
+    fn deleting_clip_removes_fts_row() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path());
+        let UpsertOutcome::Inserted(id) = s.upsert_clip(text_clip("findable words")).unwrap()
+        else {
+            panic!("expected Inserted");
+        };
+        let rowid: i64 = s
+            .conn
+            .query_row(
+                "SELECT rowid FROM clip_rowid WHERE clip_id = ?1",
+                [id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        s.conn
+            .execute(
+                "INSERT INTO clips_fts (rowid, preview, body, note, tags) \
+                 VALUES (?1, 'findable words', 'findable words', '', '')",
+                [rowid],
+            )
+            .unwrap();
+        let hits = "SELECT count(*) FROM clips_fts WHERE clips_fts MATCH 'findable'";
+        assert_eq!(count(&s, hits), 1);
+        s.conn
+            .execute("DELETE FROM clips WHERE id = ?1", [id.to_string()])
+            .unwrap();
+        assert_eq!(count(&s, "SELECT count(*) FROM clip_rowid"), 0);
+        assert_eq!(count(&s, hits), 0, "cascade fired the FTS delete trigger");
+    }
 }

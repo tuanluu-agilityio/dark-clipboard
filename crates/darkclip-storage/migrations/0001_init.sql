@@ -46,5 +46,7 @@ CREATE VIRTUAL TABLE clips_fts USING fts5(
 );
 -- rowid mapping: clips_fts.rowid = clip_rowid.rowid
 CREATE TABLE clip_rowid (rowid INTEGER PRIMARY KEY, clip_id TEXT UNIQUE NOT NULL REFERENCES clips(id) ON DELETE CASCADE);
+-- Deleting a clip cascades to clip_rowid, which removes the contentless FTS row.
+CREATE TRIGGER clip_rowid_ad AFTER DELETE ON clip_rowid BEGIN DELETE FROM clips_fts WHERE rowid = OLD.rowid; END;
 
 PRAGMA user_version = 1;

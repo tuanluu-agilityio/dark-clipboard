@@ -107,13 +107,12 @@ pub(crate) fn open_with(
     } else {
         // This is a successful run at `supported` after the migrating one:
         // the pre-migration backup has served its purpose.
-        match std::fs::remove_file(backup_path(data_dir, supported)) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
-            _ => {}
-        }
+        // Best-effort: if it cannot be removed now, the next open retries.
+        let _ = std::fs::remove_file(backup_path(data_dir, supported));
     }
 
-    blobs::sweep(&conn, data_dir)?;
+    // Best-effort; never fails the open. Leftovers are retried at the next open.
+    let _ = blobs::sweep(&mut conn, data_dir);
     Ok(Storage::from_parts(conn, data_dir, mode, clock))
 }
 
