@@ -239,7 +239,13 @@ impl H {
 
     /// A new copy and its `ClipAdded`: proves every earlier change was fully processed.
     fn sentinel(&self) -> Vec<AppEvent> {
-        self.fake.copy(text_copy("sentinel clip"));
+        // Owned on purpose: an ownerless sentinel right after an ExcludedApp skip can fall in
+        // D-042 rule 3's 500 ms window (signal time vs actor time) and be skipped, which made
+        // `excluded_app_ole_flush_without_markers_is_skipped` flaky on CI.
+        self.fake.copy(FakeCopy {
+            source: Some(src("sentinel.exe")),
+            ..text_copy("sentinel clip")
+        });
         self.wait_added().1
     }
 }
