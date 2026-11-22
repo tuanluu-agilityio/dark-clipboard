@@ -51,6 +51,8 @@ pub enum MenuAction {
     Resume,
     TogglePrivate,
     Settings,
+    /// "Start capturing...": opens the welcome (the consent path); only while capture is off.
+    StartCapturing,
     Quit,
 }
 
@@ -61,6 +63,8 @@ pub struct MenuModel {
     pub resume_enabled: bool,
     pub private_enabled: bool,
     pub private_checked: bool,
+    /// The "Start capturing..." entry is in the menu (capture is off).
+    pub start_visible: bool,
 }
 
 /// Everything the tray needs for one refresh; built on the worker, applied on the UI thread.
@@ -100,7 +104,8 @@ pub fn icon_id(s: TrayState) -> IconId {
         TrayState::Active => IconId::Normal,
         TrayState::Paused(_) => IconId::Paused,
         TrayState::Private => IconId::Private,
-        TrayState::Off | TrayState::Failed => IconId::Unavailable,
+        TrayState::Off => IconId::Paused,
+        TrayState::Failed => IconId::Unavailable,
     }
 }
 
@@ -111,6 +116,7 @@ pub fn menu_model(s: TrayState) -> MenuModel {
         resume_enabled: matches!(s, TrayState::Paused(_)),
         private_enabled: usable,
         private_checked: s == TrayState::Private,
+        start_visible: s == TrayState::Off,
     }
 }
 
@@ -129,7 +135,11 @@ pub fn mode_for(action: MenuAction, current: TrayState, now: Timestamp) -> Optio
         MenuAction::Resume => Some(CaptureMode::Normal),
         MenuAction::TogglePrivate if current == TrayState::Private => Some(CaptureMode::Normal),
         MenuAction::TogglePrivate => Some(CaptureMode::Private),
-        MenuAction::Open | MenuAction::History | MenuAction::Settings | MenuAction::Quit => None,
+        MenuAction::Open
+        | MenuAction::History
+        | MenuAction::Settings
+        | MenuAction::StartCapturing
+        | MenuAction::Quit => None,
     }
 }
 
@@ -228,6 +238,9 @@ mod win {
     pub type OnAction = Arc<dyn Fn(MenuAction) + Send + Sync>;
 
     pub struct Tray {
+        menu: Menu,
+        start: MenuItem,
+        start_shown: bool,
         icon: TrayIcon,
         shown: Option<IconId>,
         open: MenuItem,
@@ -266,6 +279,7 @@ mod win {
             let private = CheckMenuItem::new(t(l, Msg::TrayPrivate), true, false, None);
             let settings = MenuItem::new(t(l, Msg::TraySettings), true, None);
             let quit = MenuItem::new(t(l, Msg::TrayQuit), true, None);
+            let start = MenuItem::new(t(l, Msg::TrayStartCapturing), true, None);
             let sep1 = tray_icon::menu::PredefinedMenuItem::separator();
             let sep2 = tray_icon::menu::PredefinedMenuItem::separator();
             let menu = Menu::with_items(&[
@@ -283,10 +297,11 @@ mod win {
                 (private.id().clone(), MenuAction::TogglePrivate),
                 (settings.id().clone(), MenuAction::Settings),
                 (quit.id().clone(), MenuAction::Quit),
+                (start.id().clone(), MenuAction::StartCapturing),
             ];
             let id = icon_id(first.state);
             let built = TrayIconBuilder::new()
-                .with_menu(Box::new(menu))
+                .with_menu(Box::new(menu.clone()))
                 .with_menu_on_left_click(false)
                 .with_tooltip(tooltip_for(&first))
                 .with_icon(icon_for(id)?)
@@ -312,6 +327,9 @@ mod win {
                 }
             }));
             let mut tray = Tray {
+                menu,
+                start,
+                start_shown: false,
                 icon: built,
                 shown: Some(id),
                 open,
@@ -351,7 +369,19 @@ mod win {
             self.private.set_text(t(l, Msg::TrayPrivate));
             self.settings.set_text(t(l, Msg::TraySettings));
             self.quit.set_text(t(l, Msg::TrayQuit));
+            self.start.set_text(t(l, Msg::TrayStartCapturing));
             let m = menu_model(u.state);
+            // Shown only while capture is off: the first entry, above Open.
+            if m.start_visible != self.start_shown {
+                let done = if m.start_visible {
+                    self.menu.insert(&self.start, 0).is_ok()
+                } else {
+                    self.menu.remove(&self.start).is_ok()
+                };
+                if done {
+                    self.start_shown = m.start_visible;
+                }
+            }
             self.pause.set_enabled(m.pause_enabled);
             self.resume.set_enabled(m.resume_enabled);
             self.private.set_enabled(m.private_enabled);
@@ -418,7 +448,9 @@ mod tests {
         assert_eq!(icon_id(TrayState::Active), IconId::Normal);
         assert_eq!(icon_id(TrayState::Paused(LATER)), IconId::Paused);
         assert_eq!(icon_id(TrayState::Private), IconId::Private);
-        assert_eq!(icon_id(TrayState::Off), IconId::Unavailable);
+        // Capture switched off has its own glyph, not the failure one.
+        assert_eq!(icon_id(TrayState::Off), IconId::Paused);
+        assert_ne!(icon_id(TrayState::Off), icon_id(TrayState::Failed));
         assert_eq!(icon_id(TrayState::Failed), IconId::Unavailable);
     }
 
@@ -463,6 +495,24 @@ mod tests {
         for s in [TrayState::Off, TrayState::Failed] {
             assert_eq!(flags(menu_model(s)), (false, false, false, false));
         }
+    }
+
+    #[test]
+    fn start_capturing_is_offered_only_while_capture_is_off() {
+        assert!(menu_model(TrayState::Off).start_visible);
+        for s in [
+            TrayState::Active,
+            TrayState::Paused(LATER),
+            TrayState::Private,
+            TrayState::Failed,
+        ] {
+            assert!(!menu_model(s).start_visible, "{s:?}");
+        }
+        // It opens the welcome (the consent path); it never changes the capture mode itself.
+        assert_eq!(
+            mode_for(MenuAction::StartCapturing, TrayState::Off, NOW),
+            None
+        );
     }
 
     #[test]

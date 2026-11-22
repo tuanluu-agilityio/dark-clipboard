@@ -226,6 +226,29 @@ fn default_settings_path() -> Option<PathBuf> {
     None
 }
 
+/// True when started with `--data-dir`: a non-default profile (tests, demos). The login entry
+/// starts the default profile, so such an instance never changes it (Task 208).
+static CUSTOM_PROFILE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn custom_profile() -> bool {
+    CUSTOM_PROFILE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The start-at-login registration of this platform (Task 208); `None` where the adapter has
+/// none and for a custom profile. Cheap to create: it holds no handle.
+#[cfg(windows)]
+fn autostart() -> Option<Box<dyn darkclip_platform::Autostart>> {
+    if custom_profile() {
+        return None;
+    }
+    Some(Box::new(darkclip_windows::RegistryAutostart::new()))
+}
+
+#[cfg(not(windows))]
+fn autostart() -> Option<Box<dyn darkclip_platform::Autostart>> {
+    None
+}
+
 #[cfg(not(windows))]
 fn platform() -> Result<darkclip_platform::PlatformBundle, darkclip_platform::PlatformError> {
     Err(darkclip_platform::PlatformError::Unsupported(
@@ -246,6 +269,7 @@ fn main() -> ExitCode {
         eprintln!("{}", t(lang, Msg::CliUsage));
         return ExitCode::from(2);
     };
+    CUSTOM_PROFILE.store(cli.data_dir.is_some(), std::sync::atomic::Ordering::Relaxed);
     if cli.mode == Mode::Help {
         println!("{}", t(lang, Msg::CliUsage));
         return ExitCode::SUCCESS;
@@ -469,6 +493,12 @@ fn run_headless(cli: &Cli, lang: Lang) -> ExitCode {
 
     println!("{}", t(app.lang(), Msg::CliRunning));
     log.event("running", &[]);
+    // A fresh data folder never captures before Start is pressed in the app (no bypass flag):
+    // say so instead of looking broken.
+    if !app.settings().privacy.capture_enabled {
+        log.event("capture_off", &[]);
+        println!("{}", t(app.lang(), Msg::CliCaptureOff));
+    }
     let why = match cli.exit_after_ms {
         Some(ms) => match stop_rx.recv_timeout(Duration::from_millis(ms)) {
             Ok(()) => "signal",

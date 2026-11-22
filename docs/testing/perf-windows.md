@@ -4,6 +4,8 @@ Date: 2026-11-22. Machine: Windows 11 Home Single Language 10.0.26300, the owner
 Binary: `cargo build --release -p dark-clipboard` (release profile: opt-level z, lto, panic abort), 1,783,296 bytes.
 The clipboard was never written by these runs; the monitor only listened.
 
+> Since Task 208 (D-054) a fresh data folder captures nothing: `--headless` logs `capture_off` and prints that capture is off until Start is pressed in the app. For a run that needs capture, first run the UI once with the same `--data-dir` (`dark-clipboard.exe --data-dir <scratch>`), press Start in the welcome, quit from the tray, then start `--headless` on that folder. There is no flag that skips the welcome.
+
 ## 10 minute idle
 
 Command (sampled by a PowerShell script, one `Get-Process -Id <pid>` per 60 s):

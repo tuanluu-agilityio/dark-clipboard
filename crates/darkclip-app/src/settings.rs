@@ -116,6 +116,11 @@ pub struct Settings {
     pub ui: UiSettings,
     #[serde(default)]
     pub startup: StartupSettings,
+    /// The first-run welcome was answered (Start or Not now; Task 208). A missing field means
+    /// true: every file written before Task 208 belongs to an existing user, who never sees the
+    /// welcome and keeps the capture state in the file. Only `first_run` writes `false`.
+    #[serde(default = "default_true")]
+    pub onboarding_done: bool,
 }
 
 impl Default for Settings {
@@ -127,14 +132,52 @@ impl Default for Settings {
             shortcuts: Shortcuts::default(),
             ui: UiSettings::default(),
             startup: StartupSettings::default(),
+            onboarding_done: true,
         }
+    }
+}
+
+impl Settings {
+    /// What a fresh install starts with (D-044): capture off and the welcome pending, until the
+    /// user presses Start. Everything else is the default (start at login off).
+    pub fn first_run() -> Settings {
+        let mut s = Settings::default();
+        s.privacy.capture_enabled = false;
+        s.onboarding_done = false;
+        s
+    }
+
+    /// Defaults for a file that cannot be written (unreadable, newer version, unmovable corrupt
+    /// file). Nothing was consented to, so capture is off (`capture_enabled` is the newer
+    /// file's own flag when it could be parsed); no welcome, as its answer could not be saved.
+    pub fn read_only_default(capture_enabled: bool) -> Settings {
+        let mut s = Settings::default();
+        s.privacy.capture_enabled = capture_enabled;
+        s
+    }
+
+    /// True while the first-run welcome has not been answered.
+    pub fn needs_welcome(&self) -> bool {
+        !self.onboarding_done
+    }
+
+    /// Records the answer to the welcome: Start turns capture on, Not now keeps it off. The
+    /// welcome never comes back on its own after either. Not now after the welcome was already
+    /// answered (it was opened again from About) changes nothing: it never turns capture off.
+    pub fn finish_onboarding(&mut self, start: bool) {
+        if start {
+            self.privacy.capture_enabled = true;
+        } else if !self.onboarding_done {
+            self.privacy.capture_enabled = false;
+        }
+        self.onboarding_done = true;
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadOutcome {
     Loaded,
-    /// No file (first run) or an unreadable one; defaults in use, nothing renamed.
+    /// No file (first run): first-run settings (capture off, welcome pending).
     Defaulted,
     /// The file was unusable and was renamed to `backup`; defaults in use.
     RecoveredFromCorrupt {
@@ -162,11 +205,11 @@ impl Settings {
         let bytes = match std::fs::read(path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return (Settings::default(), LoadOutcome::Defaulted)
+                return (Settings::first_run(), LoadOutcome::Defaulted)
             }
             Err(_) => {
                 return (
-                    Settings::default(),
+                    Settings::read_only_default(false),
                     LoadOutcome::DefaultedReadOnly("settings file unreadable"),
                 )
             }
@@ -196,8 +239,8 @@ impl Settings {
                 (s, outcome)
             }
             // A newer version wrote it: leave the file alone, never overwrite it.
-            Ok(_) => (
-                Settings::default(),
+            Ok(newer) => (
+                Settings::read_only_default(newer.privacy.capture_enabled),
                 LoadOutcome::DefaultedReadOnly("settings file is from a newer version"),
             ),
             Err(_) => Self::recover(path, |from, to| std::fs::rename(from, to)),
@@ -214,12 +257,12 @@ impl Settings {
         if rename(path, &backup).is_err() {
             // Still in place: saving would destroy the only copy.
             return (
-                Settings::default(),
+                Settings::read_only_default(false),
                 LoadOutcome::DefaultedReadOnly("corrupt settings file could not be moved"),
             );
         }
         (
-            Settings::default(),
+            Settings::first_run(),
             LoadOutcome::RecoveredFromCorrupt { backup },
         )
     }
@@ -266,11 +309,119 @@ mod tests {
     }
 
     #[test]
-    fn settings_missing_file_defaults() {
+    fn fresh_install_has_capture_off_and_the_welcome_pending() {
         let d = tempfile::tempdir().unwrap();
         let (s, o) = Settings::load(&d.path().join("settings.json"));
-        assert_eq!(s, Settings::default());
         assert_eq!(o, LoadOutcome::Defaulted);
+        assert_eq!(s, Settings::first_run());
+        assert!(!s.privacy.capture_enabled);
+        assert!(!s.onboarding_done);
+        assert!(s.needs_welcome());
+        // Start at login stays off until the user asks for it (D-044).
+        assert!(!s.startup.launch_at_login);
+    }
+
+    #[test]
+    fn start_enables_capture_and_finishes_the_welcome() {
+        let mut s = Settings::first_run();
+        s.finish_onboarding(true);
+        assert!(s.privacy.capture_enabled);
+        assert!(s.onboarding_done);
+        assert!(!s.needs_welcome());
+    }
+
+    #[test]
+    fn not_now_keeps_capture_off_and_finishes_the_welcome() {
+        let mut s = Settings::first_run();
+        s.finish_onboarding(false);
+        assert!(!s.privacy.capture_enabled);
+        assert!(s.onboarding_done);
+        assert!(!s.needs_welcome());
+    }
+
+    #[test]
+    fn not_now_from_a_reopened_welcome_never_turns_capture_off() {
+        let mut s = Settings::default();
+        assert!(s.privacy.capture_enabled && s.onboarding_done);
+        s.finish_onboarding(false);
+        assert!(s.privacy.capture_enabled);
+    }
+
+    #[test]
+    fn start_persists_and_the_welcome_does_not_come_back() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        let (mut s, _) = Settings::load(&p);
+        s.finish_onboarding(true);
+        s.save(&p).unwrap();
+        let (back, o) = Settings::load(&p);
+        assert_eq!(o, LoadOutcome::Loaded);
+        assert!(back.privacy.capture_enabled);
+        assert!(!back.needs_welcome());
+    }
+
+    #[test]
+    fn a_first_run_file_without_an_answer_still_shows_the_welcome() {
+        // The first-run language save writes the file before the user answers.
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        Settings::first_run().save(&p).unwrap();
+        let (s, o) = Settings::load(&p);
+        assert_eq!(o, LoadOutcome::Loaded);
+        assert!(s.needs_welcome());
+        assert!(!s.privacy.capture_enabled);
+    }
+
+    #[test]
+    fn existing_settings_files_are_done_and_keep_their_capture_state() {
+        // Written before Task 208: no `onboarding_done`. Serde's default for a missing field is
+        // true, so an upgrader never sees the welcome; a first-run file always carries the
+        // field (`false`), so it is told apart from them.
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        std::fs::write(&p, br#"{"settings_version":1}"#).unwrap();
+        let (s, o) = Settings::load(&p);
+        assert_eq!(o, LoadOutcome::Loaded);
+        assert!(s.onboarding_done);
+        assert!(!s.needs_welcome());
+        assert!(s.privacy.capture_enabled);
+        let mut old = Settings::default();
+        old.privacy.capture_enabled = false;
+        let mut json = serde_json::to_value(&old).unwrap();
+        json.as_object_mut().unwrap().remove("onboarding_done");
+        std::fs::write(&p, serde_json::to_vec(&json).unwrap()).unwrap();
+        let (s, _) = Settings::load(&p);
+        assert!(!s.needs_welcome());
+        assert!(!s.privacy.capture_enabled);
+    }
+
+    #[test]
+    fn corrupt_file_recovery_is_a_first_run_but_read_only_defaults_are_not() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        std::fs::write(&p, b"not json").unwrap();
+        let (s, o) = Settings::load(&p);
+        assert!(matches!(o, LoadOutcome::RecoveredFromCorrupt { .. }));
+        assert!(s.needs_welcome());
+        assert!(!s.privacy.capture_enabled);
+        // A newer-version file cannot be written, so the welcome could not remember its answer.
+        std::fs::write(&p, br#"{"settings_version":999}"#).unwrap();
+        let (s, o) = Settings::load(&p);
+        assert!(matches!(o, LoadOutcome::DefaultedReadOnly(_)));
+        assert!(!s.needs_welcome());
+        // The newer file's own capture flag wins (here: the field is missing, so its default).
+        let mut off = serde_json::to_value(Settings::first_run()).unwrap();
+        off["settings_version"] = 999.into();
+        off["onboarding_done"] = true.into();
+        std::fs::write(&p, off.to_string()).unwrap();
+        let (s, _) = Settings::load(&p);
+        assert!(!s.privacy.capture_enabled);
+        // Unreadable and unmovable files: nothing was consented to, so capture stays off.
+        std::fs::remove_file(&p).unwrap();
+        std::fs::create_dir(&p).unwrap();
+        let (s, o) = Settings::load(&p);
+        assert!(matches!(o, LoadOutcome::DefaultedReadOnly(_)));
+        assert!(!s.privacy.capture_enabled && !s.needs_welcome());
     }
 
     #[test]
@@ -385,7 +536,7 @@ mod tests {
         let p = d.path().join("settings.json");
         std::fs::write(&p, b"\x00 not json {{{").unwrap();
         let (s, o) = Settings::load(&p);
-        assert_eq!(s, Settings::default());
+        assert_eq!(s, Settings::first_run());
         let LoadOutcome::RecoveredFromCorrupt { backup } = o else {
             panic!("expected recovery, got {o:?}");
         };
@@ -409,7 +560,7 @@ mod tests {
         )
         .unwrap();
         let (s, o) = Settings::load(&p);
-        assert_eq!(s, Settings::default());
+        assert_eq!(s, Settings::first_run());
         assert!(matches!(o, LoadOutcome::RecoveredFromCorrupt { .. }));
     }
 
@@ -434,7 +585,8 @@ mod tests {
         let p = d.path().join("settings.json");
         std::fs::create_dir(&p).unwrap();
         let (s, o) = Settings::load(&p);
-        assert_eq!(s, Settings::default());
+        assert_eq!(s, Settings::read_only_default(false));
+        assert!(!s.privacy.capture_enabled);
         assert!(matches!(o, LoadOutcome::DefaultedReadOnly(_)), "{o:?}");
         assert!(p.is_dir());
     }
@@ -447,7 +599,8 @@ mod tests {
         let (s, o) = Settings::recover(&p, |_, _| {
             Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
         });
-        assert_eq!(s, Settings::default());
+        assert_eq!(s, Settings::read_only_default(false));
+        assert!(!s.privacy.capture_enabled);
         assert!(matches!(o, LoadOutcome::DefaultedReadOnly(_)), "{o:?}");
         assert_eq!(std::fs::read(&p).unwrap(), b"garbage");
     }

@@ -80,6 +80,10 @@ messages! {
         "Dark Clipboard does not support this operating system yet.",
         "Dark Clipboard chưa hỗ trợ hệ điều hành này."
     ),
+    CliCaptureOff => (
+        "Capture is off until you press Start in the app. Run the app (without --headless) once with the same --data-dir and press Start.",
+        "Chưa ghi lại gì cho đến khi bạn nhấn Bắt đầu trong ứng dụng. Hãy chạy ứng dụng (không có --headless) một lần với cùng --data-dir và nhấn Bắt đầu."
+    ),
     CliStartFailed => (
         "Dark Clipboard could not start.",
         "Dark Clipboard không thể khởi động."
@@ -204,6 +208,7 @@ messages! {
     CliSeedDone => ("Demo clips written:", "Đã ghi các mục mẫu:"),
     // Tray icon and menu (Task 202)
     TrayOpen => ("Open", "Mở"),
+    TrayStartCapturing => ("Start capturing...", "Bắt đầu ghi nhớ..."),
     TrayHistory => ("History...", "Lịch sử..."),
     TrayPause => ("Pause capture", "Tạm dừng ghi nhớ"),
     TrayPause5Min => ("5 minutes", "5 phút"),
@@ -454,6 +459,56 @@ messages! {
     SettingsDataFolder => ("Data folder", "Thư mục dữ liệu"),
     SettingsOpenFolder => ("Open folder", "Mở thư mục"),
     SettingsOpenFolderFailed => ("The folder could not be opened", "Không mở được thư mục"),
+    SettingsStartAtLoginCustomProfile => (
+        "Not available with a custom data folder: the login entry would start the default profile.",
+        "Không dùng được với thư mục dữ liệu tùy chọn: mục khởi động sẽ chạy hồ sơ mặc định."
+    ),
+    SettingsStartAtLoginDrift => (
+        "The system's real state is shown; it differs from the saved setting. Save to apply the toggle.",
+        "Đang hiện trạng thái thật của hệ thống, khác với cài đặt đã lưu. Nhấn Lưu để áp dụng công tắc."
+    ),
+    SettingsCaptureOff => (
+        "Capture is off: nothing is being saved. It starts only when you press Start.",
+        "Đang tắt ghi nhớ: chưa lưu gì cả. Chỉ bắt đầu khi bạn nhấn Bắt đầu."
+    ),
+    SettingsShowWelcome => ("Show welcome", "Hiện màn hình chào mừng"),
+    SettingsAutostartFailed => (
+        "Saved, but start at login could not be changed. The toggle shows the real state.",
+        "Đã lưu, nhưng không thay đổi được khởi động cùng hệ thống. Công tắc hiện trạng thái thật."
+    ),
+    // First-run welcome (Task 208)
+    WelcomeTitle => ("Welcome to Dark Clipboard", "Chào mừng đến với Dark Clipboard"),
+    WelcomeShortcut => (
+        "Press {shortcut} anywhere to open your clipboard history.",
+        "Nhấn {shortcut} ở bất cứ đâu để mở lịch sử bảng nhớ tạm."
+    ),
+    WelcomeNever => (
+        "Never captured: copies from password managers, anything the system marks as concealed, and copies Darkshot excludes.",
+        "Không bao giờ ghi lại: nội dung sao chép từ trình quản lý mật khẩu, nội dung hệ thống đánh dấu là ẩn, và nội dung Darkshot loại trừ."
+    ),
+    WelcomeData => (
+        "Your history stays in this folder on your computer: {path}",
+        "Lịch sử của bạn nằm trong thư mục này trên máy của bạn: {path}"
+    ),
+    WelcomeNoCloud => (
+        "No account, no cloud, no telemetry. Nothing leaves this computer.",
+        "Không tài khoản, không đám mây, không gửi dữ liệu. Không có gì rời khỏi máy này."
+    ),
+    WelcomeCaptureOff => (
+        "Nothing is captured until you press Start.",
+        "Sẽ không ghi lại gì cho đến khi bạn nhấn Bắt đầu."
+    ),
+    WelcomeAutostart => ("Start with Windows", "Khởi động cùng Windows"),
+    WelcomeStart => ("Start", "Bắt đầu"),
+    WelcomeNotNow => ("Not now", "Để sau"),
+    WelcomeSaveFailed => (
+        "Your choice could not be saved. Try again.",
+        "Không lưu được lựa chọn của bạn. Hãy thử lại."
+    ),
+    WelcomeAutostartFailed => (
+        "Capture is on, but start at login could not be set. You can try again in Settings.",
+        "Đã bật ghi lại, nhưng không đặt được khởi động cùng hệ thống. Bạn có thể thử lại trong Cài đặt."
+    ),
 }
 
 /// Messages allowed to read the same in both languages.

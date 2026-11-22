@@ -45,6 +45,7 @@ const KNOWN_EVENTS: &[&str] = &[
     "ipc_stopped",
     "tray_failed",
     "tray_quit",
+    "capture_off",
 ];
 
 #[cfg(windows)]
@@ -77,6 +78,11 @@ fn headless_with_data_dir_starts_and_stops() {
     }
     assert!(lines.iter().any(|l| l.contains(" start")));
     assert!(lines.iter().any(|l| l.contains(" stop")));
+    // A fresh data folder: capture is off until Start is pressed in the app (Task 208). The
+    // run says so, in the log (a static event) and on the console.
+    assert!(lines.iter().any(|l| l.ends_with(" capture_off")), "{text}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("press Start"), "{stdout}");
     // One content-free line of per-reason skip counts on stop (Task 110).
     let skips: Vec<&&str> = lines.iter().filter(|l| l.contains(" skips")).collect();
     assert_eq!(skips.len(), 1, "{text}");

@@ -7,8 +7,8 @@
 use crate::caps::{Capabilities, ShortcutSupport, SourceSupport, Support};
 use crate::error::PlatformError;
 use crate::traits::{
-    ChangeSignal, ClipboardAccess, ClipboardMeta, ClipboardMonitor, PlatformBundle, PlatformFormat,
-    SourceResolver,
+    Autostart, ChangeSignal, ClipboardAccess, ClipboardMeta, ClipboardMonitor, PlatformBundle,
+    PlatformFormat, SourceResolver,
 };
 use darkclip_core::markers::PrivacyMarker;
 use darkclip_core::policy::ReadPlan;
@@ -400,6 +400,46 @@ impl ClipboardAccess for FakeAccess {
 
     fn discard_prepared(&mut self) {
         lock(&self.state).discard_calls += 1;
+    }
+}
+
+/// In-memory start-at-login registration for tests. Clones share the state, so a test keeps
+/// one handle and gives the other to the code under test.
+#[derive(Clone, Default)]
+pub struct FakeAutostart {
+    state: Arc<Mutex<(bool, bool)>>,
+}
+
+impl FakeAutostart {
+    /// Starts with the given registration; `fail` makes every call return an error.
+    pub fn new(enabled: bool, fail: bool) -> Self {
+        Self {
+            state: Arc::new(Mutex::new((enabled, fail))),
+        }
+    }
+
+    /// The current registration, as the code under test left it.
+    pub fn enabled(&self) -> bool {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner).0
+    }
+}
+
+impl Autostart for FakeAutostart {
+    fn is_enabled(&self) -> Result<bool, PlatformError> {
+        let g = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if g.1 {
+            return Err(PlatformError::Backend { code: 5 });
+        }
+        Ok(g.0)
+    }
+
+    fn set_enabled(&self, enabled: bool) -> Result<(), PlatformError> {
+        let mut g = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if g.1 {
+            return Err(PlatformError::Backend { code: 5 });
+        }
+        g.0 = enabled;
+        Ok(())
     }
 }
 

@@ -24,7 +24,7 @@ mod generated {
 }
 pub use generated::{
     AppRow, Chip, ClipRow, DetailState, FileRow, FilterItem, HistoryWindow, KindItem, MainWindow,
-    SText, Seg, SettingsWindow, Strings, Theme,
+    SText, Seg, SettingsWindow, Strings, Theme, WText, WelcomeWindow,
 };
 
 mod common;
@@ -33,6 +33,7 @@ mod popup_host;
 mod settings_host;
 mod shortcut_host;
 mod tray_host;
+mod welcome_host;
 
 use crate::log::{Log, Val};
 use crate::shortcut::{Failure, Status as ShortcutStatus};
@@ -267,6 +268,7 @@ fn push_status(
         });
         popup_host::set_enter_pastes(enter_pastes);
         popup_host::set_window_prefs(center, close_on_focus_loss);
+        welcome_host::set_snapshot(&snapshot, &caps);
         settings_host::set_snapshot(&snapshot, app_status, caps, sc.warning());
         history_host::set_remembered(&remembered);
         if let Some(w) = ui.upgrade() {
@@ -463,6 +465,7 @@ fn handle_tray_action(action: MenuAction, window: &Weak<MainWindow>, poster: &Po
         }
         MenuAction::Settings => settings_host::show(),
         MenuAction::History => history_host::show(),
+        MenuAction::StartCapturing => welcome_host::show(),
         MenuAction::Quit => {
             log.event("tray_quit", &[]);
             let _ = slint::quit_event_loop();
@@ -550,7 +553,9 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
     // The history window is created when it is first opened (tray "History..." or Ctrl+H).
     history_host::install(worker.poster(), args_lang);
     // The settings window too (tray "Settings...", the popup gear and `ShowSettings`).
-    settings_host::install(worker.poster(), data_dir);
+    settings_host::install(worker.poster(), data_dir.clone());
+    // The first-run welcome (Task 208): shown by the first status refresh while unanswered.
+    welcome_host::install(worker.poster(), data_dir);
     popup_host::close_on_focus_loss(&window);
     window.window().on_close_requested(|| {
         popup_host::shutdown_pending();

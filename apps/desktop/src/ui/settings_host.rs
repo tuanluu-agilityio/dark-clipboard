@@ -7,7 +7,7 @@
 //! thread. The UI thread never waits for any of them.
 //!
 //! Saves go through `App::update_settings` (validated, atomic). The worker checks the
-//! read-only state itself before writing (`model::run_save`) and reports it as such, never as
+//! read-only state itself before writing (`model::run_save_with_login`) and reports it as such, never as
 //! "saved". Lowering a retention limit asks for a confirmation first. The form is merged onto the settings the worker holds at that moment, so
 //! values the form does not show (window rectangles, the capture mode) are never overwritten.
 //! The OS and Darkshot privacy markers have no control anywhere in this window (GC-07).
@@ -20,8 +20,8 @@ use super::{AppRow, KindItem};
 use crate::popup::row::fill;
 use crate::prefs::about::{self, CapValue};
 use crate::prefs::model::{
-    self, can_save, limits_lowered, run_save, ClearFlow, Draft, Field, Problem, RemoveOutcome,
-    SaveResult, ALL_KINDS,
+    self, can_save, limits_lowered, login_availability, login_view, run_save_with_login, ClearFlow,
+    Draft, Field, Problem, RemoveOutcome, SaveResult, ALL_KINDS,
 };
 use crate::prefs::sys;
 use darkclip_app::api::{AppStatus, Caller, CaptureStatus, StorageStatsView};
@@ -72,6 +72,8 @@ thread_local! {
     static INIT: RefCell<Option<Init>> = const { RefCell::new(None) };
     static HOST: RefCell<Option<Host>> = const { RefCell::new(None) };
     static SNAP: RefCell<Option<Snapshot>> = const { RefCell::new(None) };
+    /// The live start-at-login state differs from the stored choice (set when the window opens).
+    static LOGIN_DRIFT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Runs `f` on the host; does nothing when it is missing or already borrowed (re-entry).
@@ -206,6 +208,7 @@ fn set_strings(w: &SettingsWindow, lang: Lang, snap: Option<&Snapshot>) {
     s.set_third_party(about::third_party_text().into());
     s.set_folder_label(m(Msg::SettingsDataFolder));
     s.set_open_folder(m(Msg::SettingsOpenFolder));
+    s.set_show_welcome(m(Msg::SettingsShowWelcome));
     w.set_version_text(format!("{} {}", t(lang, Msg::SettingsVersion), about::version()).into());
     // Parts that follow the latest status refresh.
     let (read_only, caps, warning, capture) = snap
@@ -214,17 +217,24 @@ fn set_strings(w: &SettingsWindow, lang: Lang, snap: Option<&Snapshot>) {
         });
     s.set_banner(model::banner(read_only).map_or("", |b| t(lang, b)).into());
     s.set_shortcut_warning(warning.map_or("", |b| t(lang, b)).into());
-    // Honest about start at login: the adapter says whether it can register (Task 208 wires it).
+    // Honest about start at login: whether the adapter can register, and whether this process
+    // may (a custom data folder never changes the login entry).
     let can_register =
         caps.is_some_and(|c| matches!(c.autostart, darkclip_platform::Support::Native));
-    s.set_login_note(
-        if can_register {
-            ""
+    let avail = login_availability(can_register, crate::custom_profile());
+    s.set_login_note(avail.note().map_or("", |m| t(lang, m)).into());
+    w.set_login_enabled(avail.editable());
+    s.set_login_drift(
+        if LOGIN_DRIFT.get() {
+            t(lang, Msg::SettingsStartAtLoginDrift)
         } else {
-            t(lang, Msg::SettingsStartAtLoginNote)
+            ""
         }
         .into(),
     );
+    s.set_capture_off_text(m(Msg::SettingsCaptureOff));
+    s.set_start_capturing(m(Msg::TrayStartCapturing));
+    w.set_capture_off(snap.is_some_and(|s| !s.settings.privacy.capture_enabled));
     s.set_mode_current(t(lang, status_msg(capture)).into());
     w.set_caps_text(caps_text(caps.as_ref(), lang).into());
     w.set_can_save(can_save(read_only, false));
@@ -374,7 +384,8 @@ impl Host {
     }
 }
 
-fn on_save_result(r: SaveResult) {
+/// `login` is the stored start-at-login choice after the save (the real state).
+fn on_save_result(r: SaveResult, login: bool) {
     with_host(|h| {
         h.saving = false;
         let read_only = SNAP.with(|s| s.borrow().as_ref().is_some_and(|s| s.read_only));
@@ -391,6 +402,15 @@ fn on_save_result(r: SaveResult) {
             }
             SaveResult::Failed => {
                 h.set_status(Some((t(h.lang, Msg::SettingsSaveFailed).to_string(), true)));
+            }
+            SaveResult::SavedLoginFailed => {
+                h.clear_errors();
+                // The toggle goes back to what is really registered; the failure is shown.
+                h.win.set_launch_at_login(login);
+                h.set_status(Some((
+                    t(h.lang, Msg::SettingsAutostartFailed).to_string(),
+                    true,
+                )));
             }
             SaveResult::ReadOnly => {
                 h.set_status(Some((
@@ -441,10 +461,53 @@ fn save_now() {
         // read-only state is checked here, where the write happens.
         let base = app.settings();
         let read_only = app.status().settings_read_only;
-        let result = run_save(read_only, &draft, &base, |new| {
+        // The registry write happens here, on the worker, never on the UI thread.
+        let auto = crate::autostart();
+        let result = run_save_with_login(read_only, &draft, &base, auto.as_deref(), |new| {
             app.update_settings(new).is_ok()
         });
-        let _ = slint::invoke_from_event_loop(move || on_save_result(result));
+        let login = app.settings().startup.launch_at_login;
+        let _ = slint::invoke_from_event_loop(move || on_save_result(result, login));
+    });
+}
+
+/// Reads the real start-at-login state on the worker (the registry), then shows it: the toggle
+/// follows the system, and a note says when that differs from the saved setting. Skipped when
+/// the toggle was already changed by the user.
+fn request_login_state() {
+    let Some(poster) = with_host(|h| h.poster.clone()) else {
+        return;
+    };
+    poster.post_quiet(|_app: &App| {
+        let live = crate::autostart().and_then(|a| a.is_enabled().ok());
+        let _ = slint::invoke_from_event_loop(move || on_login_state(live));
+    });
+}
+
+fn on_login_state(live: Option<bool>) {
+    let stored = SNAP.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map(|s| s.settings.startup.launch_at_login)
+    });
+    let Some(stored) = stored else {
+        return;
+    };
+    let (checked, drift) = login_view(stored, live);
+    with_host(|h| {
+        if h.win.get_launch_at_login() == stored {
+            h.win.set_launch_at_login(checked);
+        }
+        LOGIN_DRIFT.set(drift);
+        let lang = h.lang;
+        h.win.global::<SText>().set_login_drift(
+            if drift {
+                t(lang, Msg::SettingsStartAtLoginDrift)
+            } else {
+                ""
+            }
+            .into(),
+        );
     });
 }
 
@@ -693,6 +756,8 @@ fn connect(w: &SettingsWindow) {
             h.win.set_clear_open(false);
         });
     });
+    w.on_show_welcome(super::welcome_host::show);
+    w.on_start_capturing(super::welcome_host::show);
     w.on_open_folder(|| {
         with_host(|h| {
             let ok = sys::open_folder(&h.data_dir);
@@ -803,6 +868,7 @@ pub fn show() {
         }
     });
     let _ = w.show();
+    request_login_state();
     use slint::winit_030::{winit, WinitWindowAccessor};
     let _ = w
         .window()

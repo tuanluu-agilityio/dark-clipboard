@@ -118,3 +118,14 @@ pub struct PlatformBundle {
     pub paste: Option<Box<dyn PasteInjector>>,
     pub caps: Capabilities,
 }
+
+/// Registers the app to start when the user logs in (Task 208). Windows: a value under
+/// `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` that points to the current
+/// executable and passes no arguments. Methods may block briefly (registry, files): call them
+/// off the UI thread. Errors carry static reasons only.
+pub trait Autostart: Send + Sync {
+    /// True when this app is registered to start at login.
+    fn is_enabled(&self) -> Result<bool, PlatformError>;
+    /// Registers (`true`) or removes (`false`) the entry. Removing a missing entry succeeds.
+    fn set_enabled(&self, enabled: bool) -> Result<(), PlatformError>;
+}

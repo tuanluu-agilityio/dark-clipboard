@@ -4,6 +4,7 @@ use crate::shortcut;
 use darkclip_app::settings::{PopupPosition, Settings};
 use darkclip_core::i18n::Msg;
 use darkclip_core::{ClipType, ExcludedApp, Lang, Platform, RetentionPolicy, SensitiveHandling};
+use darkclip_platform::Autostart;
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 
@@ -275,28 +276,113 @@ pub enum SaveResult {
     Failed,
     /// The settings file is read-only (D-028): nothing was written.
     ReadOnly,
+    /// Saved, but start at login could not be changed (Task 208); the stored choice is the
+    /// real state, so the toggle goes back to it.
+    SavedLoginFailed,
 }
 
-/// Validates and saves. `update` writes the settings (true = written); it is never called for
-/// a read-only file or invalid input.
-pub fn run_save(
+/// Why start at login can or cannot be changed in this process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginAvail {
+    Available,
+    /// The platform adapter cannot register; the choice is only stored.
+    NoAdapter,
+    /// Started with `--data-dir`: the login entry would start the default profile, not this
+    /// one, so it cannot be changed from here.
+    CustomProfile,
+}
+
+pub fn login_availability(adapter_native: bool, custom_profile: bool) -> LoginAvail {
+    if custom_profile {
+        LoginAvail::CustomProfile
+    } else if adapter_native {
+        LoginAvail::Available
+    } else {
+        LoginAvail::NoAdapter
+    }
+}
+
+impl LoginAvail {
+    /// The note shown next to the toggle.
+    pub fn note(self) -> Option<Msg> {
+        match self {
+            LoginAvail::Available => None,
+            LoginAvail::NoAdapter => Some(Msg::SettingsStartAtLoginNote),
+            LoginAvail::CustomProfile => Some(Msg::SettingsStartAtLoginCustomProfile),
+        }
+    }
+
+    /// Whether the toggle can be used.
+    pub fn editable(self) -> bool {
+        !matches!(self, LoginAvail::CustomProfile)
+    }
+}
+
+/// What the toggle shows when the settings window opens: the live registry state when it could
+/// be read, else the stored choice. The flag says stored and live differ.
+pub fn login_view(stored: bool, live: Option<bool>) -> (bool, bool) {
+    match live {
+        Some(l) => (l, l != stored),
+        None => (stored, false),
+    }
+}
+
+/// Brings the start-at-login registration in line with `want`. `Ok(previous)` is the state it
+/// had before when it was changed (`None`: nothing to do); `Err(actual)` when it failed, with
+/// the state to store instead (the registry's if it can be read, else `fallback`). Without an
+/// adapter nothing happens.
+pub fn sync_login(
+    auto: Option<&dyn Autostart>,
+    want: bool,
+    fallback: bool,
+) -> Result<Option<bool>, bool> {
+    let Some(auto) = auto else {
+        return Ok(None);
+    };
+    let current = auto.is_enabled();
+    if current == Ok(want) {
+        return Ok(None);
+    }
+    let before = current.unwrap_or(fallback);
+    match auto.set_enabled(want) {
+        Ok(()) => Ok(Some(before)),
+        Err(_) => Err(before),
+    }
+}
+
+/// Validates and saves, with the start-at-login registration (Task 208). `update` writes the
+/// settings (true = written); it is never called for a read-only file or invalid input. The
+/// registration changes before the file is written; if the write then fails the previous state
+/// is put back. A failed registration still saves everything else, with the choice stored as
+/// the real state, and reports `SavedLoginFailed`.
+pub fn run_save_with_login(
     read_only: bool,
     draft: &Draft,
     base: &Settings,
+    auto: Option<&dyn Autostart>,
     update: impl FnOnce(Settings) -> bool,
 ) -> SaveResult {
     if read_only {
         return SaveResult::ReadOnly;
     }
-    match draft.apply_to(base) {
-        Err(p) => SaveResult::Invalid(p),
-        Ok(new) => {
-            if update(new) {
-                SaveResult::Saved
-            } else {
-                SaveResult::Failed
-            }
+    let mut new = match draft.apply_to(base) {
+        Ok(s) => s,
+        Err(p) => return SaveResult::Invalid(p),
+    };
+    let want = new.startup.launch_at_login;
+    let login = sync_login(auto, want, base.startup.launch_at_login);
+    if let Err(actual) = login {
+        new.startup.launch_at_login = actual;
+    }
+    if !update(new) {
+        if let (Ok(Some(before)), Some(auto)) = (login, auto) {
+            let _ = auto.set_enabled(before);
         }
+        return SaveResult::Failed;
+    }
+    match login {
+        Err(_) => SaveResult::SavedLoginFailed,
+        Ok(_) => SaveResult::Saved,
     }
 }
 
