@@ -230,3 +230,12 @@ pub fn running_image_names() -> Vec<String> {
         out
     }
 }
+
+/// The Windows folder (for example `C:\\Windows`), from `GetWindowsDirectoryW`.
+pub fn windows_directory() -> Option<std::path::PathBuf> {
+    use windows::Win32::System::SystemInformation::GetWindowsDirectoryW;
+    let mut buf = [0u16; 260];
+    // SAFETY: `buf` is a valid, writable buffer; the call reports how many characters it wrote.
+    let n = unsafe { GetWindowsDirectoryW(Some(&mut buf)) } as usize;
+    (n > 0 && n < buf.len()).then(|| std::path::PathBuf::from(String::from_utf16_lossy(&buf[..n])))
+}

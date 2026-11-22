@@ -31,8 +31,8 @@ fn numbers_are_checked_with_their_own_messages() {
     let base = defaults();
     let mut d = Draft::from_settings(&base);
     d.max_items = "abc".into();
-    d.max_age_days = "0".into();
-    d.max_storage_mb = "100001".into();
+    d.max_age_days = "3651".into();
+    d.max_storage_mb = "9".into();
     assert_eq!(
         msgs(d.apply_to(&base)),
         vec![
@@ -41,7 +41,15 @@ fn numbers_are_checked_with_their_own_messages() {
             (Field::MaxStorageMb, Msg::SettingsErrRange),
         ]
     );
-    for bad in ["", " ", "-5", "+5", "1.5", "99999999999999999999"] {
+    for bad in [
+        "",
+        " ",
+        "-5",
+        "+5",
+        "1.5",
+        "99999999999999999999",
+        "1000001",
+    ] {
         d.max_items = bad.into();
         d.max_age_days = "30".into();
         d.max_storage_mb = "500".into();
@@ -57,9 +65,9 @@ fn numbers_are_checked_with_their_own_messages() {
 fn range_edges_are_accepted() {
     let base = defaults();
     let mut d = Draft::from_settings(&base);
-    d.max_items = "10".into();
-    d.max_age_days = "3650".into();
-    d.max_storage_mb = "100000".into();
+    d.max_items = "0".into();
+    d.max_age_days = "0".into();
+    d.max_storage_mb = "102400".into();
     let s = d.apply_to(&base).unwrap();
     assert_eq!(
         (
@@ -67,10 +75,28 @@ fn range_edges_are_accepted() {
             s.retention.max_age_days,
             s.retention.max_storage_mb
         ),
-        (10, 3650, 100_000)
+        (0, 0, 102_400)
     );
-    d.max_items = "9".into();
+    d.max_items = "1000000".into();
+    d.max_age_days = "3650".into();
+    d.max_storage_mb = "10".into();
+    assert!(d.apply_to(&base).is_ok());
+    d.max_storage_mb = "9".into();
     assert!(d.apply_to(&base).is_err());
+    d.max_storage_mb = "10".into();
+    d.max_items = "1000001".into();
+    assert!(d.apply_to(&base).is_err());
+}
+
+#[test]
+fn every_value_the_schema_allows_saves_back_unchanged() {
+    for (i, a, m) in [(0, 0, 10), (1_000_000, 3650, 102_400), (1, 1, 11)] {
+        let mut base = defaults();
+        base.retention.max_items = i;
+        base.retention.max_age_days = a;
+        base.retention.max_storage_mb = m;
+        assert_eq!(Draft::from_settings(&base).apply_to(&base).unwrap(), base);
+    }
 }
 
 #[test]
@@ -298,4 +324,71 @@ fn every_skip_reason_has_a_message_and_zero_counts_are_hidden() {
     m.insert("busy".to_string(), 0);
     m.insert("unknown_reason".to_string(), 9);
     assert_eq!(skip_rows(&m), vec![(Msg::SkipOsConcealed, 3)]);
+}
+
+#[test]
+fn duplicates_use_the_same_unicode_lowercase_as_policy_matching() {
+    let mut list = AppList::default();
+    list.add("\u{C9}tude.exe", Platform::Windows).unwrap();
+    assert_eq!(
+        list.add("\u{E9}tude.EXE", Platform::Windows),
+        Err(Msg::SettingsErrAppDuplicate)
+    );
+}
+
+#[test]
+fn direction_controls_are_refused_in_program_names() {
+    let mut list = AppList::default();
+    assert_eq!(
+        list.add("invoice\u{202E}fdp.exe", Platform::Windows),
+        Err(Msg::SettingsErrAppInvalid)
+    );
+}
+
+#[test]
+fn a_read_only_settings_file_is_never_saved_and_never_reported_as_saved() {
+    let base = defaults();
+    let d = Draft::from_settings(&base);
+    let mut called = false;
+    let r = run_save(true, &d, &base, |_| {
+        called = true;
+        true
+    });
+    assert!(matches!(r, SaveResult::ReadOnly));
+    assert!(!called);
+    assert!(matches!(
+        run_save(false, &d, &base, |_| true),
+        SaveResult::Saved
+    ));
+    assert!(matches!(
+        run_save(false, &d, &base, |_| false),
+        SaveResult::Failed
+    ));
+    let mut bad = d.clone();
+    bad.max_items = "x".into();
+    assert!(matches!(
+        run_save(false, &bad, &base, |_| true),
+        SaveResult::Invalid(_)
+    ));
+}
+
+#[test]
+fn lowering_a_retention_limit_is_detected() {
+    let base = defaults().retention;
+    let with = |i: u32, a: u32, m: u32| {
+        let mut r = base.clone();
+        r.max_items = i;
+        r.max_age_days = a;
+        r.max_storage_mb = m;
+        r
+    };
+    let old = with(1000, 30, 500);
+    assert!(!limits_lowered(&old, &old));
+    assert!(!limits_lowered(&old, &with(2000, 60, 900)));
+    assert!(limits_lowered(&old, &with(999, 30, 500)));
+    assert!(limits_lowered(&old, &with(1000, 29, 500)));
+    assert!(limits_lowered(&old, &with(1000, 30, 499)));
+    // 0 = unlimited: going to a number lowers, going to 0 raises.
+    assert!(limits_lowered(&with(0, 0, 500), &with(10, 30, 500)));
+    assert!(!limits_lowered(&old, &with(0, 0, 500)));
 }

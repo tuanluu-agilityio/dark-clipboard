@@ -185,7 +185,7 @@ fn percent_decode(s: &str) -> String {
 }
 
 /// Invisible direction controls: a name like `invoice<RLO>fdp.exe` would read as `invoiceexe.pdf`.
-fn is_bidi_control(c: char) -> bool {
+pub fn is_bidi_control(c: char) -> bool {
     matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 

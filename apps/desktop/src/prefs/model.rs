@@ -3,13 +3,14 @@
 use crate::shortcut;
 use darkclip_app::settings::{PopupPosition, Settings};
 use darkclip_core::i18n::Msg;
-use darkclip_core::{ClipType, ExcludedApp, Lang, Platform, SensitiveHandling};
+use darkclip_core::{ClipType, ExcludedApp, Lang, Platform, RetentionPolicy, SensitiveHandling};
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 
-pub const ITEMS_RANGE: RangeInclusive<u32> = 10..=100_000;
-pub const AGE_RANGE: RangeInclusive<u32> = 1..=3_650;
-pub const STORAGE_RANGE: RangeInclusive<u32> = 10..=100_000;
+// The ranges of the retention schema. 0 = no limit (items and days only).
+pub const ITEMS_RANGE: RangeInclusive<u32> = 0..=1_000_000;
+pub const AGE_RANGE: RangeInclusive<u32> = 0..=3_650;
+pub const STORAGE_RANGE: RangeInclusive<u32> = 10..=102_400;
 /// The longest program name accepted (Windows file names are at most 255 characters).
 pub const MAX_APP_ID: usize = 255;
 
@@ -111,7 +112,7 @@ impl AppList {
         if self
             .items
             .iter()
-            .any(|a| a.app_id.eq_ignore_ascii_case(&id))
+            .any(|a| a.app_id.to_lowercase() == id.to_lowercase())
         {
             return Err(Msg::SettingsErrAppDuplicate);
         }
@@ -132,7 +133,9 @@ pub fn clean_app_id(input: &str) -> Result<String, Msg> {
         return Err(Msg::SettingsErrAppEmpty);
     }
     if id.chars().count() > MAX_APP_ID
-        || id.chars().any(|c| c.is_control() || c == '/' || c == '\\')
+        || id.chars().any(|c| {
+            c.is_control() || c == '/' || c == '\\' || crate::popup::detail::is_bidi_control(c)
+        })
     {
         return Err(Msg::SettingsErrAppInvalid);
     }
@@ -262,6 +265,48 @@ impl Draft {
         s.retention.max_storage_mb = max_storage_mb;
         Ok(s)
     }
+}
+
+/// What a save did.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SaveResult {
+    Saved,
+    Invalid(Vec<Problem>),
+    Failed,
+    /// The settings file is read-only (D-028): nothing was written.
+    ReadOnly,
+}
+
+/// Validates and saves. `update` writes the settings (true = written); it is never called for
+/// a read-only file or invalid input.
+pub fn run_save(
+    read_only: bool,
+    draft: &Draft,
+    base: &Settings,
+    update: impl FnOnce(Settings) -> bool,
+) -> SaveResult {
+    if read_only {
+        return SaveResult::ReadOnly;
+    }
+    match draft.apply_to(base) {
+        Err(p) => SaveResult::Invalid(p),
+        Ok(new) => {
+            if update(new) {
+                SaveResult::Saved
+            } else {
+                SaveResult::Failed
+            }
+        }
+    }
+}
+
+/// True when a limit goes down, so older clips may be deleted at the next cleanup. For items
+/// and days 0 means "no limit": a number after 0 lowers, 0 after a number raises.
+pub fn limits_lowered(old: &RetentionPolicy, new: &RetentionPolicy) -> bool {
+    let lower = |old: u32, new: u32| new != 0 && (old == 0 || new < old);
+    lower(old.max_items, new.max_items)
+        || lower(old.max_age_days, new.max_age_days)
+        || new.max_storage_mb < old.max_storage_mb
 }
 
 /// What a control in the privacy section is.

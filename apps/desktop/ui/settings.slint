@@ -13,6 +13,7 @@ export struct AppRow {
     name: string,
     id: string,
     builtin: bool,
+    platform: string,
 }
 
 export struct KindItem {
@@ -32,6 +33,9 @@ export global SText {
     in property <string> revert;
     in property <string> cancel;
     in property <string> close;
+    in property <string> loading;
+    in property <string> notices;
+    in property <string> limits-confirm;
     // General
     in property <string> shortcut-label;
     in property <string> shortcut-hint;
@@ -190,6 +194,7 @@ export component SettingsWindow inherits Window {
     in property <bool> picker-loading;
     in property <[string]> picker;
     in property <bool> clear-open;
+    in property <bool> limits-open;
     in-out property <bool> clear-keep-pinned: true;
     // Multi-line texts.
     in property <string> stats-text;
@@ -208,7 +213,9 @@ export component SettingsWindow inherits Window {
     callback cancel-remove();
     callback open-picker();
     callback close-picker();
-    callback pick-app(string);
+    callback pick-app(int);
+    callback limits-confirm();
+    callback limits-cancel();
     callback clear-ask();
     callback clear-confirm();
     callback clear-cancel();
@@ -470,7 +477,7 @@ export component SettingsWindow inherits Window {
                                     padding-right: 6px;
                                     spacing: 8px;
                                     Text {
-                                        text: a.name != "" ? a.name + " (" + a.id + ")" : a.id;
+                                        text: (a.name != "" ? a.name + " (" + a.id + ")" : a.id) + "  -  " + a.platform;
                                         color: Theme.text;
                                         vertical-alignment: center;
                                         overflow: elide;
@@ -650,6 +657,11 @@ export component SettingsWindow inherits Window {
                                 text: SText.licence-text;
                             }
                             Text {
+                                text: SText.notices;
+                                color: Theme.text;
+                                wrap: word-wrap;
+                            }
+                            Text {
                                 text: SText.third-party;
                                 color: Theme.text-muted;
                                 font-size: 12px;
@@ -733,6 +745,45 @@ export component SettingsWindow inherits Window {
         }
     }
 
+    // Lowering a retention limit asks first.
+    Overlay {
+        open: root.limits-open;
+        Rectangle {
+            width: min(parent.width - 40px, 420px);
+            height: limits-col.preferred-height + 28px;
+            background: Theme.bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.warning;
+            limits-col := VerticalLayout {
+                padding: 14px;
+                spacing: 12px;
+                Text {
+                    text: SText.limits-confirm;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Button {
+                        text: SText.cancel;
+                        clicked => {
+                            root.limits-cancel();
+                        }
+                    }
+                    Button {
+                        text: SText.save;
+                        primary: true;
+                        clicked => {
+                            root.limits-confirm();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Clear history: asks first, with "keep pinned".
     Overlay {
         open: root.clear-open;
@@ -793,7 +844,7 @@ export component SettingsWindow inherits Window {
                     text: SText.pick-note;
                 }
                 if root.picker-loading: Text {
-                    text: "...";
+                    text: SText.loading;
                     color: Theme.text-muted;
                 }
                 if !root.picker-loading && root.picker.length == 0: Text {
@@ -802,13 +853,13 @@ export component SettingsWindow inherits Window {
                 }
                 ListView {
                     vertical-stretch: 1;
-                    for p in root.picker: Rectangle {
+                    for p[pi] in root.picker: Rectangle {
                         height: 30px;
                         background: pick-touch.has-hover ? Theme.surface : transparent;
                         accessible-role: button;
                         accessible-label: p;
                         accessible-action-default => {
-                            root.pick-app(p);
+                            root.pick-app(pi);
                         }
                         Text {
                             x: 8px;
@@ -820,7 +871,7 @@ export component SettingsWindow inherits Window {
                         }
                         pick-touch := TouchArea {
                             clicked => {
-                                root.pick-app(p);
+                                root.pick-app(pi);
                             }
                         }
                     }

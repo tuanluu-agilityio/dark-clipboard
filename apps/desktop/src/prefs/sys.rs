@@ -15,6 +15,20 @@ pub fn unique_sorted(mut names: Vec<String>) -> Vec<String> {
     names
 }
 
+/// A program name for display: direction controls are replaced, so a name cannot read
+/// differently than it is (same rule as file names in the detail pane, D-051).
+pub fn display_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if crate::popup::detail::is_bidi_control(c) {
+                '\u{FFFD}'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 /// The running programs' file names (Windows only for now; empty elsewhere).
 pub fn running_programs() -> Vec<String> {
     #[cfg(windows)]
@@ -37,10 +51,12 @@ pub fn open_folder(path: &Path) -> bool {
     let Some(dir) = folder_to_open(path) else {
         return false;
     };
+    // The system folder comes from the OS call, never from the environment or a bare name that
+    // the search path could redirect.
     #[cfg(windows)]
-    let program = std::env::var_os("SystemRoot")
-        .map(|r| PathBuf::from(r).join("explorer.exe"))
-        .unwrap_or_else(|| PathBuf::from("explorer.exe"));
+    let Some(program) = crate::winsys::windows_directory().map(|d| d.join("explorer.exe")) else {
+        return false;
+    };
     #[cfg(target_os = "macos")]
     let program = PathBuf::from("/usr/bin/open");
     #[cfg(not(any(windows, target_os = "macos")))]
@@ -83,6 +99,15 @@ mod tests {
         assert_eq!(folder_to_open(&file), None);
         assert_eq!(folder_to_open(Path::new("relative")), None);
         assert_eq!(folder_to_open(Path::new("")), None);
+    }
+
+    #[test]
+    fn program_names_shown_in_the_picker_have_no_direction_controls() {
+        assert_eq!(
+            display_name("invoice\u{202E}fdp.exe"),
+            "invoice\u{FFFD}fdp.exe"
+        );
+        assert_eq!(display_name("tool.exe"), "tool.exe");
     }
 
     #[test]

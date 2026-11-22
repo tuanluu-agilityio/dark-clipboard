@@ -357,21 +357,36 @@ messages! {
         "Chương trình này đã có trong danh sách"
     ),
     SettingsMaxItems => (
-        "Keep at most this many clips (10 - 100,000)",
-        "Giữ tối đa số mục này (10 - 100.000)"
+        "Keep at most this many clips (0 = no limit, up to 1,000,000)",
+        "Giữ tối đa số mục này (0 = không giới hạn, tối đa 1.000.000)"
     ),
     SettingsMaxAge => (
-        "Delete clips older than this many days (1 - 3,650)",
-        "Xóa mục cũ hơn số ngày này (1 - 3.650)"
+        "Delete clips older than this many days (0 = no limit, up to 3,650)",
+        "Xóa mục cũ hơn số ngày này (0 = không giới hạn, tối đa 3.650)"
     ),
     SettingsMaxStorage => (
-        "Storage limit in MB (10 - 100,000)",
-        "Giới hạn dung lượng, MB (10 - 100.000)"
+        "Storage limit in MB (10 - 102,400)",
+        "Giới hạn dung lượng, MB (10 - 102.400)"
     ),
     SettingsRetentionNote => (
         "Pinned clips are never removed by these limits.",
         "Các mục đã ghim không bao giờ bị xóa bởi những giới hạn này."
     ),
+    SettingsSaveReadOnly => (
+        "Not saved: the settings file is read-only",
+        "Chưa lưu: tệp cài đặt ở chế độ chỉ đọc"
+    ),
+    SettingsLimitsConfirm => (
+        "A limit was lowered. Older clips beyond the new limit will be deleted at the next cleanup (pinned clips stay). Save anyway?",
+        "Một giới hạn đã được hạ thấp. Các mục cũ vượt giới hạn mới sẽ bị xóa ở lần dọn dẹp tiếp theo (mục đã ghim được giữ lại). Vẫn lưu?"
+    ),
+    SettingsNotices => (
+        "Copyright (C) 2026 Dark Clipboard contributors\nThis program comes with ABSOLUTELY NO WARRANTY; it is free software under GPL-3.0-only, and you are welcome to redistribute it under its conditions.\nThe full licence text is the LICENSE file in the installation folder and in the source repository; it is also at https://www.gnu.org/licenses/gpl-3.0.html",
+        "Bản quyền (C) 2026 Những người đóng góp Dark Clipboard\nChương trình này KHÔNG CÓ BẤT KỲ BẢO HÀNH NÀO; đây là phần mềm tự do theo GPL-3.0-only, bạn được phép phân phối lại theo các điều kiện của giấy phép.\nToàn văn giấy phép là tệp LICENSE trong thư mục cài đặt và trong kho mã nguồn; cũng có tại https://www.gnu.org/licenses/gpl-3.0.html"
+    ),
+    PlatformWindows => ("Windows", "Windows"),
+    PlatformMacos => ("macOS", "macOS"),
+    PlatformLinux => ("Linux", "Linux"),
     SettingsStats => ("Storage", "Lưu trữ"),
     SettingsStatsClips => ("{n} clips", "{n} mục"),
     SettingsStatsPinned => ("{n} pinned", "{n} đã ghim"),
@@ -447,6 +462,9 @@ pub const SAME_IN_BOTH: &[Msg] = &[
     Msg::UiAppName,
     Msg::SettingsLangEn,
     Msg::SettingsLangVi,
+    Msg::PlatformWindows,
+    Msg::PlatformMacos,
+    Msg::PlatformLinux,
 ];
 
 #[cfg(test)]

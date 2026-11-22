@@ -6,8 +6,9 @@
 //! return with `invoke_from_event_loop`. Listing the running programs runs on its own short
 //! thread. The UI thread never waits for any of them.
 //!
-//! Saves go through `App::update_settings` (validated, atomic, refused while the settings file
-//! is read-only). The form is merged onto the settings the worker holds at that moment, so
+//! Saves go through `App::update_settings` (validated, atomic). The worker checks the
+//! read-only state itself before writing (`model::run_save`) and reports it as such, never as
+//! "saved". Lowering a retention limit asks for a confirmation first. The form is merged onto the settings the worker holds at that moment, so
 //! values the form does not show (window rectangles, the capture mode) are never overwritten.
 //! The OS and Darkshot privacy markers have no control anywhere in this window (GC-07).
 //!
@@ -19,7 +20,8 @@ use super::{AppRow, KindItem};
 use crate::popup::row::fill;
 use crate::prefs::about::{self, CapValue};
 use crate::prefs::model::{
-    self, can_save, ClearFlow, Draft, Field, Problem, RemoveOutcome, ALL_KINDS,
+    self, can_save, limits_lowered, run_save, ClearFlow, Draft, Field, Problem, RemoveOutcome,
+    SaveResult, ALL_KINDS,
 };
 use crate::prefs::sys;
 use darkclip_app::api::{AppStatus, Caller, CaptureStatus, StorageStatsView};
@@ -60,6 +62,8 @@ struct Host {
     app_rows: Rc<VecModel<AppRow>>,
     kind_rows: Rc<VecModel<KindItem>>,
     picker_rows: Rc<VecModel<SharedString>>,
+    /// The real program names behind the picker rows (the rows show `sys::display_name`).
+    picker_names: Vec<String>,
     /// Bumped by every picker request: a late answer for an older one is dropped.
     picker_gen: u64,
 }
@@ -92,6 +96,15 @@ fn kind_msg(k: ClipType) -> Msg {
         ClipType::Code => Msg::ClipTypeCode,
         ClipType::Image => Msg::ClipTypeImage,
         ClipType::Files => Msg::ClipTypeFiles,
+    }
+}
+
+fn platform_msg(p: darkclip_core::Platform) -> Msg {
+    use darkclip_core::Platform;
+    match p {
+        Platform::Windows => Msg::PlatformWindows,
+        Platform::Macos => Msg::PlatformMacos,
+        Platform::LinuxX11 | Platform::LinuxWayland => Msg::PlatformLinux,
     }
 }
 
@@ -133,6 +146,9 @@ fn set_strings(w: &SettingsWindow, lang: Lang, snap: Option<&Snapshot>) {
     s.set_save(m(Msg::SettingsSave));
     s.set_revert(m(Msg::SettingsRevert));
     s.set_cancel(m(Msg::UiCancel));
+    s.set_loading(m(Msg::UiLoading));
+    s.set_notices(m(Msg::SettingsNotices));
+    s.set_limits_confirm(m(Msg::SettingsLimitsConfirm));
     s.set_close(m(Msg::UiClose));
     s.set_shortcut_label(m(Msg::SettingsShortcut));
     s.set_shortcut_hint(m(Msg::SettingsShortcutHint));
@@ -225,6 +241,7 @@ impl Host {
                 name: a.name.clone().unwrap_or_default().into(),
                 id: a.app_id.clone().into(),
                 builtin: a.builtin,
+                platform: t(self.lang, platform_msg(a.platform)).into(),
             })
             .collect();
         self.app_rows.set_vec(rows);
@@ -335,6 +352,8 @@ impl Host {
         self.win.set_clear_open(false);
         self.win.set_picker_open(false);
         self.picker_rows.set_vec(Vec::new());
+        self.picker_names.clear();
+        self.win.set_limits_open(false);
         self.picker_gen = self.picker_gen.wrapping_add(1);
         self.refresh_apps();
     }
@@ -355,13 +374,6 @@ impl Host {
     }
 }
 
-/// What a save found (computed on the worker).
-enum SaveResult {
-    Saved,
-    Invalid(Vec<Problem>),
-    Failed,
-}
-
 fn on_save_result(r: SaveResult) {
     with_host(|h| {
         h.saving = false;
@@ -380,11 +392,36 @@ fn on_save_result(r: SaveResult) {
             SaveResult::Failed => {
                 h.set_status(Some((t(h.lang, Msg::SettingsSaveFailed).to_string(), true)));
             }
+            SaveResult::ReadOnly => {
+                h.set_status(Some((
+                    t(h.lang, Msg::SettingsSaveReadOnly).to_string(),
+                    true,
+                )));
+            }
         }
     });
 }
 
+/// Save pressed: a lowered retention limit asks first (`limits-confirm` continues).
 fn save() {
+    let lowered = with_host(|h| {
+        let snap = SNAP.with(|s| s.borrow().as_ref().map(|s| s.settings.clone()));
+        let Some(snap) = snap else {
+            return false;
+        };
+        match h.collect().apply_to(&snap) {
+            Ok(new) => limits_lowered(&snap.retention, &new.retention),
+            Err(_) => false,
+        }
+    });
+    if lowered == Some(true) {
+        with_host(|h| h.win.set_limits_open(true));
+        return;
+    }
+    save_now();
+}
+
+fn save_now() {
     let Some(job) = with_host(|h| {
         let read_only = SNAP.with(|s| s.borrow().as_ref().is_some_and(|s| s.read_only));
         if !can_save(read_only, h.saving) {
@@ -400,15 +437,13 @@ fn save() {
     };
     let (draft, poster) = job;
     poster.post(move |app: &App| {
-        // Merged onto the settings the app holds now, so nothing the form lacks is lost.
+        // Merged onto the settings the app holds now, so nothing the form lacks is lost; the
+        // read-only state is checked here, where the write happens.
         let base = app.settings();
-        let result = match draft.apply_to(&base) {
-            Ok(new) => match app.update_settings(new) {
-                Ok(()) => SaveResult::Saved,
-                Err(_) => SaveResult::Failed,
-            },
-            Err(p) => SaveResult::Invalid(p),
-        };
+        let read_only = app.status().settings_read_only;
+        let result = run_save(read_only, &draft, &base, |new| {
+            app.update_settings(new).is_ok()
+        });
         let _ = slint::invoke_from_event_loop(move || on_save_result(result));
     });
 }
@@ -482,6 +517,7 @@ fn create() -> Option<()> {
             app_rows,
             kind_rows,
             picker_rows,
+            picker_names: Vec::new(),
             picker_gen: 0,
         });
     });
@@ -520,8 +556,11 @@ fn open_picker() {
             let _ = slint::invoke_from_event_loop(move || {
                 with_host(|h| {
                     if h.picker_gen == gen {
-                        let rows: Vec<SharedString> =
-                            names.into_iter().map(SharedString::from).collect();
+                        let rows: Vec<SharedString> = names
+                            .iter()
+                            .map(|n| SharedString::from(sys::display_name(n)))
+                            .collect();
+                        h.picker_names = names;
                         h.picker_rows.set_vec(rows);
                         h.win.set_picker_loading(false);
                     }
@@ -613,15 +652,32 @@ fn connect(w: &SettingsWindow) {
         with_host(|h| {
             h.win.set_picker_open(false);
             h.picker_rows.set_vec(Vec::new());
+            h.picker_names.clear();
             h.picker_gen = h.picker_gen.wrapping_add(1);
         });
     });
-    w.on_pick_app(|name| {
-        add_app(name.as_str());
+    w.on_pick_app(|i| {
+        let name = with_host(|h| {
+            usize::try_from(i)
+                .ok()
+                .and_then(|i| h.picker_names.get(i).cloned())
+        })
+        .flatten();
+        if let Some(name) = name {
+            add_app(&name);
+        }
         with_host(|h| {
+            h.picker_names.clear();
             h.win.set_picker_open(false);
             h.picker_rows.set_vec(Vec::new());
         });
+    });
+    w.on_limits_confirm(|| {
+        with_host(|h| h.win.set_limits_open(false));
+        save_now();
+    });
+    w.on_limits_cancel(|| {
+        with_host(|h| h.win.set_limits_open(false));
     });
     w.on_clear_ask(|| {
         with_host(|h| {
@@ -646,7 +702,10 @@ fn connect(w: &SettingsWindow) {
     });
     w.on_escape(|| {
         let closed = with_host(|h| {
-            let open = h.clear.is_open() || h.apps.pending().is_some() || h.win.get_picker_open();
+            let open = h.clear.is_open()
+                || h.apps.pending().is_some()
+                || h.win.get_limits_open()
+                || h.win.get_picker_open();
             if open {
                 h.close_overlays();
             }

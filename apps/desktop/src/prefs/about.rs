@@ -176,4 +176,24 @@ mod tests {
         }
         assert!(seen >= 5, "the manifest was not read");
     }
+
+    #[test]
+    fn listed_versions_match_cargo_lock() {
+        let lock = include_str!("../../../../Cargo.lock");
+        let mut found: Vec<(String, String)> = Vec::new();
+        let mut name = None;
+        for line in lock.lines() {
+            if let Some(n) = line.strip_prefix("name = \"") {
+                name = Some(n.trim_end_matches('"').to_string());
+            } else if let (Some(v), Some(n)) = (line.strip_prefix("version = \""), name.take()) {
+                found.push((n, v.trim_end_matches('"').to_string()));
+            }
+        }
+        for (n, v, _) in THIRD_PARTY {
+            assert!(
+                found.iter().any(|(fn_, fv)| fn_ == n && fv == v),
+                "{n} {v} is not in Cargo.lock"
+            );
+        }
+    }
 }

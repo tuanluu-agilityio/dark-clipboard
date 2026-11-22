@@ -953,7 +953,12 @@ pub fn close_on_focus_loss(w: &MainWindow) {
             // Not inside winit's event dispatch: hop to the next loop turn.
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = ui.upgrade() {
-                    if w.window().is_visible() && PLACE_PREFS.get().1 {
+                    let close = PLACE_PREFS.get().1;
+                    PREVIOUS_FOREGROUND.set(paste_rules::previous_after_focus_loss(
+                        PREVIOUS_FOREGROUND.get(),
+                        close,
+                    ));
+                    if w.window().is_visible() && close {
                         FOCUS_HIDE_AT.set(Some(Instant::now()));
                         hide(&w);
                     }

@@ -553,6 +553,8 @@ impl Default for PrivacyPolicy {
                 app("keepassxc.exe", Platform::Windows, "KeePassXC"),
                 app("1password.exe", Platform::Windows, "1Password"),
                 app("bitwarden.exe", Platform::Windows, "Bitwarden"),
+                // Belt and braces: its own markers already exclude it (privacy-design 6).
+                app("darkshot.exe", Platform::Windows, "Darkshot"),
                 app("com.1password.1password", Platform::Macos, "1Password"),
                 app("org.keepassxc.keepassxc", Platform::Macos, "KeePassXC"),
                 app(
@@ -625,6 +627,18 @@ mod tests {
         assert_eq!(serde_json::to_value(RetentionPolicy::default()).unwrap(), r);
         let p: serde_json::Value = serde_json::from_str(PRIVACY).unwrap();
         assert_eq!(serde_json::to_value(PrivacyPolicy::default()).unwrap(), p);
+    }
+
+    #[test]
+    fn darkshot_is_a_builtin_exclusion_on_windows() {
+        let d = PrivacyPolicy::default();
+        let a = d
+            .excluded_apps
+            .iter()
+            .find(|a| a.app_id == "darkshot.exe")
+            .unwrap();
+        assert!(a.builtin);
+        assert_eq!(a.platform, Platform::Windows);
     }
 
     #[test]
