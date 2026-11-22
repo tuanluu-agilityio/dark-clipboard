@@ -4,6 +4,8 @@ Status: Phase 0, 2026-11-22. Decisions referenced: ADR-0001 (UI), ADR-0002 (moni
 
 ## 1. Layers and crates
 
+> Changed by D-034 (2026-11-22): the UI framework is **Slint** (ADR-0001 accepted), not Tauri; read `apps/desktop (Tauri)` and every `tauri` entry below as Slint. Changed by D-038: on Windows the copy-back owner window is created per write.
+
 ```
                  ┌──────────────────────┐ ┌──────────────┐ ┌──────────────┐
  Clients         │ apps/desktop (Tauri) │ │ darkclip-cli │ │ darkclip-mcp │
