@@ -16,6 +16,7 @@
 mod history;
 mod log;
 mod popup;
+mod prefs;
 mod seed;
 mod shortcut;
 mod single_instance;

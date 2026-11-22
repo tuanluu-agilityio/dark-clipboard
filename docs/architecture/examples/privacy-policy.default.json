@@ -22,6 +22,12 @@
       "builtin": true
     },
     {
+      "app_id": "darkshot.exe",
+      "platform": "windows",
+      "name": "Darkshot",
+      "builtin": true
+    },
+    {
       "app_id": "com.1password.1password",
       "platform": "macos",
       "name": "1Password",

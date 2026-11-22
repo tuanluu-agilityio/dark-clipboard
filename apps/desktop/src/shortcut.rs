@@ -138,8 +138,7 @@ pub fn parse(input: &str) -> Result<Shortcut, ParseError> {
 }
 
 impl Shortcut {
-    /// Display form, e.g. `Ctrl+Shift+V` (the settings window, Task 207, will show it).
-    #[cfg(test)]
+    /// Display form, e.g. `Ctrl+Shift+V` (saved by the settings window, Task 207).
     pub fn display(&self) -> String {
         let mut out = String::new();
         for (on, name) in [

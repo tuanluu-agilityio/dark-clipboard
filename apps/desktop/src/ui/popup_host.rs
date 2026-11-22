@@ -79,6 +79,8 @@ pub fn set_strings(w: &MainWindow, lang: Lang) {
     common::set_shared_strings(w, lang);
     let (can_paste, enter_pastes) = PASTE_PREFS.get();
     w.global::<Strings>()
+        .set_settings_open(t(lang, Msg::SettingsOpen).into());
+    w.global::<Strings>()
         .set_key_hints(t(lang, paste_rules::key_hints(can_paste, enter_pastes)).into());
 }
 
@@ -121,6 +123,8 @@ thread_local! {
     static PREVIOUS_FOREGROUND: Cell<Option<(u64, u32)>> = const { Cell::new(None) };
     /// (auto-paste supported, "Enter also pastes"), for the key hints and the Enter key.
     static PASTE_PREFS: Cell<(bool, bool)> = const { Cell::new((false, false)) };
+    /// (open at the center of the screen, close on focus loss): the settings (Task 207).
+    static PLACE_PREFS: Cell<(bool, bool)> = const { Cell::new((false, true)) };
     /// When the popup last closed itself because it lost the focus.
     static FOCUS_HIDE_AT: Cell<Option<Instant>> = const { Cell::new(None) };
 }
@@ -652,6 +656,11 @@ pub fn set_injector(injector: Injector) {
     refresh_hints();
 }
 
+/// The popup position and close-on-focus-loss settings (every status refresh).
+pub fn set_window_prefs(center: bool, close_on_focus_loss: bool) {
+    PLACE_PREFS.set((center, close_on_focus_loss));
+}
+
 /// The "Enter also pastes" setting (every status refresh).
 pub fn set_enter_pastes(on: bool) {
     let (can, old) = PASTE_PREFS.get();
@@ -817,6 +826,9 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
     w.on_act_undo(|| {
         with_host(|h| h.act(Action::Undo));
     });
+    w.on_act_settings(|| {
+        super::settings_host::show();
+    });
     w.on_act_close(|| {
         with_host(|h| h.act(Action::Close));
     });
@@ -888,7 +900,11 @@ pub fn show(w: &MainWindow, asked: Instant, trigger: Trigger) {
                 scale(to_i32(POPUP_LOGICAL.0), m.dpi),
                 scale(to_i32(POPUP_LOGICAL.1), m.dpi),
             );
-            let (x, y) = popup_origin(m.cursor, size, m.work, m.dpi);
+            let (x, y) = if PLACE_PREFS.get().0 {
+                crate::popup::place::center_origin(size, m.work)
+            } else {
+                popup_origin(m.cursor, size, m.work, m.dpi)
+            };
             w.window().set_position(slint::PhysicalPosition::new(x, y));
         }
     }
@@ -927,7 +943,7 @@ pub fn hide(w: &MainWindow) {
     let _ = w.hide();
 }
 
-/// Closes the popup when its window loses the focus (setting in Task 207).
+/// Closes the popup when its window loses the focus (the `close_on_focus_loss` setting).
 pub fn close_on_focus_loss(w: &MainWindow) {
     use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
     let ui = w.as_weak();
@@ -937,7 +953,12 @@ pub fn close_on_focus_loss(w: &MainWindow) {
             // Not inside winit's event dispatch: hop to the next loop turn.
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = ui.upgrade() {
-                    if w.window().is_visible() {
+                    let close = PLACE_PREFS.get().1;
+                    PREVIOUS_FOREGROUND.set(paste_rules::previous_after_focus_loss(
+                        PREVIOUS_FOREGROUND.get(),
+                        close,
+                    ));
+                    if w.window().is_visible() && close {
                         FOCUS_HIDE_AT.set(Some(Instant::now()));
                         hide(&w);
                     }

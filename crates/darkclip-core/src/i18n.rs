@@ -252,10 +252,220 @@ messages! {
         "Unknown key in the shortcut",
         "Phím tắt có phím không hợp lệ"
     ),
+    // Settings window (Task 207)
+    SettingsTitle => ("Dark Clipboard - Settings", "Dark Clipboard - Cài đặt"),
+    SettingsOpen => ("Settings", "Cài đặt"),
+    SettingsSectionGeneral => ("General", "Chung"),
+    SettingsSectionPrivacy => ("Privacy", "Riêng tư"),
+    SettingsSectionHistory => ("History", "Lịch sử"),
+    SettingsSectionAbout => ("About", "Giới thiệu"),
+    SettingsReadOnlyBanner => (
+        "The settings file could not be read or is from a newer version. Defaults are shown and nothing can be saved, so your file is never overwritten.",
+        "Không đọc được tệp cài đặt hoặc tệp do phiên bản mới hơn tạo ra. Đang hiện giá trị mặc định và không thể lưu, để tệp của bạn không bị ghi đè."
+    ),
+    SettingsSave => ("Save", "Lưu"),
+    SettingsRevert => ("Revert", "Hoàn tác"),
+    SettingsSaved => ("Settings saved", "Đã lưu cài đặt"),
+    SettingsSaveFailed => ("Settings could not be saved", "Không lưu được cài đặt"),
+    SettingsFixErrors => (
+        "Fix the marked fields first",
+        "Hãy sửa các mục được đánh dấu trước"
+    ),
+    SettingsShortcut => ("Shortcut to open the popup", "Phím tắt mở cửa sổ nhanh"),
+    SettingsShortcutHint => ("Example: Ctrl+Shift+V", "Ví dụ: Ctrl+Shift+V"),
+    SettingsLanguage => ("Language", "Ngôn ngữ"),
+    SettingsLangEn => ("English", "English"),
+    SettingsLangVi => ("Tiếng Việt", "Tiếng Việt"),
+    SettingsStartAtLogin => ("Start at login", "Khởi động cùng hệ thống"),
+    SettingsStartAtLoginNote => (
+        "This build cannot register with the system yet; your choice is saved for later.",
+        "Bản này chưa đăng ký được với hệ thống; lựa chọn của bạn được lưu để dùng sau."
+    ),
+    SettingsPopupPosition => ("Popup position", "Vị trí cửa sổ nhanh"),
+    SettingsPosCursor => ("Near the cursor", "Gần con trỏ"),
+    SettingsPosCenter => ("Center of the screen", "Giữa màn hình"),
+    SettingsCloseOnFocusLoss => (
+        "Close the popup when it loses focus",
+        "Đóng cửa sổ nhanh khi mất tiêu điểm"
+    ),
+    SettingsEnterPastes => (
+        "Enter also pastes into the previous app",
+        "Enter cũng dán vào ứng dụng trước đó"
+    ),
+    SettingsCaptureMode => ("Capture", "Ghi nhớ"),
+    SettingsModeNormal => ("Capturing", "Đang ghi nhớ"),
+    SettingsModePrivate => ("Private mode", "Chế độ riêng tư"),
+    SettingsModePaused => ("Pause until resumed", "Tạm dừng đến khi tiếp tục"),
+    SettingsMarkersLocked => (
+        "OS and Darkshot privacy markers: always respected",
+        "Dấu riêng tư của hệ điều hành và Darkshot: luôn được tôn trọng"
+    ),
+    SettingsMarkersNote => (
+        "Content that the system, a password manager or Darkshot marks as private is never stored. This cannot be turned off.",
+        "Nội dung mà hệ thống, trình quản lý mật khẩu hoặc Darkshot đánh dấu là riêng tư sẽ không bao giờ được lưu. Không thể tắt mục này."
+    ),
+    SettingsSensitive => (
+        "Sensitive data (keys, passwords, cards)",
+        "Dữ liệu nhạy cảm (khóa, mật khẩu, thẻ)"
+    ),
+    SettingsSensDrop => ("Do not store", "Không lưu"),
+    SettingsSensMasked => ("Store masked", "Lưu ở dạng đã che"),
+    SettingsSensStore => ("Store as is", "Lưu nguyên văn"),
+    SettingsSensStoreWarn => (
+        "Sensitive data will be saved readable in your history.",
+        "Dữ liệu nhạy cảm sẽ được lưu ở dạng đọc được trong lịch sử."
+    ),
+    SettingsKinds => ("Kinds of content to keep", "Loại nội dung cần lưu"),
+    SettingsExcluded => ("Excluded apps", "Ứng dụng bị loại trừ"),
+    SettingsExcludedNote => (
+        "Copies made in these programs are never stored. Programs are matched by file name.",
+        "Nội dung sao chép trong các chương trình này không bao giờ được lưu. Chương trình được nhận biết theo tên tệp."
+    ),
+    SettingsBuiltinBadge => ("built-in", "có sẵn"),
+    SettingsRemove => ("Remove", "Gỡ"),
+    SettingsAddApp => ("Add", "Thêm"),
+    SettingsAppPlaceholder => (
+        "Program name, e.g. keepass.exe",
+        "Tên chương trình, ví dụ keepass.exe"
+    ),
+    SettingsPickRunning => ("Pick running app", "Chọn ứng dụng đang chạy"),
+    SettingsPickNone => ("No running programs found", "Không thấy chương trình nào đang chạy"),
+    SettingsPickNote => (
+        "Only program file names are read, never window titles.",
+        "Chỉ đọc tên tệp chương trình, không bao giờ đọc tiêu đề cửa sổ."
+    ),
+    SettingsConfirmRemoveBuiltin => (
+        "Remove this built-in exclusion? Copies from this password manager will be stored again.",
+        "Gỡ loại trừ có sẵn này? Nội dung sao chép từ trình quản lý mật khẩu này sẽ được lưu lại."
+    ),
+    SettingsErrNumber => ("Enter a whole number", "Nhập một số nguyên"),
+    SettingsErrRange => (
+        "The number is outside the allowed range",
+        "Số nằm ngoài khoảng cho phép"
+    ),
+    SettingsErrNoKinds => (
+        "Keep at least one kind of content",
+        "Hãy giữ ít nhất một loại nội dung"
+    ),
+    SettingsErrAppEmpty => ("Enter a program name", "Hãy nhập tên chương trình"),
+    SettingsErrAppInvalid => (
+        "Use the program file name only, without a folder path",
+        "Chỉ dùng tên tệp chương trình, không kèm đường dẫn thư mục"
+    ),
+    SettingsErrAppDuplicate => (
+        "This program is already in the list",
+        "Chương trình này đã có trong danh sách"
+    ),
+    SettingsMaxItems => (
+        "Keep at most this many clips (0 = no limit, up to 1,000,000)",
+        "Giữ tối đa số mục này (0 = không giới hạn, tối đa 1.000.000)"
+    ),
+    SettingsMaxAge => (
+        "Delete clips older than this many days (0 = no limit, up to 3,650)",
+        "Xóa mục cũ hơn số ngày này (0 = không giới hạn, tối đa 3.650)"
+    ),
+    SettingsMaxStorage => (
+        "Storage limit in MB (10 - 102,400)",
+        "Giới hạn dung lượng, MB (10 - 102.400)"
+    ),
+    SettingsRetentionNote => (
+        "Pinned clips are never removed by these limits.",
+        "Các mục đã ghim không bao giờ bị xóa bởi những giới hạn này."
+    ),
+    SettingsSaveReadOnly => (
+        "Not saved: the settings file is read-only",
+        "Chưa lưu: tệp cài đặt ở chế độ chỉ đọc"
+    ),
+    SettingsLimitsConfirm => (
+        "A limit was lowered. Older clips beyond the new limit will be deleted at the next cleanup (pinned clips stay). Save anyway?",
+        "Một giới hạn đã được hạ thấp. Các mục cũ vượt giới hạn mới sẽ bị xóa ở lần dọn dẹp tiếp theo (mục đã ghim được giữ lại). Vẫn lưu?"
+    ),
+    SettingsNotices => (
+        "Copyright (C) 2026 Dark Clipboard contributors\nThis program comes with ABSOLUTELY NO WARRANTY; it is free software under GPL-3.0-only, and you are welcome to redistribute it under its conditions.\nThe full licence text is the LICENSE file in the installation folder and in the source repository; it is also at https://www.gnu.org/licenses/gpl-3.0.html",
+        "Bản quyền (C) 2026 Những người đóng góp Dark Clipboard\nChương trình này KHÔNG CÓ BẤT KỲ BẢO HÀNH NÀO; đây là phần mềm tự do theo GPL-3.0-only, bạn được phép phân phối lại theo các điều kiện của giấy phép.\nToàn văn giấy phép là tệp LICENSE trong thư mục cài đặt và trong kho mã nguồn; cũng có tại https://www.gnu.org/licenses/gpl-3.0.html"
+    ),
+    PlatformWindows => ("Windows", "Windows"),
+    PlatformMacos => ("macOS", "macOS"),
+    PlatformLinux => ("Linux", "Linux"),
+    SettingsStats => ("Storage", "Lưu trữ"),
+    SettingsStatsClips => ("{n} clips", "{n} mục"),
+    SettingsStatsPinned => ("{n} pinned", "{n} đã ghim"),
+    SettingsStatsMb => ("{n} MB used", "Đã dùng {n} MB"),
+    SettingsSkipped => (
+        "Copies skipped since the app started",
+        "Lần sao chép bị bỏ qua từ khi ứng dụng chạy"
+    ),
+    SettingsSkipNone => ("None", "Không có"),
+    SkipDisabled => ("Capture off", "Ghi nhớ đang tắt"),
+    SkipPaused => ("Paused", "Đang tạm dừng"),
+    SkipPrivate => ("Private mode", "Chế độ riêng tư"),
+    SkipSelfWrite => ("Made by Dark Clipboard", "Do Dark Clipboard tạo ra"),
+    SkipOsConcealed => ("Marked private by the system", "Được hệ thống đánh dấu riêng tư"),
+    SkipDarkshotExcluded => ("Marked by Darkshot", "Được Darkshot đánh dấu"),
+    SkipTransient => ("Temporary content", "Nội dung tạm thời"),
+    SkipExcludedApp => ("Excluded app", "Ứng dụng bị loại trừ"),
+    SkipKindDisabled => ("Kind not kept", "Loại không được lưu"),
+    SkipTooLarge => ("Too large", "Quá lớn"),
+    SkipNothingReadable => ("Nothing readable", "Không có gì đọc được"),
+    SkipSensitive => ("Sensitive data", "Dữ liệu nhạy cảm"),
+    SkipBusy => ("Clipboard busy", "Bảng nhớ tạm bận"),
+    SettingsClear => ("Clear history...", "Xóa lịch sử..."),
+    SettingsClearConfirm => (
+        "Delete the clipboard history? This cannot be undone.",
+        "Xóa lịch sử bảng nhớ tạm? Không thể hoàn tác."
+    ),
+    SettingsKeepPinned => ("Keep pinned clips", "Giữ các mục đã ghim"),
+    SettingsClearDo => ("Delete", "Xóa"),
+    SettingsClearFailed => ("History could not be cleared", "Không xóa được lịch sử"),
+    SettingsVersion => ("Version", "Phiên bản"),
+    SettingsCapabilities => (
+        "What works on this system",
+        "Những gì hoạt động trên hệ thống này"
+    ),
+    CapMonitor => ("Clipboard monitoring", "Theo dõi bảng nhớ tạm"),
+    CapReadWithoutFocus => ("Read without focus", "Đọc khi không có tiêu điểm"),
+    CapWrite => ("Write to the clipboard", "Ghi vào bảng nhớ tạm"),
+    CapMarkers => ("Privacy markers", "Dấu riêng tư"),
+    CapSourceApp => ("Source app", "Ứng dụng nguồn"),
+    CapShortcut => ("Global shortcut", "Phím tắt toàn cục"),
+    CapAutoPaste => ("Auto-paste", "Tự động dán"),
+    CapTray => ("Tray icon", "Biểu tượng khay"),
+    CapAutostart => ("Start at login", "Khởi động cùng hệ thống"),
+    CapBackend => ("Backend", "Phần phụ trợ"),
+    CapNative => ("Supported", "Hỗ trợ"),
+    CapPolling => ("Supported by polling", "Hỗ trợ bằng cách kiểm tra định kỳ"),
+    CapNo => ("Not available", "Không có"),
+    CapSourceOwner => ("Owner of the clipboard", "Chủ sở hữu bảng nhớ tạm"),
+    CapSourceFront => (
+        "Foreground app (approximate)",
+        "Ứng dụng đang hoạt động (gần đúng)"
+    ),
+    CapPortal => ("Through the system portal", "Qua cổng của hệ thống"),
+    CapUserBound => (
+        "You assign the key in system settings",
+        "Bạn gán phím trong cài đặt hệ thống"
+    ),
+    CapSourceNone => ("Not available", "Không có"),
+    SettingsLicences => ("Licences", "Giấy phép"),
+    SettingsLicenceText => (
+        "Dark Clipboard is free software under the GNU General Public License, version 3 only. The direct third-party components are listed below with their licences; the full list of every dependency is in Cargo.lock.",
+        "Dark Clipboard là phần mềm tự do theo Giấy phép Công cộng GNU phiên bản 3 (chỉ phiên bản 3). Các thành phần bên thứ ba được dùng trực tiếp nằm bên dưới cùng giấy phép của chúng; danh sách đầy đủ mọi thư viện nằm trong Cargo.lock."
+    ),
+    SettingsDataFolder => ("Data folder", "Thư mục dữ liệu"),
+    SettingsOpenFolder => ("Open folder", "Mở thư mục"),
+    SettingsOpenFolderFailed => ("The folder could not be opened", "Không mở được thư mục"),
 }
 
 /// Messages allowed to read the same in both languages.
-pub const SAME_IN_BOTH: &[Msg] = &[Msg::CategoryEmail, Msg::UiAppName];
+pub const SAME_IN_BOTH: &[Msg] = &[
+    Msg::CategoryEmail,
+    Msg::UiAppName,
+    Msg::SettingsLangEn,
+    Msg::SettingsLangVi,
+    Msg::PlatformWindows,
+    Msg::PlatformMacos,
+    Msg::PlatformLinux,
+];
 
 #[cfg(test)]
 mod tests {

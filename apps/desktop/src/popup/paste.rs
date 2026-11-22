@@ -26,6 +26,21 @@ pub enum Via {
     Other,
 }
 
+/// The paste target after the popup lost the focus. When the popup closes itself the target is
+/// kept for the next show (it is replaced then); when it stays open (the "close on focus loss"
+/// setting is off) the user may have moved on, so the target is forgotten and Ctrl+Enter only
+/// copies (T-19).
+pub fn previous_after_focus_loss(
+    previous: Option<(u64, u32)>,
+    close_on_focus_loss: bool,
+) -> Option<(u64, u32)> {
+    if close_on_focus_loss {
+        previous
+    } else {
+        None
+    }
+}
+
 pub fn after_copy(kind: CopyKind, via: Via, enter_pastes: bool, can_paste: bool) -> AfterCopy {
     if !can_paste {
         return AfterCopy::Restore;
@@ -184,5 +199,14 @@ mod tests {
                 pid: Some(42),
             })
         );
+    }
+
+    #[test]
+    fn losing_focus_without_closing_forgets_the_paste_target() {
+        // T-19: a popup that stays open must not paste into a window from earlier.
+        let prev = Some((42, 7));
+        assert_eq!(previous_after_focus_loss(prev, true), prev);
+        assert_eq!(previous_after_focus_loss(prev, false), None);
+        assert_eq!(previous_after_focus_loss(None, false), None);
     }
 }

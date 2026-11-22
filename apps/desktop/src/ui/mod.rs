@@ -23,12 +23,14 @@ mod generated {
     slint::include_modules!();
 }
 pub use generated::{
-    Chip, ClipRow, DetailState, FileRow, FilterItem, HistoryWindow, MainWindow, Seg, Strings, Theme,
+    AppRow, Chip, ClipRow, DetailState, FileRow, FilterItem, HistoryWindow, KindItem, MainWindow,
+    SText, Seg, SettingsWindow, Strings, Theme,
 };
 
 mod common;
 mod history_host;
 mod popup_host;
+mod settings_host;
 mod shortcut_host;
 mod tray_host;
 
@@ -60,8 +62,9 @@ pub enum Action {
     Quit,
 }
 
-/// Pure: `Toggle` flips the window, `ShowSettings` shows it (the settings window arrives in a
-/// later task), `Quit` ends the loop.
+/// Pure: `Toggle` flips the popup, `Quit` ends the loop. `ShowSettings` never reaches this
+/// function in the app (`apply_command` opens the settings window instead); it stays here as
+/// "show" for completeness.
 pub fn action_for(window_visible: bool, cmd: Command) -> Action {
     match cmd {
         Command::Toggle if window_visible => Action::Hide,
@@ -230,8 +233,11 @@ fn push_status(
     mode: ShortcutMode,
     log: &Arc<Log>,
 ) -> Option<Duration> {
-    let status = app.status().capture;
+    let app_status = app.status();
+    let status = app_status.capture;
+    let caps = app.capabilities();
     let settings = app.settings();
+    let snapshot = settings.clone();
     let lang = settings.ui.language;
     let now = crate::SystemClock.now();
     let state = tray_state(
@@ -242,6 +248,8 @@ fn push_status(
     );
     let wanted = settings.shortcuts.toggle_popup;
     let enter_pastes = settings.ui.enter_pastes;
+    let center = settings.ui.popup_position == darkclip_app::settings::PopupPosition::Center;
+    let close_on_focus_loss = settings.ui.close_on_focus_loss;
     let remembered = settings.ui.history_windows.clone();
     let (ui, log) = (ui.clone(), Arc::clone(log));
     // The registration lives on the main thread; it changes only when the setting changed.
@@ -258,6 +266,8 @@ fn push_status(
             warning: sc.warning(),
         });
         popup_host::set_enter_pastes(enter_pastes);
+        popup_host::set_window_prefs(center, close_on_focus_loss);
+        settings_host::set_snapshot(&snapshot, app_status, caps, sc.warning());
         history_host::set_remembered(&remembered);
         if let Some(w) = ui.upgrade() {
             set_strings(&w, lang, Some(status), sc);
@@ -267,6 +277,7 @@ fn push_status(
         // Clips may have been added, pinned or deleted: a visible popup re-runs its search.
         popup_host::app_changed();
         history_host::app_changed();
+        settings_host::app_changed();
     });
     wake_after(state, now)
 }
@@ -425,6 +436,10 @@ impl Worker {
 /// Applies a command to the window; runs on the event loop thread. `asked` is when the
 /// shortcut, tray or IPC asked (for the NFR-01 `perf` event).
 fn apply_command(w: &MainWindow, cmd: Command, asked: Instant, trigger: Trigger) {
+    if cmd == Command::ShowSettings {
+        settings_host::show();
+        return;
+    }
     let visible = w.window().is_visible();
     if cmd == Command::Toggle && swallow_reopen(trigger, visible, popup_host::since_focus_hide()) {
         return;
@@ -441,16 +456,12 @@ fn apply_command(w: &MainWindow, cmd: Command, asked: Instant, trigger: Trigger)
 /// What a tray menu choice does; runs on the event loop thread. Mode changes go to the worker.
 fn handle_tray_action(action: MenuAction, window: &Weak<MainWindow>, poster: &Poster, log: &Log) {
     match action {
-        MenuAction::Open | MenuAction::Settings => {
-            let cmd = if action == MenuAction::Open {
-                Command::Toggle
-            } else {
-                Command::ShowSettings
-            };
+        MenuAction::Open => {
             if let Some(w) = window.upgrade() {
-                apply_command(&w, cmd, Instant::now(), Trigger::Tray);
+                apply_command(&w, Command::Toggle, Instant::now(), Trigger::Tray);
             }
         }
+        MenuAction::Settings => settings_host::show(),
         MenuAction::History => history_host::show(),
         MenuAction::Quit => {
             log.event("tray_quit", &[]);
@@ -529,6 +540,7 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
         }
     };
 
+    let data_dir = args.start.data_dir.clone();
     let Some(worker) = Worker::spawn(args.start, window.as_weak(), Arc::clone(&log), mode) else {
         log.event("start_failed", &[("stage", Val::Name("worker"))]);
         return false;
@@ -537,6 +549,8 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
     popup_host::install(&window, worker.poster(), args_lang, Arc::clone(&log));
     // The history window is created when it is first opened (tray "History..." or Ctrl+H).
     history_host::install(worker.poster(), args_lang);
+    // The settings window too (tray "Settings...", the popup gear and `ShowSettings`).
+    settings_host::install(worker.poster(), data_dir);
     popup_host::close_on_focus_loss(&window);
     window.window().on_close_requested(|| {
         popup_host::shutdown_pending();

@@ -34,6 +34,10 @@ pub enum PopupPosition {
     Center,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn ser_lang<S: Serializer>(l: &Lang, s: S) -> Result<S::Ok, S::Error> {
     s.serialize_str(match l {
         Lang::En => "en",
@@ -59,6 +63,10 @@ pub struct UiSettings {
     /// written before Task 205.
     #[serde(default)]
     pub enter_pastes: bool,
+    /// The popup closes when it loses the keyboard focus (Task 207). On by default; missing in
+    /// files written before Task 207.
+    #[serde(default = "default_true")]
+    pub close_on_focus_loss: bool,
     /// Where the history window was last, per monitor (Task 211): the key names the monitor
     /// (its geometry, never a device name). Missing in older files.
     #[serde(default)]
@@ -84,6 +92,7 @@ impl Default for UiSettings {
             language: Lang::En,
             popup_position: PopupPosition::Cursor,
             enter_pastes: false,
+            close_on_focus_loss: true,
             history_windows: BTreeMap::new(),
         }
     }
@@ -295,6 +304,21 @@ mod tests {
         assert_eq!(o, LoadOutcome::Loaded);
         assert_eq!(s.ui.language, Lang::Vi);
         assert!(!s.ui.enter_pastes);
+    }
+
+    #[test]
+    fn close_on_focus_loss_defaults_on_and_is_optional_in_older_files() {
+        assert!(Settings::default().ui.close_on_focus_loss);
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        std::fs::write(
+            &p,
+            br#"{"settings_version":1,"ui":{"language":"en","popup_position":"cursor"}}"#,
+        )
+        .unwrap();
+        let (s, o) = Settings::load(&p);
+        assert_eq!(o, LoadOutcome::Loaded);
+        assert!(s.ui.close_on_focus_loss);
     }
 
     #[test]

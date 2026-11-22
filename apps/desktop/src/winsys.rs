@@ -195,3 +195,47 @@ pub fn foreground_window_of_other_process() -> Option<(u64, u32)> {
     let value = u64::try_from(hwnd.0 as usize).ok()?;
     (pid != 0 && pid != own).then_some((value, pid))
 }
+
+/// The image (file) names of the running programs, for "pick running app" (Task 207). Process
+/// names only: no window is touched and no window title is read (SR-11). Empty when the
+/// snapshot cannot be taken. Not sorted or de-duplicated (see `prefs::sys::unique_sorted`).
+pub fn running_image_names() -> Vec<String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    // SAFETY: the snapshot handle is owned here and closed before returning; `entry` is a
+    // valid, writable PROCESSENTRY32W whose `dwSize` is set as the API requires.
+    unsafe {
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        let mut ok = Process32FirstW(snap, &mut entry).is_ok();
+        while ok {
+            let len = entry
+                .szExeFile
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(entry.szExeFile.len());
+            out.push(String::from_utf16_lossy(&entry.szExeFile[..len]));
+            ok = Process32NextW(snap, &mut entry).is_ok();
+        }
+        let _ = CloseHandle(snap);
+        out
+    }
+}
+
+/// The Windows folder (for example `C:\\Windows`), from `GetWindowsDirectoryW`.
+pub fn windows_directory() -> Option<std::path::PathBuf> {
+    use windows::Win32::System::SystemInformation::GetWindowsDirectoryW;
+    let mut buf = [0u16; 260];
+    // SAFETY: `buf` is a valid, writable buffer; the call reports how many characters it wrote.
+    let n = unsafe { GetWindowsDirectoryW(Some(&mut buf)) } as usize;
+    (n > 0 && n < buf.len()).then(|| std::path::PathBuf::from(String::from_utf16_lossy(&buf[..n])))
+}

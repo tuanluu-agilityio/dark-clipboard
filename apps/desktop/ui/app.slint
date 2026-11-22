@@ -3,8 +3,9 @@ import { Theme, Strings } from "theme.slint";
 import { Seg, ClipRow, FileRow, Chip, ChipView, ActionButton, RowView, DetailPane, DetailState, RowMetrics } from "popup.slint";
 
 import { HistoryWindow, FilterItem } from "history.slint";
+import { SettingsWindow, SText, AppRow, KindItem } from "settings.slint";
 
-export { Theme, Strings, Seg, ClipRow, FileRow, Chip, DetailState, HistoryWindow, FilterItem }
+export { Theme, Strings, Seg, ClipRow, FileRow, Chip, DetailState, HistoryWindow, FilterItem, SettingsWindow, SText, AppRow, KindItem }
 
 // The popup (Task 204): created once at start and kept hidden; shown near the cursor by the
 // shortcut, the tray or `--toggle`. All data and every decision come from Rust
@@ -49,6 +50,7 @@ export component MainWindow inherits Window {
     callback act-delete();
     callback act-undo();
     callback act-close();
+    callback act-settings();
     callback load-full-text();
     callback load-full-image();
     // The last row index on screen changed (Rust loads the next page near the end).
@@ -143,6 +145,16 @@ export component MainWindow inherits Window {
                                     accessible-role: none;
                                 }
                             }
+                        }
+                    }
+
+                    ActionButton {
+                        text: "⚙";
+                        width: 32px;
+                        height: 36px;
+                        accessible-label: Strings.settings-open;
+                        clicked => {
+                            root.act-settings();
                         }
                     }
 
