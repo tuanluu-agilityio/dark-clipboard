@@ -85,6 +85,7 @@ dependencies = [
  "darkclip-core",
  "darkclip-platform",
  "darkclip-storage",
+ "png",
  "serde",
  "serde_json",
  "tempfile",

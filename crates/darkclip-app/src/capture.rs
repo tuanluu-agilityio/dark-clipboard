@@ -8,7 +8,7 @@
 //!
 //! Privacy order per change: settings and self-write gate (no clipboard access at all) →
 //! `snapshot_meta` (names, markers, source; never content) → `decide_pre_read` → `read` →
-//! `classify` → kind check → sensitive scan → hash → store. This module never logs (GC-06):
+//! `classify` → kind check → sensitive scan → decode and hash → store. This module never logs (GC-06):
 //! events carry ids, skip reasons and static text only.
 
 use crate::config::CaptureConfig;
@@ -16,12 +16,13 @@ use crate::events::{
     map_storage, ApiError, AppEvent, SkipCounters, UNAVAILABLE_READ, UNAVAILABLE_RETENTION,
     UNAVAILABLE_STORAGE_WRITE,
 };
+use crate::image;
 use darkclip_core::policy::{
     decide_pre_read, AvailableFormat, Decision, PreReadInput, SizeCaps, SkipReason,
 };
 use darkclip_core::sensitive::{masked_preview, scan, MaskHint, ScanResult, MAX_SCAN_BYTES};
 use darkclip_core::{
-    canonical_hash, classify, CaptureMode, ClipId, ClipboardSource, Clock, Lang, Mime,
+    canonical_hash, classify, CaptureMode, ClipId, ClipType, ClipboardSource, Clock, Lang, Mime,
     PrivacyPolicy, RawRepresentation, RetentionPolicy, SensitiveCategory, SensitiveHandling,
     Sensitivity, SensitivityLevel, Timestamp,
 };
@@ -321,6 +322,45 @@ fn scan_clip(
         }
     }
     out
+}
+
+/// Hash and optional thumbnail of a clip about to be stored.
+struct Hashed {
+    hash: [u8; 32],
+    thumbnail: Option<Vec<u8>>,
+}
+
+/// Canonical hash; for an image with a decodable PNG, over its pixels (so the same picture in
+/// two encodings dedupes), plus a thumbnail and missing dimensions filled in. A decode failure
+/// keeps the fallback hash over the encoded bytes. The RGBA buffer is wiped and dropped here.
+fn decode_and_hash(reps: &mut [RawRepresentation], kind: ClipType) -> Hashed {
+    if kind == ClipType::Image {
+        let decoded = reps
+            .iter()
+            .find(|r| r.mime == Mime::ImagePng && !r.truncated)
+            .and_then(|r| {
+                image::decode_png(&r.bytes, image::MAX_PIXELS, image::MAX_RGBA_BYTES).ok()
+            });
+        if let Some(mut img) = decoded {
+            let hash = canonical_hash(kind, reps, Some((&img.rgba, img.width, img.height)));
+            let thumb = image::thumbnail(&img, image::THUMB_MAX_SIDE);
+            wipe_bytes(&mut img.rgba);
+            for r in reps.iter_mut().filter(|r| r.mime == Mime::ImagePng) {
+                if r.width.is_none() || r.height.is_none() {
+                    r.width = Some(img.width);
+                    r.height = Some(img.height);
+                }
+            }
+            return Hashed {
+                hash,
+                thumbnail: (!thumb.is_empty()).then_some(thumb),
+            };
+        }
+    }
+    Hashed {
+        hash: canonical_hash(kind, reps, None),
+        thumbnail: None,
+    }
 }
 
 /// Wait after the first failed retention; doubles per further failure up to the cap.
@@ -802,7 +842,10 @@ impl Actor {
                 ),
             }
         };
-        let hash = canonical_hash(classified.kind, &reps, None);
+        // Only now, after the policy decision and sensitive handling, are pixels decoded.
+        let thumbnail_png = decode_and_hash(&mut reps, classified.kind);
+        let hash = thumbnail_png.hash;
+        let thumbnail_png = thumbnail_png.thumbnail;
         let outcome = self.storage.upsert_clip(NewClip {
             classified,
             hash,
@@ -810,7 +853,7 @@ impl Actor {
             source,
             sensitivity,
             expires_at,
-            thumbnail_png: None,
+            thumbnail_png,
         });
         if outcome.is_ok() {
             if let Some(t) = expires_at {
@@ -2401,5 +2444,91 @@ mod tests {
             ApiError::InvalidArgument("clip has no plain text")
         );
         assert!(dbg.contains("ClipAdded") && dbg.contains("Sensitive"));
+    }
+
+    fn png_copy(name: &str, bytes: Vec<u8>) -> FakeCopy {
+        FakeCopy {
+            formats: vec![(pf(name, Some(Mime::ImagePng), bytes.len()), bytes)],
+            markers: Vec::new(),
+            source: None,
+        }
+    }
+
+    /// The same 3x2 picture, encoded two ways (different filter and compression).
+    fn two_encodings() -> (Vec<u8>, Vec<u8>) {
+        let px: Vec<u8> = (0..24u8).map(|i| i.wrapping_mul(9)).collect();
+        let enc = |filter: png::Filter, comp: png::Compression| {
+            let mut out = Vec::new();
+            let mut e = png::Encoder::new(&mut out, 3, 2);
+            e.set_color(png::ColorType::Rgba);
+            e.set_depth(png::BitDepth::Eight);
+            e.set_filter(filter);
+            e.set_compression(comp);
+            let mut w = e.write_header().unwrap();
+            w.write_image_data(&px).unwrap();
+            w.finish().unwrap();
+            out
+        };
+        (
+            enc(png::Filter::NoFilter, png::Compression::Fast),
+            enc(png::Filter::Sub, png::Compression::High),
+        )
+    }
+
+    #[test]
+    fn same_pixels_different_encoding_dedupes() {
+        let (a, b) = two_encodings();
+        assert_ne!(a, b);
+        let h = start(PrivacyPolicy::default());
+        h.fake.copy(png_copy("PNG", a));
+        let (first, _) = h.wait_added();
+        h.fake.copy(png_copy("PNG", b));
+        h.wait_for("ClipBumped", |e| *e == AppEvent::ClipBumped(first));
+        assert_eq!(h.clip_count(), 1);
+    }
+
+    #[test]
+    fn corrupt_png_still_stored_with_fallback_hash() {
+        let h = start(PrivacyPolicy::default());
+        let bytes = b"\x89PNG\r\n\x1a\nnot really a png".to_vec();
+        h.fake.copy(png_copy("PNG", bytes.clone()));
+        let (id, _) = h.wait_added();
+        let ro = h.ro();
+        let clip = ro.get_clip(&id).unwrap().unwrap();
+        assert_eq!(clip.kind, ClipType::Image);
+        assert!(clip.metadata.image_thumb_sha256.is_none());
+        let want = canonical_hash(
+            ClipType::Image,
+            &[RawRepresentation {
+                mime: Mime::ImagePng,
+                platform_format: "PNG".into(),
+                bytes,
+                width: None,
+                height: None,
+                truncated: false,
+            }],
+            None,
+        );
+        assert_eq!(clip.content_hash, want);
+    }
+
+    #[test]
+    fn image_clip_has_thumbnail_and_dimensions() {
+        let px: Vec<u8> = vec![120; 600 * 40 * 4];
+        let mut bytes = Vec::new();
+        let mut e = png::Encoder::new(&mut bytes, 600, 40);
+        e.set_color(png::ColorType::Rgba);
+        e.set_depth(png::BitDepth::Eight);
+        let mut w = e.write_header().unwrap();
+        w.write_image_data(&px).unwrap();
+        w.finish().unwrap();
+        let h = start(PrivacyPolicy::default());
+        h.fake.copy(png_copy("PNG", bytes));
+        let (id, _) = h.wait_added();
+        let ro = h.ro();
+        let clip = ro.get_clip(&id).unwrap().unwrap();
+        assert!(clip.metadata.image_thumb_sha256.is_some());
+        let rep = &clip.representations[0];
+        assert_eq!((rep.width, rep.height), (Some(600), Some(40)));
     }
 }
