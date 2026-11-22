@@ -41,7 +41,8 @@ Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers sub
 | 106 Headless binary | task/106-headless-binary | builder | sonnet | done | 141,048 | 92,504 (reviewer opus ×2: APPROVED with 5 should-fix → fixed, APPROVED) | 21,895 | 255,447 |
 | 107 Windows verification | task/107-windows-verification | orchestrator (interactive, D-041) | opus | done | not measured (orchestrator) | 79,051 (reviewer opus ×3: CR (over-claims) → CR (1 cell) → fixed) | 0 | 79,051 |
 | 109 OLE source carry (F-14) | task/109-ole-source-carry | specialist | opus | done | 149,387 | 67,756 (security-reviewer opus ×2: CR (1 blocking: dequeue-time chain gate) → APPROVED) | 29,589 | 246,732 |
-| 108 Phase review | main | specialist | opus | next | | | | |
+| 108 Phase review | main | specialist | opus | done: CHANGES REQUIRED (1 blocking: unbounded copy-back PNG decode; 4 should-fix) → Task 110 | | 160,000 (estimate; see note) | | |
+| 110 Phase 2 review fixes | task/110-phase2-fixes | specialist | opus | in progress | | | | |
 
 ## Totals by model
 
