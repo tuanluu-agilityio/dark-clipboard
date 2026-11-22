@@ -90,6 +90,25 @@ mod tests {
     }
 
     #[test]
+    fn resolve_does_not_leak_handles() {
+        let before = crate::win::test_support::process_handle_count();
+        let mut resolved = false;
+        for _ in 0..1000 {
+            resolved |= WinSourceResolver.resolve().is_some();
+        }
+        let after = crate::win::test_support::process_handle_count();
+        // Slack: tests in parallel threads open handles too; a leak of one handle per call
+        // would grow by 1000.
+        // No owner right now: nothing was opened, so there is nothing to assert.
+        if resolved {
+            assert!(
+                after <= before + 200,
+                "handles grew from {before} to {after}"
+            );
+        }
+    }
+
+    #[test]
     fn resolve_does_not_panic() {
         // Whatever owns the clipboard now (read-only; the clipboard is never opened).
         if let Some(s) = WinSourceResolver.resolve() {

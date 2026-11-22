@@ -221,6 +221,26 @@ mod tests {
     }
 
     #[test]
+    fn resolver_survives_start_stop() {
+        let count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let c = Arc::clone(&count);
+        let mut m = WinMonitor::new(Box::new(move || {
+            c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            None
+        }));
+        for _ in 0..2 {
+            let (tx, _rx) = mpsc::channel();
+            m.start(tx).unwrap();
+            m = stop_within_2s(m);
+        }
+        let before = count.load(std::sync::atomic::Ordering::SeqCst);
+        let f = m.resolver.lock().unwrap();
+        let _ = f();
+        drop(f);
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), before + 1);
+    }
+
+    #[test]
     fn drop_stops_monitor() {
         let mut m = monitor();
         let (tx, rx) = mpsc::channel();

@@ -65,7 +65,9 @@ impl Drop for ProcessHandle {
 const MAX_IMAGE_PATH: usize = 32_768;
 
 /// Full image path (UTF-16, no NUL) of the process that owns the clipboard, or `None` when
-/// there is no owner window or the process cannot be opened (elevated, protected) or queried.
+/// there is no owner window or the process cannot be opened or queried. Elevated owners
+/// usually still resolve with `PROCESS_QUERY_LIMITED_INFORMATION`; protected processes are
+/// the denial case.
 /// Only `source.rs` calls this and it keeps the file name only; the path never leaves the
 /// crate. Does not open the clipboard and never reads a window title.
 pub(crate) fn clipboard_owner_image_path() -> Option<Vec<u16>> {
@@ -315,6 +317,16 @@ impl RawWindow {
 #[cfg(test)]
 pub(crate) mod test_support {
     //! Test-only clipboard writer for the ignored `real_clipboard_write_*` tests.
+
+    /// Number of handles open in this process (leak tests).
+    pub(crate) fn process_handle_count() -> u32 {
+        use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
+        let mut n = 0u32;
+        // SAFETY: the pseudo-handle of the current process is always valid; `n` is a valid
+        // out-pointer.
+        let _ = unsafe { GetProcessHandleCount(GetCurrentProcess(), &raw mut n) };
+        n
+    }
 
     use super::{backend, clipboard_sequence, MessageWindow};
     use darkclip_platform::PlatformError;
