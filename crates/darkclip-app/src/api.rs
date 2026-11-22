@@ -1028,6 +1028,8 @@ mod tests {
             }
         }
         let settings_path = dir.path().join("settings.json");
+        // An existing install (capture on); a test of the first run removes the file.
+        Settings::default().save(&settings_path).unwrap();
         prepare(&settings_path);
         let (platform, fake) = FakePlatform::new();
         let (tx, events) = mpsc::channel();
@@ -1420,6 +1422,25 @@ mod tests {
     }
 
     #[test]
+    fn fresh_install_does_not_capture_until_start() {
+        let h = start_with_file(&[], |p| std::fs::remove_file(p).unwrap());
+        let a = h.app();
+        assert!(a.settings().needs_welcome());
+        assert_eq!(a.status().capture, CaptureStatus::Paused);
+        h.fake.copy(text_copy("copied before Start"));
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(a.get_storage_stats(&Caller::Ui).unwrap().clips, 0);
+        // Start: persisted, and capture begins.
+        let mut s = a.settings();
+        s.finish_onboarding(true);
+        a.update_settings(s).unwrap();
+        assert_eq!(a.status().capture, CaptureStatus::Active);
+        let (saved, o) = Settings::load(&h.dir.path().join("settings.json"));
+        assert_eq!(o, crate::settings::LoadOutcome::Loaded);
+        assert!(saved.privacy.capture_enabled && !saved.needs_welcome());
+    }
+
+    #[test]
     fn update_settings_keeps_runtime_mode() {
         let h = start(&[], None);
         let a = h.app();
@@ -1497,8 +1518,9 @@ mod tests {
         let h = start(&[], None);
         let a = h.app();
         let path = h.dir.path().join("settings.json");
+        std::fs::remove_file(&path).unwrap();
         std::fs::create_dir(&path).unwrap();
-        // `persist` is true (the file did not exist at start), so the save is attempted.
+        // `persist` is true (the file was readable at start), so the save is attempted.
         assert!(a
             .set_capture_mode(&Caller::Ui, CaptureMode::Private)
             .is_err());
@@ -1551,7 +1573,10 @@ mod tests {
 
     #[test]
     fn unreadable_settings_are_never_overwritten() {
-        let h = start_with_file(&[], |p| std::fs::create_dir(p).unwrap());
+        let h = start_with_file(&[], |p| {
+            std::fs::remove_file(p).unwrap();
+            std::fs::create_dir(p).unwrap();
+        });
         let a = h.app();
         assert!(a.status().settings_read_only);
         // Saving would fail anyway; it is not even tried, so the call succeeds.
@@ -1656,6 +1681,9 @@ mod tests {
                 }
             }
         }
+        Settings::default()
+            .save(&dir.path().join("settings.json"))
+            .unwrap();
         let (platform, fake) = FakePlatform::new();
         let (tx, events) = mpsc::channel();
         let cfg = CaptureConfig {

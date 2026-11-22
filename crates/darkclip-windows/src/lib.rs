@@ -11,6 +11,8 @@
 
 #[cfg(windows)]
 mod access;
+// The command string is pure (tests run everywhere); the registry part is Windows only.
+mod autostart;
 // Pure format/marker mapping and read conversions: compiled on every OS so their tests run
 // everywhere.
 mod dib;
@@ -27,6 +29,9 @@ mod win;
 
 #[cfg(windows)]
 pub use access::WinAccess;
+#[cfg(windows)]
+pub use autostart::RegistryAutostart;
+pub use autostart::{run_command, RUN_KEY, VALUE_NAME};
 #[cfg(windows)]
 pub use monitor::{SignalSourceFn, WinMonitor};
 #[cfg(windows)]
@@ -59,7 +64,7 @@ fn capabilities() -> Capabilities {
         global_shortcut: ShortcutSupport::UserBound,
         auto_paste: Support::Native,
         tray: NOT_YET,
-        autostart: NOT_YET,
+        autostart: Support::Native,
         backend: "win32",
     }
 }
@@ -90,6 +95,7 @@ mod tests {
         assert_eq!(b.caps.write, Support::Native);
         assert_eq!(b.caps.concealed_markers, Support::Native);
         assert_eq!(b.caps.auto_paste, Support::Native);
+        assert_eq!(b.caps.autostart, Support::Native);
         // Read-only: whatever owns the clipboard now is `None` or a bare file name.
         assert!(b.source.resolve().is_none_or(|s| !s.app_id.contains('\\')));
         assert!(b.paste.is_some());

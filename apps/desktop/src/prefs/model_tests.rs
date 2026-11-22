@@ -350,24 +350,24 @@ fn a_read_only_settings_file_is_never_saved_and_never_reported_as_saved() {
     let base = defaults();
     let d = Draft::from_settings(&base);
     let mut called = false;
-    let r = run_save(true, &d, &base, |_| {
+    let r = run_save_with_login(true, &d, &base, None, |_| {
         called = true;
         true
     });
     assert!(matches!(r, SaveResult::ReadOnly));
     assert!(!called);
     assert!(matches!(
-        run_save(false, &d, &base, |_| true),
+        run_save_with_login(false, &d, &base, None, |_| true),
         SaveResult::Saved
     ));
     assert!(matches!(
-        run_save(false, &d, &base, |_| false),
+        run_save_with_login(false, &d, &base, None, |_| false),
         SaveResult::Failed
     ));
     let mut bad = d.clone();
     bad.max_items = "x".into();
     assert!(matches!(
-        run_save(false, &bad, &base, |_| true),
+        run_save_with_login(false, &bad, &base, None, |_| true),
         SaveResult::Invalid(_)
     ));
 }
@@ -391,4 +391,111 @@ fn lowering_a_retention_limit_is_detected() {
     // 0 = unlimited: going to a number lowers, going to 0 raises.
     assert!(limits_lowered(&with(0, 0, 500), &with(10, 30, 500)));
     assert!(!limits_lowered(&old, &with(0, 0, 500)));
+}
+
+mod login {
+    use super::*;
+    use darkclip_platform::fake::FakeAutostart;
+    use darkclip_platform::Autostart;
+    use std::cell::RefCell;
+
+    /// Saves through `run_save_with_login`, returning the result and the settings it wrote.
+    fn save(
+        read_only: bool,
+        draft: &Draft,
+        base: &Settings,
+        auto: Option<&dyn Autostart>,
+        update_ok: bool,
+    ) -> (SaveResult, Option<Settings>) {
+        let written = RefCell::new(None);
+        let r = run_save_with_login(read_only, draft, base, auto, |s| {
+            *written.borrow_mut() = Some(s);
+            update_ok
+        });
+        (r, written.into_inner())
+    }
+
+    fn want_login(on: bool) -> (Draft, Settings) {
+        let base = defaults();
+        let mut d = Draft::from_settings(&base);
+        d.launch_at_login = on;
+        (d, base)
+    }
+
+    #[test]
+    fn turning_start_at_login_on_registers_it_and_saves_the_choice() {
+        let fake = FakeAutostart::new(false, false);
+        let (d, base) = want_login(true);
+        let (r, w) = save(false, &d, &base, Some(&fake), true);
+        assert!(matches!(r, SaveResult::Saved));
+        assert!(fake.enabled());
+        assert!(w.unwrap().startup.launch_at_login);
+    }
+
+    #[test]
+    fn turning_it_off_removes_the_registration() {
+        let fake = FakeAutostart::new(true, false);
+        let mut base = defaults();
+        base.startup.launch_at_login = true;
+        let mut d = Draft::from_settings(&base);
+        d.launch_at_login = false;
+        let (r, w) = save(false, &d, &base, Some(&fake), true);
+        assert!(matches!(r, SaveResult::Saved));
+        assert!(!fake.enabled());
+        assert!(!w.unwrap().startup.launch_at_login);
+    }
+
+    #[test]
+    fn a_failed_registration_is_reported_and_the_stored_choice_matches_reality() {
+        let fake = FakeAutostart::new(false, true);
+        let (mut d, base) = want_login(true);
+        d.shortcut = "Ctrl+Alt+K".into();
+        let (r, w) = save(false, &d, &base, Some(&fake), true);
+        assert!(matches!(r, SaveResult::SavedLoginFailed));
+        let w = w.unwrap();
+        // Not registered, so not stored as on; the other changes are still saved.
+        assert!(!w.startup.launch_at_login);
+        assert_eq!(w.shortcuts.toggle_popup, "Ctrl+Alt+K");
+        assert!(!fake.enabled());
+    }
+
+    #[test]
+    fn an_unchanged_toggle_saves_normally() {
+        let ok = FakeAutostart::new(false, false);
+        let (d, base) = want_login(false);
+        let (r, _) = save(false, &d, &base, Some(&ok), true);
+        assert!(matches!(r, SaveResult::Saved));
+        assert!(!ok.enabled());
+    }
+
+    #[test]
+    fn a_platform_without_autostart_only_stores_the_choice() {
+        let (d, base) = want_login(true);
+        let (r, w) = save(false, &d, &base, None, true);
+        assert!(matches!(r, SaveResult::Saved));
+        assert!(w.unwrap().startup.launch_at_login);
+    }
+
+    #[test]
+    fn a_failed_settings_write_undoes_the_registration() {
+        let fake = FakeAutostart::new(false, false);
+        let (d, base) = want_login(true);
+        let (r, _) = save(false, &d, &base, Some(&fake), false);
+        assert!(matches!(r, SaveResult::Failed));
+        assert!(!fake.enabled());
+    }
+
+    #[test]
+    fn read_only_and_invalid_saves_never_touch_the_registry() {
+        let fake = FakeAutostart::new(false, false);
+        let (d, base) = want_login(true);
+        let (r, w) = save(true, &d, &base, Some(&fake), true);
+        assert!(matches!(r, SaveResult::ReadOnly) && w.is_none());
+        assert!(!fake.enabled());
+        let mut bad = d.clone();
+        bad.max_items = "x".into();
+        let (r, w) = save(false, &bad, &base, Some(&fake), true);
+        assert!(matches!(r, SaveResult::Invalid(_)) && w.is_none());
+        assert!(!fake.enabled());
+    }
 }

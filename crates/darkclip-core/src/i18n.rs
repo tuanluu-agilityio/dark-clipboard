@@ -454,6 +454,44 @@ messages! {
     SettingsDataFolder => ("Data folder", "Thư mục dữ liệu"),
     SettingsOpenFolder => ("Open folder", "Mở thư mục"),
     SettingsOpenFolderFailed => ("The folder could not be opened", "Không mở được thư mục"),
+    SettingsShowWelcome => ("Show welcome", "Hiện màn hình chào mừng"),
+    SettingsAutostartFailed => (
+        "Saved, but start at login could not be changed. The toggle shows the real state.",
+        "Đã lưu, nhưng không thay đổi được khởi động cùng hệ thống. Công tắc hiện trạng thái thật."
+    ),
+    // First-run welcome (Task 208)
+    WelcomeTitle => ("Welcome to Dark Clipboard", "Chào mừng đến với Dark Clipboard"),
+    WelcomeShortcut => (
+        "Press {shortcut} anywhere to open your clipboard history.",
+        "Nhấn {shortcut} ở bất cứ đâu để mở lịch sử bảng nhớ tạm."
+    ),
+    WelcomeNever => (
+        "Never captured: copies from password managers, anything the system marks as concealed, and copies Darkshot excludes.",
+        "Không bao giờ ghi lại: nội dung sao chép từ trình quản lý mật khẩu, nội dung hệ thống đánh dấu là ẩn, và nội dung Darkshot loại trừ."
+    ),
+    WelcomeData => (
+        "Your history stays in this folder on your computer: {path}",
+        "Lịch sử của bạn nằm trong thư mục này trên máy của bạn: {path}"
+    ),
+    WelcomeNoCloud => (
+        "No account, no cloud, no telemetry. Nothing leaves this computer.",
+        "Không tài khoản, không đám mây, không gửi dữ liệu. Không có gì rời khỏi máy này."
+    ),
+    WelcomeCaptureOff => (
+        "Nothing is captured until you press Start.",
+        "Sẽ không ghi lại gì cho đến khi bạn nhấn Bắt đầu."
+    ),
+    WelcomeAutostart => ("Start with Windows", "Khởi động cùng Windows"),
+    WelcomeStart => ("Start", "Bắt đầu"),
+    WelcomeNotNow => ("Not now", "Để sau"),
+    WelcomeSaveFailed => (
+        "Your choice could not be saved. Try again.",
+        "Không lưu được lựa chọn của bạn. Hãy thử lại."
+    ),
+    WelcomeAutostartFailed => (
+        "Capture is on, but start at login could not be set. You can try again in Settings.",
+        "Đã bật ghi lại, nhưng không đặt được khởi động cùng hệ thống. Bạn có thể thử lại trong Cài đặt."
+    ),
 }
 
 /// Messages allowed to read the same in both languages.

@@ -139,6 +139,27 @@ Setup: `--seed-demo-clips 10000 --data-dir <temp>` then run with the same `--dat
 | Vietnamese IME (Telex) in the search box | Diacritics type and search as in the popup | **untested** |
 | Screen reader (Narrator): list, filters, dialog | Rows are read with their text and details; the dialog text is read | **untested** |
 
+## Windows: welcome and start at login (Task 208)
+
+Use a throwaway data folder for the welcome rows: `dark-clipboard.exe --data-dir <temp folder>` (settings live in that folder too). Never use `--data-dir` for the start-at-login rows: they change the real login items of this account.
+
+| Row | Expected | Result |
+|---|---|---|
+| Fresh data folder, start the app | The welcome window opens by itself (dark, no white flash): shortcut, never-captured list, data folder, "no account, no cloud", "Nothing is captured until you press Start", an unchecked "Start with Windows" box, Not now and Start. Tray tooltip says capture is off | **untested** |
+| Copy some text before pressing anything | Nothing is added to the history | **untested** |
+| Press Start (box unchecked) | The window closes; the tray tooltip says capturing; a copy now appears in the popup; restart the app: no welcome and capture still on | **untested** |
+| Fresh folder, press Not now | The window closes; capture stays off (tray: capture is off; copies are not stored); restart: no welcome | **untested** |
+| Fresh folder, close the welcome with X or Esc | Same as Not now | **untested** |
+| After Not now: Settings > About > Show welcome > Start | Capture turns on; the welcome opens again only from that button | **untested** |
+| Existing settings file (copy of a real one, no `onboarding_done`) | No welcome; capture state exactly as before | **untested** |
+| Language: Vietnamese OS language on a fresh folder | The welcome is in Vietnamese; the shortcut and folder path are filled in | **untested** |
+| Start with the box checked, then look at `reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v DarkClipboard` | One value: the quoted path of dark-clipboard.exe, no arguments. Log out and in: the app starts (this row changes your login items; remove the entry afterwards with Settings or `reg delete`) | **untested** |
+| Settings > General > Start at login: switch on, Save, then off, Save | The Run value appears and disappears; the status line says Saved; no "not wired" note is shown | **untested** |
+| Run value made unwritable (for example a policy), then toggle | The status line says the change failed, and the toggle returns to the real state | **untested** |
+| Screen reader (Narrator) on the welcome | Texts, the check box and both buttons are read | **untested** |
+
+The registry round trip also exists as an ignored test: `cargo test -p darkclip-windows -- --ignored autostart` (uses the value name `DarkClipboardTest`, removed at the end).
+
 ## macOS
 
 All rows **untested** (no hardware, Q-04).

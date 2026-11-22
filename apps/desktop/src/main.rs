@@ -226,6 +226,18 @@ fn default_settings_path() -> Option<PathBuf> {
     None
 }
 
+/// The start-at-login registration of this platform (Task 208); `None` where the adapter has
+/// none. Cheap to create: it holds no handle (each call opens the registry key itself).
+#[cfg(windows)]
+fn autostart() -> Option<Box<dyn darkclip_platform::Autostart>> {
+    Some(Box::new(darkclip_windows::RegistryAutostart::new()))
+}
+
+#[cfg(not(windows))]
+fn autostart() -> Option<Box<dyn darkclip_platform::Autostart>> {
+    None
+}
+
 #[cfg(not(windows))]
 fn platform() -> Result<darkclip_platform::PlatformBundle, darkclip_platform::PlatformError> {
     Err(darkclip_platform::PlatformError::Unsupported(

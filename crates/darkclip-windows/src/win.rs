@@ -32,6 +32,11 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{
     GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
 };
+use windows::Win32::System::Registry::{
+    RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
+    HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ,
+    REG_VALUE_TYPE,
+};
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -906,6 +911,147 @@ pub(crate) fn send_ctrl_v() -> Result<(), PlatformError> {
     Err(PlatformError::Backend {
         code: i64::from(code),
     })
+}
+
+/// An open key under `HKEY_CURRENT_USER`; closed on drop (GC-13).
+struct RegKey(HKEY);
+
+impl Drop for RegKey {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` was opened by `RegOpenKeyExW`/`RegCreateKeyExW` and is closed once.
+        let _ = unsafe { RegCloseKey(self.0) };
+    }
+}
+
+fn reg_error(e: windows::Win32::Foundation::WIN32_ERROR) -> PlatformError {
+    PlatformError::Backend {
+        code: i64::from(e.0),
+    }
+}
+
+/// Creates (or opens) `HKCU\<subkey>` for writing.
+fn reg_create(subkey: &str) -> Result<RegKey, PlatformError> {
+    let sub = HSTRING::from(subkey);
+    let mut key = HKEY::default();
+    // SAFETY: `sub` is NUL-terminated and outlives the call; `key` is a valid out pointer.
+    let r = unsafe {
+        RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            &sub,
+            None,
+            PCWSTR::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            None,
+            &mut key,
+            None,
+        )
+    };
+    if r == ERROR_SUCCESS {
+        Ok(RegKey(key))
+    } else {
+        Err(reg_error(r))
+    }
+}
+
+/// Opens `HKCU\<subkey>` with `access`; `Ok(None)` when the key does not exist.
+fn reg_open(
+    subkey: &str,
+    access: windows::Win32::System::Registry::REG_SAM_FLAGS,
+) -> Result<Option<RegKey>, PlatformError> {
+    use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+    let sub = HSTRING::from(subkey);
+    let mut key = HKEY::default();
+    // SAFETY: `sub` is NUL-terminated and outlives the call; `key` is a valid out pointer.
+    let r = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, &sub, None, access, &mut key) };
+    if r == ERROR_SUCCESS {
+        Ok(Some(RegKey(key)))
+    } else if r == ERROR_FILE_NOT_FOUND {
+        Ok(None)
+    } else {
+        Err(reg_error(r))
+    }
+}
+
+/// Writes a `REG_SZ` value under `HKCU\<subkey>`, creating the key when needed.
+pub(crate) fn reg_set_string(subkey: &str, name: &str, value: &str) -> Result<(), PlatformError> {
+    let key = reg_create(subkey)?;
+    let name = HSTRING::from(name);
+    // UTF-16 with the terminating NUL, as bytes.
+    let bytes: Vec<u8> = value
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    // SAFETY: `key` is open for writing; `name` is NUL-terminated; `bytes` outlives the call.
+    let r = unsafe { RegSetValueExW(key.0, &name, None, REG_SZ, Some(&bytes)) };
+    if r == ERROR_SUCCESS {
+        Ok(())
+    } else {
+        Err(reg_error(r))
+    }
+}
+
+/// Reads a `REG_SZ` value; `Ok(None)` when the key or the value is missing or not a string.
+pub(crate) fn reg_get_string(subkey: &str, name: &str) -> Result<Option<String>, PlatformError> {
+    use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+    let Some(key) = reg_open(subkey, KEY_QUERY_VALUE)? else {
+        return Ok(None);
+    };
+    let name = HSTRING::from(name);
+    let mut kind = REG_VALUE_TYPE(0);
+    let mut size = 0u32;
+    // SAFETY: a size query: no data buffer; `kind` and `size` are valid out pointers.
+    let r = unsafe { RegQueryValueExW(key.0, &name, None, Some(&mut kind), None, Some(&mut size)) };
+    if r == ERROR_FILE_NOT_FOUND {
+        return Ok(None);
+    }
+    if r != ERROR_SUCCESS {
+        return Err(reg_error(r));
+    }
+    if kind != REG_SZ {
+        return Ok(None);
+    }
+    let mut buf = vec![0u8; usize::try_from(size).unwrap_or(0)];
+    // SAFETY: `buf` is `size` writable bytes; `size` is updated to the bytes written.
+    let r = unsafe {
+        RegQueryValueExW(
+            key.0,
+            &name,
+            None,
+            Some(&mut kind),
+            Some(buf.as_mut_ptr()),
+            Some(&mut size),
+        )
+    };
+    if r != ERROR_SUCCESS {
+        return Err(reg_error(r));
+    }
+    buf.truncate(usize::try_from(size).unwrap_or(0));
+    let wide: Vec<u16> = buf
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes(*c))
+        .take_while(|&c| c != 0)
+        .collect();
+    Ok(Some(String::from_utf16_lossy(&wide)))
+}
+
+/// Deletes a value; a missing key or value counts as done.
+pub(crate) fn reg_delete_value(subkey: &str, name: &str) -> Result<(), PlatformError> {
+    use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+    let Some(key) = reg_open(subkey, KEY_SET_VALUE)? else {
+        return Ok(());
+    };
+    let name = HSTRING::from(name);
+    // SAFETY: `key` is open for writing; `name` is NUL-terminated and outlives the call.
+    let r = unsafe { RegDeleteValueW(key.0, &name) };
+    if r == ERROR_SUCCESS || r == ERROR_FILE_NOT_FOUND {
+        Ok(())
+    } else {
+        Err(reg_error(r))
+    }
 }
 
 #[cfg(test)]

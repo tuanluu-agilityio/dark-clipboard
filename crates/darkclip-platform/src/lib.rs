@@ -14,6 +14,6 @@ pub mod traits;
 pub use caps::{Capabilities, ShortcutSupport, SourceSupport, Support};
 pub use error::PlatformError;
 pub use traits::{
-    ChangeSignal, ClipboardAccess, ClipboardMeta, ClipboardMonitor, PasteInjector, PasteTarget,
-    PlatformBundle, PlatformFormat, SourceResolver,
+    Autostart, ChangeSignal, ClipboardAccess, ClipboardMeta, ClipboardMonitor, PasteInjector,
+    PasteTarget, PlatformBundle, PlatformFormat, SourceResolver,
 };

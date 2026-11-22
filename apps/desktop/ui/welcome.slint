@@ -1,0 +1,140 @@
+// The first-run welcome (Task 208): one screen with what the app does, what it never captures
+// and where the data lives, then Start or Not now. Every string comes from the `WText` global
+// (i18n); every decision is made in Rust (`src/ui/welcome_host.rs`, `src/prefs/welcome.rs`).
+// Dark only (D-037).
+
+import { Button, CheckBox, Palette } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export global WText {
+    in property <string> title;
+    in property <string> shortcut;
+    in property <string> never;
+    in property <string> data;
+    in property <string> no-cloud;
+    in property <string> capture-off;
+    in property <string> login;
+    in property <string> start;
+    in property <string> not-now;
+    in property <string> close;
+}
+
+export component WelcomeWindow inherits Window {
+    title: WText.title;
+    background: Theme.bg;
+    min-width: 480px;
+    preferred-width: 520px;
+    min-height: 420px;
+    preferred-height: 460px;
+    default-font-size: 13px;
+
+    // The "Start with Windows" checkbox; hidden when the platform cannot register.
+    in-out property <bool> login;
+    in property <bool> can-login;
+    // Non-empty after a failed answer.
+    in property <string> error;
+    // An answer is being saved: the buttons wait.
+    in property <bool> busy;
+    // Capture is on but registering start at login failed: only Close is left.
+    in property <bool> finished;
+
+    callback begin();
+    callback not-now();
+    callback dismiss();
+
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
+
+    FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                root.dismiss();
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 12px;
+            alignment: start;
+
+            Text {
+                text: WText.title;
+                color: Theme.text;
+                font-size: 20px;
+                font-weight: 700;
+                wrap: word-wrap;
+                accessible-role: text;
+            }
+            Text {
+                text: WText.shortcut;
+                color: Theme.text;
+                wrap: word-wrap;
+                accessible-role: text;
+            }
+            Text {
+                text: WText.never;
+                color: Theme.text;
+                wrap: word-wrap;
+                accessible-role: text;
+            }
+            Text {
+                text: WText.data;
+                color: Theme.text;
+                wrap: word-wrap;
+                accessible-role: text;
+            }
+            Text {
+                text: WText.no-cloud;
+                color: Theme.text;
+                wrap: word-wrap;
+                accessible-role: text;
+            }
+            if !root.finished: Text {
+                text: WText.capture-off;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+                accessible-role: text;
+            }
+            if root.can-login && !root.finished: CheckBox {
+                text: WText.login;
+                checked <=> root.login;
+                enabled: !root.busy;
+            }
+            if root.error != "": Text {
+                text: root.error;
+                color: Theme.danger;
+                wrap: word-wrap;
+                accessible-role: text;
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                if !root.finished: Button {
+                    text: WText.not-now;
+                    enabled: !root.busy;
+                    clicked => {
+                        root.not-now();
+                    }
+                }
+                if !root.finished: Button {
+                    text: WText.start;
+                    primary: true;
+                    enabled: !root.busy;
+                    clicked => {
+                        root.begin();
+                    }
+                }
+                if root.finished: Button {
+                    text: WText.close;
+                    primary: true;
+                    clicked => {
+                        root.dismiss();
+                    }
+                }
+            }
+        }
+    }
+}

@@ -4,6 +4,7 @@ use crate::shortcut;
 use darkclip_app::settings::{PopupPosition, Settings};
 use darkclip_core::i18n::Msg;
 use darkclip_core::{ClipType, ExcludedApp, Lang, Platform, RetentionPolicy, SensitiveHandling};
+use darkclip_platform::Autostart;
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 
@@ -275,28 +276,63 @@ pub enum SaveResult {
     Failed,
     /// The settings file is read-only (D-028): nothing was written.
     ReadOnly,
+    /// Saved, but start at login could not be changed (Task 208); the stored choice is the
+    /// real state, so the toggle goes back to it.
+    SavedLoginFailed,
 }
 
-/// Validates and saves. `update` writes the settings (true = written); it is never called for
-/// a read-only file or invalid input.
-pub fn run_save(
+/// Brings the start-at-login registration in line with `want`. `Ok(changed)`; `Err(actual)`
+/// when it failed, with the state to store instead (the registry's if it can be read, else
+/// `fallback`). Without an adapter (`None`) nothing happens.
+pub fn sync_login(auto: Option<&dyn Autostart>, want: bool, fallback: bool) -> Result<bool, bool> {
+    let Some(auto) = auto else {
+        return Ok(false);
+    };
+    let current = auto.is_enabled();
+    if current == Ok(want) {
+        return Ok(false);
+    }
+    match auto.set_enabled(want) {
+        Ok(()) => Ok(true),
+        Err(_) => Err(current.unwrap_or(fallback)),
+    }
+}
+
+/// Validates and saves, with the start-at-login registration (Task 208). `update` writes the
+/// settings (true = written); it is never called for a read-only file or invalid input. The registration changes before
+/// the file is written; if the write then fails it is put back. A failed registration still
+/// saves everything else, with the choice stored as the real state, and reports
+/// `SavedLoginFailed`. Read-only and invalid input never touch the registry.
+pub fn run_save_with_login(
     read_only: bool,
     draft: &Draft,
     base: &Settings,
+    auto: Option<&dyn Autostart>,
     update: impl FnOnce(Settings) -> bool,
 ) -> SaveResult {
     if read_only {
         return SaveResult::ReadOnly;
     }
-    match draft.apply_to(base) {
-        Err(p) => SaveResult::Invalid(p),
-        Ok(new) => {
-            if update(new) {
-                SaveResult::Saved
-            } else {
-                SaveResult::Failed
+    let mut new = match draft.apply_to(base) {
+        Ok(s) => s,
+        Err(p) => return SaveResult::Invalid(p),
+    };
+    let want = new.startup.launch_at_login;
+    let login = sync_login(auto, want, base.startup.launch_at_login);
+    if let Err(actual) = login {
+        new.startup.launch_at_login = actual;
+    }
+    if !update(new) {
+        if login == Ok(true) {
+            if let Some(auto) = auto {
+                let _ = auto.set_enabled(!want);
             }
         }
+        return SaveResult::Failed;
+    }
+    match login {
+        Err(_) => SaveResult::SavedLoginFailed,
+        Ok(_) => SaveResult::Saved,
     }
 }
 
