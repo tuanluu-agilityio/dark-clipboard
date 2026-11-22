@@ -1,6 +1,6 @@
 # Progress and token ledger
 
-Updated: 2026-11-22 (Phase 1 complete)
+Updated: 2026-11-22 (Phase 2 started)
 
 Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers subagents report when they finish. Orchestrator tokens cannot be measured per task.
 
@@ -27,6 +27,20 @@ Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers sub
 | 011 App API, settings | task/011-app-api-settings | builder | sonnet | done | 152,545 | 241,464 (security-reviewer opus ×2: CR → APPROVED; reviewer upgraded from sonnet) | 406,538 (2 rounds) | 800,547 |
 | 012 Phase review | main | specialist | opus | done: CHANGES REQUIRED (B-1 bench; later shown to be a measurement artifact) → Task 013 | | 195,016 | | 195,016 |
 | 013 Phase 1 review fixes | task/013-phase1-fixes | specialist | opus | done | 139,586 | 38,199 (reviewer opus: APPROVED) | 181,043 | 358,828 |
+
+## Phase 2: Windows capture
+
+| Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
+|---|---|---|---|---|---|---|---|---|
+| 101 Windows monitor | task/101-windows-monitor | specialist | opus | in progress | | | | |
+| 105 Windows source | task/105-windows-source | builder | sonnet | pending | | | | |
+| 102 Windows snapshot_meta | task/102-windows-snapshot-meta | specialist | opus | pending | | | | |
+| 103 Windows read | task/103-windows-read | specialist | opus | pending | | | | |
+| 103b App image decode | task/103b-app-image-decode | builder | sonnet | pending | | | | |
+| 104 Windows write | task/104-windows-write | specialist | opus | pending | | | | |
+| 106 Headless binary | task/106-headless-binary | builder | sonnet | pending | | | | |
+| 107 Windows verification | task/107-windows-verification | platform-verifier | sonnet | pending (needs owner) | | | | |
+| 108 Phase review | main | specialist | opus | pending | | | | |
 
 ## Totals by model
 

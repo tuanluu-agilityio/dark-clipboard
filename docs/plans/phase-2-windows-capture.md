@@ -43,3 +43,7 @@ These are binding for the Phase 2 task packages, which are written at phase star
 | F-02 | 106 | StorageFull → retention, then retry the insert once. |
 | S-10 | 106 | Add a check rule for content-free logging in `apps/desktop` (no clip types or previews in log macros). |
 | F-03 | 101 | `sequence()` never fails on Windows (`GetClipboardSequenceNumber`); return `Ok` always. |
+
+## Execution order (D-031)
+
+Task packages written 2026-11-22. Order: 101 → 105 → 102 → 103 → 103b → 104 → 106 → 107 → 108. Task 105 runs right after 101 because the monitor resolves the source at signal time (F-01). 103b: `builder` / sonnet, reviewer opus.
