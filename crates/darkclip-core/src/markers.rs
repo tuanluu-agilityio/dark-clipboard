@@ -27,6 +27,20 @@ const WIN_HISTORY: &str = "CanIncludeInClipboardHistory";
 const WIN_CLOUD: &str = "CanUploadToCloudClipboard";
 const WIN_VIEWER_IGNORE: &str = "Clipboard Viewer Ignore";
 
+/// Every Windows marker format name `windows_markers` understands. The Windows adapter
+/// registers exactly this list and matches by format id (D-021, D-032), so a marker added here
+/// is detected without an adapter change. Fixed in code; never configurable (GC-07).
+pub const WINDOWS_MARKER_NAMES: &[&str] = &[
+    WIN_EXCLUDE_MONITOR,
+    WIN_HISTORY,
+    WIN_CLOUD,
+    WIN_VIEWER_IGNORE,
+];
+
+/// The Windows markers whose 4-byte DWORD value the adapter reads (and passes to
+/// `windows_markers`). All other markers count by presence alone.
+pub const WINDOWS_DWORD_MARKER_NAMES: &[&str] = &[WIN_HISTORY, WIN_CLOUD];
+
 // macOS pasteboard types (nspasteboard.org conventions).
 const MAC_CONCEALED: &str = "org.nspasteboard.ConcealedType";
 const MAC_TRANSIENT: &str = "org.nspasteboard.TransientType";
@@ -164,6 +178,21 @@ mod tests {
             ("CanIncludeInClipboardHistory", Some(0)),
             ("CanUploadToCloudClipboard", Some(0)),
         ]
+    }
+
+    #[test]
+    fn windows_marker_names_all_map_and_dword_ones_are_history_and_cloud() {
+        assert_eq!(WINDOWS_MARKER_NAMES.len(), 4);
+        for name in WINDOWS_MARKER_NAMES {
+            assert!(!windows_markers(&[(name, Some(0))]).is_empty(), "{name}");
+        }
+        assert_eq!(
+            WINDOWS_DWORD_MARKER_NAMES,
+            &["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"]
+        );
+        for name in WINDOWS_DWORD_MARKER_NAMES {
+            assert!(WINDOWS_MARKER_NAMES.contains(name));
+        }
     }
 
     #[test]

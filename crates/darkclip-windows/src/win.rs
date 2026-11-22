@@ -140,7 +140,9 @@ impl ClipboardGuard {
     /// The DWORD stored in a marker format: the data handle's `GlobalSize` must be exactly 4
     /// bytes, else `None`. Only for the two DWORD marker formats; never call it for a content
     /// format. The handle belongs to the clipboard and is not freed; the lock is released on
-    /// every path.
+    /// every path. If the owner offered the marker with delayed rendering, `GetClipboardData`
+    /// blocks until the owner renders it, with the clipboard held open; this runs on the
+    /// capture actor's thread, never a UI thread, which absorbs the wait (T-18).
     pub(crate) fn dword_value(&self, id: u32) -> Option<u32> {
         // SAFETY: the clipboard is open by this thread (owned by `self`).
         let handle = unsafe { GetClipboardData(id) }.ok()?;

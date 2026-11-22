@@ -44,18 +44,24 @@ pub(crate) const PNG: &str = "PNG";
 pub(crate) const HTML_FORMAT: &str = "HTML Format";
 pub(crate) const RTF_FORMAT: &str = "Rich Text Format";
 
-// Marker format names (privacy-design §3). Same spelling as `darkclip_core::markers`.
+// Marker names spelled out for tests and the test writer only; production code uses the core
+// list below, so the adapter can never fall behind it (D-032).
+#[cfg(test)]
 pub(crate) const EXCLUDE_MONITOR: &str = "ExcludeClipboardContentFromMonitorProcessing";
+#[cfg(test)]
 pub(crate) const HISTORY: &str = "CanIncludeInClipboardHistory";
+#[cfg(test)]
 pub(crate) const CLOUD: &str = "CanUploadToCloudClipboard";
+#[cfg(test)]
 pub(crate) const VIEWER_IGNORE: &str = "Clipboard Viewer Ignore";
 
-/// Every Windows marker format name. Fixed in code; no setting changes it (GC-07).
-pub(crate) const MARKER_NAMES: [&str; 4] = [EXCLUDE_MONITOR, HISTORY, CLOUD, VIEWER_IGNORE];
+/// Every Windows marker format name, taken from the core table (`windows_markers`). Fixed in
+/// code; no setting changes it (GC-07).
+pub(crate) const MARKER_NAMES: &[&str] = darkclip_core::markers::WINDOWS_MARKER_NAMES;
 
 /// Marker formats whose DWORD value is read (the only data read in `snapshot_meta`).
 pub(crate) fn marker_has_dword(name: &str) -> bool {
-    name == HISTORY || name == CLOUD
+    darkclip_core::markers::WINDOWS_DWORD_MARKER_NAMES.contains(&name)
 }
 
 /// Fixed name of a standard clipboard format.
@@ -385,9 +391,22 @@ mod tests {
     }
 
     #[test]
+    fn adapter_covers_every_core_windows_marker() {
+        use darkclip_core::markers::{WINDOWS_DWORD_MARKER_NAMES, WINDOWS_MARKER_NAMES};
+        assert_eq!(MARKER_NAMES, WINDOWS_MARKER_NAMES);
+        for name in WINDOWS_MARKER_NAMES {
+            assert_eq!(
+                marker_has_dword(name),
+                WINDOWS_DWORD_MARKER_NAMES.contains(name),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn marker_names_match_core_table() {
         // Each canonical name produces a marker in the core table (single source of meaning).
-        for name in MARKER_NAMES {
+        for &name in MARKER_NAMES {
             let m = darkclip_core::markers::windows_markers(&[(name, Some(0))]);
             assert!(!m.is_empty(), "{name}");
         }

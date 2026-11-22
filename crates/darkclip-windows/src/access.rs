@@ -63,7 +63,7 @@ impl MarkerCache {
             return Ok(ids.clone());
         }
         let mut ids = Vec::with_capacity(formats::MARKER_NAMES.len());
-        for name in formats::MARKER_NAMES {
+        for &name in formats::MARKER_NAMES {
             let id = os
                 .register(name)
                 .ok_or(PlatformError::Backend { code: -1 })?;
@@ -224,6 +224,8 @@ mod tests {
         opens: Cell<u32>,
         closes: Cell<u32>,
         registers: Cell<u32>,
+        /// Every name passed to `register`, in order.
+        registered_names: RefCell<Vec<String>>,
         /// Every id passed to the data getter.
         data_reads: RefCell<Vec<u32>>,
     }
@@ -240,6 +242,7 @@ mod tests {
                 opens: Cell::new(0),
                 closes: Cell::new(0),
                 registers: Cell::new(0),
+                registered_names: RefCell::new(Vec::new()),
                 data_reads: RefCell::new(Vec::new()),
             }
         }
@@ -298,6 +301,7 @@ mod tests {
 
         fn register(&mut self, name: &str) -> Option<u32> {
             self.registers.set(self.registers.get() + 1);
+            self.registered_names.borrow_mut().push(name.to_owned());
             Some(self.atom(name))
         }
 
@@ -527,6 +531,15 @@ mod tests {
     }
 
     #[test]
+    fn registers_exactly_core_windows_marker_names() {
+        let mut os = FakeOs::new();
+        os.standard(CF_UNICODETEXT);
+        snap(&mut os).unwrap();
+        let names = os.registered_names.borrow().clone();
+        assert_eq!(names, darkclip_core::markers::WINDOWS_MARKER_NAMES);
+    }
+
+    #[test]
     fn unnamed_private_format_gets_a_placeholder_name() {
         let mut os = FakeOs::new();
         os.standard(0x0200).standard(CF_UNICODETEXT);
@@ -549,6 +562,12 @@ mod tests {
     fn read_and_write_are_unsupported() {
         let mut a = WinAccess::new();
         assert_eq!(a.write(&[]).unwrap_err(), NOT_YET);
+        let plan = ReadPlan {
+            formats: Vec::new(),
+            truncate_text_at: 0,
+            image_max_bytes: 0,
+        };
+        assert_eq!(a.read(&plan).unwrap_err(), NOT_YET);
     }
 
     #[test]
