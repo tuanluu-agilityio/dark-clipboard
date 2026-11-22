@@ -259,6 +259,10 @@ mod tests {
             "-----BEGIN PUBLIC KEY-----",
             "eyJ is a prefix",
             "if password == other {",
+            "scores 23 45 67 89 12 34 56 78 90",
+            "1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0",
+            "| 120 345 678 901 234 567 890 |",
+            "120 345 678 901 234 567 890",
         ];
         for text in corpus {
             assert_eq!(scan(text, &all()), ScanResult::default());

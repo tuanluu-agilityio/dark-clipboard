@@ -1,7 +1,8 @@
 //! Payment cards: 13 to 19 digits, optionally grouped by one kind of single separator
 //! (space, dash, no-break space or another Unicode space) used throughout, passing the Luhn
 //! check, first digit 2 to 6. Group-aligned prefixes of a longer run are also tried, so a
-//! card followed by an expiry date or CVV is found.
+//! card followed by an expiry date or CVV is found; such a prefix must be grouped like a card
+//! (groups of at least 4 digits, the last possibly of 3).
 //!
 //! Known misses: cards starting with other digits, numbers with mixed or doubled separators,
 //! groups split at positions that do not align with the card number.
@@ -13,6 +14,9 @@ pub(crate) struct CardDetector;
 
 const MIN_DIGITS: usize = 13;
 const MAX_DIGITS: usize = 19;
+/// Group sizes required when a card is a prefix of a longer digit run.
+const MIN_GROUP: usize = 4;
+const MIN_LAST_GROUP: usize = 3;
 
 fn is_digit_at(bytes: &[u8], i: usize) -> bool {
     bytes.get(i).is_some_and(u8::is_ascii_digit)
@@ -80,7 +84,10 @@ impl Detector for CardDetector {
             let mut sep: Option<char> = None;
             // Latest passing prefix that is followed by a separator and more digits.
             let mut inner_end: Option<usize> = None;
+            // Every group before the current one has at least 4 digits.
+            let mut earlier_groups_card_like = true;
             let final_passes = loop {
+                let group_start = count;
                 while let Some(&b) = bytes.get(i).filter(|b| b.is_ascii_digit()) {
                     if let Some(slot) = digits.get_mut(count) {
                         *slot = b - b'0';
@@ -94,9 +101,13 @@ impl Detector for CardDetector {
                     Some(c)
                         if sep.is_none_or(|x| x == c) && is_digit_at(bytes, i + c.len_utf8()) =>
                     {
-                        if passes {
+                        let group_len = count - group_start;
+                        // A prefix of a longer run is only a card if it is grouped like one:
+                        // groups of 4 or more, the last possibly of 3 (4-4-4-4, 4-6-5, 4-4-5).
+                        if passes && earlier_groups_card_like && group_len >= MIN_LAST_GROUP {
                             inner_end = Some(i);
                         }
+                        earlier_groups_card_like &= group_len >= MIN_GROUP;
                         sep = Some(c);
                         i += c.len_utf8();
                     }
@@ -207,6 +218,54 @@ mod tests {
             "4111\u{2009}1111",
             "\u{2008}1111\u{2009}1111"
         )));
+    }
+
+    #[test]
+    fn inner_prefix_needs_card_like_groups() {
+        assert!(!hit("scores 23 45 67 89 12 34 56 78 90"));
+        assert!(!hit("1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0"));
+        assert!(!hit("120 345 678 901 234 567 890"));
+        // card-like groupings followed by more digits still hit
+        assert!(hit(concat!("4111 1111 1111", " 1111 123 99")));
+        assert!(hit(concat!("3782 822463", " 10005 1234")));
+        assert!(hit(concat!(
+            "4111\u{a0}1111",
+            "\u{a0}1111\u{a0}1111\u{a0}12"
+        )));
+    }
+
+    /// xorshift64, fixed seed: deterministic pseudo-random numbers without crates.
+    struct XorShift(u64);
+
+    impl XorShift {
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+    }
+
+    /// Number of 2,000 random space-separated lists of ten numbers in 0..=999 flagged as cards.
+    fn random_list_flags() -> usize {
+        let mut rng = XorShift(0x9E37_79B9_7F4A_7C15);
+        (0..2000)
+            .filter(|_| {
+                let list = (0..10)
+                    .map(|_| (rng.next() % 1000).to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                hit(&list)
+            })
+            .count()
+    }
+
+    #[test]
+    fn random_number_lists_rarely_flagged() {
+        let flagged = random_list_flags();
+        assert!(flagged * 100 <= 2000, "flagged {flagged} of 2000");
     }
 
     #[test]

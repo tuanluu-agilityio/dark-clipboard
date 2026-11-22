@@ -17,6 +17,8 @@ fn is_token_byte(b: u8) -> bool {
 
 const MIN_RANDOM_LEN: usize = 20;
 const MIN_DISTINCT: u32 = 10;
+/// Shortest "longest `-`-separated segment" of an `sk-` body.
+const MIN_SK_SEGMENT: usize = 16;
 
 fn has_digit(s: &[u8]) -> bool {
     s.iter().any(u8::is_ascii_digit)
@@ -42,7 +44,10 @@ fn random_looking(body: &[u8]) -> bool {
 
 fn is_key(tok: &[u8]) -> bool {
     if let Some(body) = tok.strip_prefix(b"sk-") {
-        return random_looking(body);
+        // Real keys have one long random segment (`sk-proj-…`, `sk-ant-api03-…`);
+        // kebab-case names (`sk-fading-circle-dot-v2`) only have short words.
+        let longest_segment = body.split(|&b| b == b'-').map(<[u8]>::len).max();
+        return random_looking(body) && longest_segment.is_some_and(|l| l >= MIN_SK_SEGMENT);
     }
     if let Some(body) = tok.strip_prefix(b"glpat-") {
         return random_looking(body);
@@ -200,6 +205,30 @@ mod tests {
         ];
         for t in &negatives {
             assert!(!hit(t));
+        }
+    }
+
+    #[test]
+    fn sk_kebab_case_names_negative() {
+        for t in [
+            "sk-button-primary-large-2x",
+            "sk-fading-circle-dot-v2",
+            "sk-feature-login-page-v2",
+            "sk-folding-cube-animation-3",
+        ] {
+            assert!(!hit(t));
+        }
+        let real = [
+            format!("{}{}", concat!("s", "k-"), body(48)),
+            format!("{}{}", concat!("s", "k-proj-"), body(64)),
+            format!("{}{}_{}", concat!("s", "k-proj-"), body(40), body(40)),
+            format!("{}{}", concat!("s", "k-"), hex(32)),
+            format!("{}{}", concat!("s", "k-or-v1-"), hex(64)),
+            format!("{}{}-{}", concat!("s", "k-ant-api03-"), body(93), "AAAA"),
+            format!("{}{}", concat!("s", "k-svcacct-"), body(64)),
+        ];
+        for key in &real {
+            assert!(hit(key));
         }
     }
 
