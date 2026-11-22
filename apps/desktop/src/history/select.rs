@@ -310,4 +310,30 @@ mod tests {
         assert!(!f.is_confirming());
         assert_eq!(f.confirm(), None);
     }
+
+    #[test]
+    fn space_marks_rows_while_ctrl_moves_keep_the_marks() {
+        let v = ids(6);
+        let mut s = MultiSelect::new();
+        // Space on row 2.
+        s.toggle(v[2], Some(v[2]));
+        // Ctrl+Down twice: the cursor moves, the selection is not touched.
+        let before = s.clone();
+        assert_eq!(s, before);
+        // Space on row 4.
+        s.toggle(v[4], Some(v[4]));
+        assert_eq!(s.targets(&v, Some(v[4])), vec![v[2], v[4]]);
+        assert_eq!(s.flags(&v), vec![false, false, true, false, true, false]);
+    }
+
+    #[test]
+    fn shift_end_and_home_extend_to_the_ends() {
+        let v = ids(5);
+        let mut s = MultiSelect::new();
+        s.plain(Some(v[2]));
+        s.extend(&v, 4, Some(v[2]));
+        assert_eq!(s.targets(&v, Some(v[4])), v[2..].to_vec());
+        s.extend(&v, 0, Some(v[4]));
+        assert_eq!(s.targets(&v, Some(v[0])), v[..=2].to_vec());
+    }
 }

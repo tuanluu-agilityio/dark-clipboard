@@ -15,7 +15,9 @@ use darkclip_app::api::Caller;
 use darkclip_app::{ClipDetailView, PixelsView};
 use darkclip_core::i18n::{t, Lang, Msg};
 use darkclip_core::{ClipId, Clock};
-use slint::{ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
+use slint::{
+    ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel,
+};
 use std::sync::{Arc, Mutex};
 
 /// A decoded picture as the UI thread holds it (cheap to clone).
@@ -62,7 +64,6 @@ pub fn empty_detail() -> DetailState {
     DetailState {
         kind: 0,
         title: Default::default(),
-        text: Default::default(),
         note: Default::default(),
         status: Default::default(),
         can_load_text: false,
@@ -76,8 +77,9 @@ pub fn empty_detail() -> DetailState {
     }
 }
 
-/// The pane's Slint state from the shared properties.
-pub fn detail_state(p: DetailProps<Px>) -> DetailState {
+/// The pane's Slint state from the shared properties (the text is set apart, see
+/// `set_text_if_changed`).
+fn detail_state(p: DetailProps<Px>) -> DetailState {
     let files: Vec<FileRow> = p
         .files
         .into_iter()
@@ -93,7 +95,6 @@ pub fn detail_state(p: DetailProps<Px>) -> DetailState {
     DetailState {
         kind: p.kind,
         title: p.title.into(),
-        text: p.text.into(),
         note: p.note.into(),
         status: p.status.into(),
         can_load_text: p.can_load_text,
@@ -108,8 +109,20 @@ pub fn detail_state(p: DetailProps<Px>) -> DetailState {
 }
 
 /// The pane's state for `item` (open) from the model's current view.
-pub fn render_state(item: &Item, detail: &mut DetailModel<Px>, lang: Lang) -> DetailState {
-    detail_state(props(item, detail.view(), lang))
+pub fn render_state(
+    item: &Item,
+    detail: &mut DetailModel<Px>,
+    lang: Lang,
+) -> (DetailState, String) {
+    let p = props(item, detail.view(), lang);
+    let text = p.text.clone();
+    (detail_state(p), text)
+}
+
+/// The new pane text when it differs from `current`: a large text is laid out again whenever
+/// it is set, so an unchanged one is left alone.
+pub fn set_text_if_changed(current: &SharedString, new: String) -> Option<SharedString> {
+    (current.as_str() != new).then(|| new.into())
 }
 
 /// A decoded picture as a pixel buffer plus what it weighs.

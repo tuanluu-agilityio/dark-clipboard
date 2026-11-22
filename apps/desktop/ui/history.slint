@@ -130,6 +130,7 @@ export component HistoryWindow inherits Window {
     // Details (single clip only). Hidden when `detail-open` is false.
     in property <bool> detail-open;
     in property <DetailState> detail;
+    in property <string> detail-text;
     // Non-empty while the delete confirmation is open (the text it asks).
     in property <string> confirm-text;
     in-out property <string> query;
@@ -356,6 +357,7 @@ export component HistoryWindow inherits Window {
 
                     if root.detail-open: DetailPane {
                         state: root.detail;
+                        text: root.detail-text;
                         load-text => {
                             root.load-full-text();
                         }

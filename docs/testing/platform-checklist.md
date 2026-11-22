@@ -132,6 +132,8 @@ Setup: `--seed-demo-clips 10000 --data-dir <temp>` then run with the same `--dat
 | Ctrl+P, Pin/Unpin with several rows | All unpinned rows get pinned; when all are pinned they are unpinned | **untested** |
 | Delete key or button on one row, then on several | A dialog asks first ("Delete N clips?"); Esc or Cancel deletes nothing; Enter or Delete confirms; the rows go and the footer says how many; other keys do nothing while the dialog is open | **untested** |
 | Right click on an unselected row, on a selected row of a multi-selection, and the Menu key | Menu with Copy, Copy as plain text, Pin/Unpin, Delete (opens the dialog), Select all; acts on the row, or on all marked rows | **untested** |
+| Context menu with the keyboard | Known limit: the Menu key opens the menu, but its entries are not keyboard-focusable (mouse only; Esc or a click outside closes it). Every action has a key (Enter, Shift+Enter, Ctrl+P, Delete, Ctrl+A); note whether the menu is still reachable enough | **untested** |
+| Ctrl+Up/Down/Home/End, Space, Shift+Home/End | Ctrl+arrows move the cursor and keep the marks; Space marks the row under the cursor (rows 2 and 4 stay marked after Ctrl+Down twice); Shift+Home/End extend the range | **untested** |
 | Scroll to the end of 10,000 clips | More pages load; scrolling stays smooth | **untested** |
 | Close the window with the X, Alt+F4 and Esc | Closes each time; reopening shows an empty search, no selection and no detail from before | **untested** |
 | Vietnamese IME (Telex) in the search box | Diacritics type and search as in the popup | **untested** |

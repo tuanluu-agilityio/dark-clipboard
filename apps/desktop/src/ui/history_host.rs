@@ -296,13 +296,17 @@ impl Host {
         match subject {
             Some(item) => {
                 self.win.set_detail_open(true);
-                self.win
-                    .set_detail(common::render_state(&item, &mut self.detail, self.lang));
+                let (state, text) = common::render_state(&item, &mut self.detail, self.lang);
+                self.win.set_detail(state);
+                if let Some(t) = common::set_text_if_changed(&self.win.get_detail_text(), text) {
+                    self.win.set_detail_text(t);
+                }
             }
             None => {
                 // Nothing stays in the pane: no text, picture or file names.
                 self.win.set_detail_open(false);
                 self.win.set_detail(common::empty_detail());
+                self.win.set_detail_text(SharedString::new());
             }
         }
     }
@@ -494,6 +498,12 @@ impl Host {
                 self.multi.plain(id);
                 self.after_move();
             }
+            HistoryAction::MoveKeep(m) => {
+                // The cursor moves; the marks stay (Space marks the row under it).
+                let page = self.page_rows();
+                self.model.move_by(m, page);
+                self.after_move();
+            }
             HistoryAction::Extend(m) => {
                 let before = self.cursor_id();
                 let page = self.page_rows();
@@ -607,6 +617,10 @@ impl Host {
         }
         self.win.set_detail_open(false);
         self.win.set_detail(common::empty_detail());
+        self.win.set_detail_text(SharedString::new());
+        self.filters.set_vec(Vec::new());
+        self.sources.clear();
+        self.chip_focus = ChipFocus::default();
         self.sync_props();
     }
 

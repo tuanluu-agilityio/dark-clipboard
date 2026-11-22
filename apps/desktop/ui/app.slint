@@ -30,6 +30,7 @@ export component MainWindow inherits Window {
     // Detail pane (Task 206). kind: 0 text, 1 image, 2 files, 3 masked.
     in property <bool> detail-open;
     in property <DetailState> detail;
+    in property <string> detail-text;
     in-out property <string> query;
     // Whole rows that fit in the list (for Page Up / Page Down).
     out property <int> page-rows: max(1, floor(clip-list.visible-height / RowMetrics.height));
@@ -241,6 +242,7 @@ export component MainWindow inherits Window {
                 if root.detail-open && root.has-selection: DetailPane {
                     height: 220px;
                     state: root.detail;
+                    text: root.detail-text;
                     load-text => {
                         root.load-full-text();
                     }

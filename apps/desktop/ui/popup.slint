@@ -37,11 +37,10 @@ export struct FileRow {
 
 // What the detail pane shows (Task 206; one struct so the popup and the history window set it
 // the same way). `kind`: 0 text, 1 image, 2 files, 3 masked. `note`: the masked note, or "no
-// preview image". `status`: loading or failure message, or the cut-text note.
+// preview image". `status`: loading or failure message, or the cut-text note. The text is a separate pane property.
 export struct DetailState {
     kind: int,
     title: string,
-    text: string,
     note: string,
     status: string,
     can-load-text: bool,
@@ -300,6 +299,9 @@ export component RowView inherits Rectangle {
 // text comes from Rust. A masked clip shows only the note: no content is ever passed here.
 export component DetailPane inherits Rectangle {
     in property <DetailState> state;
+    // Kept out of `state` so the host can leave it alone when it did not change (a large text
+    // is laid out again whenever it is set).
+    in property <string> text;
     callback load-text();
     callback load-image();
 
@@ -343,7 +345,7 @@ export component DetailPane inherits Rectangle {
             content-height: body.preferred-height;
             body := Text {
                 width: parent.width;
-                text: root.state.text;
+                text: root.text;
                 color: Theme.text;
                 font-size: 12px;
                 font-family: root.state.mono ? Theme.mono-font : "";

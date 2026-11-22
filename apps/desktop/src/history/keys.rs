@@ -19,8 +19,10 @@ pub struct HistoryCtx {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryAction {
     Move(Move),
-    /// Shift+arrow or Shift+Page: moves the cursor and extends the marked range.
+    /// Shift+arrow, Shift+Page, Shift+Home/End: moves the cursor and extends the marked range.
     Extend(Move),
+    /// Ctrl+arrow, Ctrl+Page, Ctrl+Home/End: moves the cursor and keeps the marks.
+    MoveKeep(Move),
     /// Enter (restore) or Shift+Enter (plain text).
     Copy(CopyKind),
     /// Delete: opens the confirmation.
@@ -60,16 +62,22 @@ pub fn map_key(k: Key, m: Mods, ctx: HistoryCtx) -> Option<HistoryAction> {
             HistoryAction::Move(mv)
         }
     };
+    let ctrl_only = m.ctrl && !m.alt && !m.meta && !m.shift;
+    let nav = |k: Key| match k {
+        Key::Up => Some(Move::Up),
+        Key::Down => Some(Move::Down),
+        Key::PageUp => Some(Move::PageUp),
+        Key::PageDown => Some(Move::PageDown),
+        Key::Home => Some(Move::Home),
+        Key::End => Some(Move::End),
+        _ => None,
+    };
     match k {
-        Key::Up if plain => Some(step(Move::Up)),
-        Key::Down if plain => Some(step(Move::Down)),
-        Key::PageUp if plain => Some(step(Move::PageUp)),
-        Key::PageDown if plain => Some(step(Move::PageDown)),
-        Key::Home if (plain && list_keys) || (m.ctrl && !m.alt) => {
-            Some(HistoryAction::Move(Move::Home))
-        }
-        Key::End if (plain && list_keys) || (m.ctrl && !m.alt) => {
-            Some(HistoryAction::Move(Move::End))
+        Key::Up | Key::Down | Key::PageUp | Key::PageDown if plain => nav(k).map(step),
+        // Home and End belong to the search box text unless the list owns the keys.
+        Key::Home | Key::End if plain && list_keys => nav(k).map(step),
+        Key::Up | Key::Down | Key::PageUp | Key::PageDown | Key::Home | Key::End if ctrl_only => {
+            nav(k).map(HistoryAction::MoveKeep)
         }
         Key::Char(' ') if plain && !m.shift && list_keys => Some(HistoryAction::ToggleMark),
         Key::Enter if m.alt || m.meta || m.ctrl => None,
@@ -203,5 +211,30 @@ mod tests {
         ] {
             assert_eq!(map_key(k, m, CONFIRM), Some(A::Swallow), "{k:?}");
         }
+    }
+
+    #[test]
+    fn ctrl_arrows_move_without_touching_the_marks() {
+        for (k, mv) in [
+            (Key::Up, Move::Up),
+            (Key::Down, Move::Down),
+            (Key::PageUp, Move::PageUp),
+            (Key::PageDown, Move::PageDown),
+            (Key::Home, Move::Home),
+            (Key::End, Move::End),
+        ] {
+            assert_eq!(map_key(k, CTRL, LIST), Some(A::MoveKeep(mv)), "{k:?}");
+            assert_eq!(map_key(k, CTRL, TYPING), Some(A::MoveKeep(mv)), "{k:?}");
+        }
+    }
+
+    #[test]
+    fn shift_home_and_end_extend_when_the_list_owns_the_keys() {
+        assert_eq!(map_key(Key::Home, SHIFT, LIST), Some(A::Extend(Move::Home)));
+        assert_eq!(map_key(Key::End, SHIFT, LIST), Some(A::Extend(Move::End)));
+        assert_eq!(map_key(Key::Home, NONE, LIST), Some(A::Move(Move::Home)));
+        // In a non-empty search box they select text.
+        assert_eq!(map_key(Key::Home, SHIFT, TYPING), None);
+        assert_eq!(map_key(Key::End, NONE, TYPING), None);
     }
 }

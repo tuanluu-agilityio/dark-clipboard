@@ -295,9 +295,14 @@ impl Host {
         let Some(item) = item.filter(|_| open) else {
             // Nothing stays in the hidden window: no text, picture or file names.
             w.set_detail(common::empty_detail());
+            w.set_detail_text(SharedString::new());
             return;
         };
-        w.set_detail(common::render_state(&item, &mut self.detail, self.lang));
+        let (state, text) = common::render_state(&item, &mut self.detail, self.lang);
+        w.set_detail(state);
+        if let Some(t) = common::set_text_if_changed(&w.get_detail_text(), text) {
+            w.set_detail_text(t);
+        }
     }
 
     fn scroll_to_selected(&self) {
