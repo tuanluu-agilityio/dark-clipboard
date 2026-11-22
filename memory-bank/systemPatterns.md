@@ -23,6 +23,8 @@ Portable crates (core, platform, storage, app) have no OS, UI or async dependenc
 - **i18n table** with compile-time completeness (Darkshot `messages!` approach; re-implemented, not copied).
 - **Capabilities are data:** `Unsupported` is a normal value; the UI renders capabilities.
 - **Tests first;** synthetic secrets assembled at runtime.
+- **`SchemaVersion` unit type** serializes as `1` and rejects other values; every versioned model carries it (Task 002).
+- **i18n:** `messages! { Variant => ("en", "vi"), ... }` generates `Msg`, `Msg::ALL`, `t(lang, msg)`; identical strings must be listed in `SAME_IN_BOTH` (Task 002).
 
 ## Reused from Darkshot (practices only)
 Banned-crate check in the gate; single privacy choke point plus a static sink check; no logging in privacy modules; manual `Debug`; small task packages with an independent reviewer; memory-bank; token ledger; PR-only `main`.

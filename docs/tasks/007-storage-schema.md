@@ -7,7 +7,7 @@
 `docs/architecture/data-model.md` §4–7 (the SQL is normative), `docs/adr/0003-storage.md`, Tasks 002 and 004 Interfaces.
 
 ## Files
-Create `crates/darkclip-storage/src/{lib.rs, db.rs, migrate.rs, blobs.rs, clips.rs, error.rs}`, `crates/darkclip-storage/migrations/0001_init.sql`. Add `rusqlite` (`bundled`) and `png` (thumbnails).
+Modify `crates/darkclip-core/src/model.rs` (add `Clip::validate` only). Create `crates/darkclip-storage/src/{lib.rs, db.rs, migrate.rs, blobs.rs, clips.rs, error.rs}`, `crates/darkclip-storage/migrations/0001_init.sql`. Add `rusqlite` (`bundled`) and `png` (thumbnails).
 
 ## Interfaces
 ```rust
@@ -29,6 +29,8 @@ pub struct NewClip { pub classified: Classified, pub hash: [u8; 32], pub reps: V
 pub enum UpsertOutcome { Inserted(ClipId), Bumped(ClipId) }
 pub enum StorageError { Sqlite(String /* code only, no SQL params */), Io(std::io::ErrorKind), SchemaTooNew { found: u32, supported: u32 }, NotFound, ReadOnly }
 ```
+Validation (added after Task 002 review): add `Clip::validate(&self) -> Result<(), CoreError>` in `darkclip-core/src/model.rs` (this file is in scope for this task) enforcing the schema constraints that serde does not: preview ≤ 512 chars, note ≤ 4000, ≥ 1 representation, `copy_count` ≥ 1, blob storage ⇒ `blob_sha256`, masked ⇒ `expires_at`, ref names 1–80 chars, non-empty `app_id`. `upsert_clip` and any import path call it. Test `clip_validate_rejects_each_violation` (one case per rule).
+
 Rules: reps > 64 KiB or any image → blob file `blobs/<aa>/<hex>` written to `<file>.tmp` then renamed, before the DB transaction commits. Directory permissions 0700 and files 0600 on Unix. `ReadOnly` open of a newer `user_version` → `SchemaTooNew`; `ReadWrite` of a newer one → error, never a downgrade. Pre-migration backup per data-model §7. `StorageError` `Display` never contains clip data.
 
 ## Tests
