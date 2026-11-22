@@ -109,6 +109,8 @@ All rows **untested** until the owner runs them (agents never send input, GC-19)
 | Close the target app while the popup is open, then Ctrl+Enter | "Copied — paste manually"; nothing typed anywhere | **untested** |
 | Target on another virtual desktop (Win+Ctrl+Left/Right after opening the popup), Ctrl+Enter | No paste into a hidden window; toast or popup closes with the clip copied | **untested** |
 | Set `"enter_pastes": true` under `ui` in `<data dir>\settings.json`, restart, Enter in Notepad | Hint line reads "Enter paste ..."; Enter pastes like Ctrl+Enter; the Copy button and Alt+1..9 still only copy | **untested** |
+| Press Ctrl+Enter twice quickly while Shift is held (the first paste is still waiting) | The second press shows "The clipboard is busy"; at most one paste happens | **untested** |
+| Known limit: a paste refused after the target already took the focus (it did not stay in front, or a key went down during the switch) | The popup has closed, so its toast is not seen; the clip is still on the clipboard (Ctrl+V works); the log shows `paste result=refused`. Note how often this happens | **untested** |
 | Hint line (default settings) | Shows "Ctrl+Enter paste" | **untested** |
 | Owner-only test: open an empty Notepad, run `cargo test -p darkclip-windows --lib real_paste_into_focused_window -- --ignored --nocapture`, click into Notepad within 3 s | The current clipboard is pasted once into Notepad; the test passes | **untested** |
 

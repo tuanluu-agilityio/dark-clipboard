@@ -11,8 +11,10 @@
 //!   not the taskbar or the desktop), is not ours, and became the foreground window.
 //! - UIPI: input is never sent to a process with a higher integrity level than ours, or one
 //!   whose level cannot be read (copy only).
-//! - Shift, Alt, Win and Enter must be released before the keystroke (bounded wait), so the
-//!   paste cannot turn into another shortcut and a held Enter cannot repeat into the target.
+//! - Shift, Alt (AltGr included), Win and Enter must be released before the focus moves
+//!   (bounded wait) and still be up right before the keystroke, so the paste cannot turn into
+//!   another shortcut and a held Enter cannot repeat into the target. A focus return without
+//!   paste waits (bounded) for Alt and Enter, then moves the focus anyway.
 //!
 //! Nothing here reads a window title or clipboard content, and nothing is logged (GC-06).
 
@@ -69,6 +71,9 @@ pub(crate) trait WindowSys {
     fn own_pid(&self) -> u32;
     /// Shift, Alt, Win or Enter is down.
     fn keys_held(&self) -> bool;
+    /// Alt (AltGr included) or Enter is down: a focus return waits for them, so their key-up
+    /// or a repeat does not land in the target.
+    fn focus_keys_held(&self) -> bool;
     fn set_foreground(&mut self, window: u64) -> bool;
     fn foreground(&self) -> Option<u64>;
     /// Sends Ctrl down, V down, V up, Ctrl up.
@@ -216,7 +221,11 @@ pub(crate) fn run(
 ) -> Result<(), Failure> {
     let (window, pid) = recorded(target).map_err(Failure::Refused)?;
     match mode {
-        Mode::Focus => check_window(sys, window, pid).map_err(Failure::Refused)?,
+        Mode::Focus => {
+            check_window(sys, window, pid).map_err(Failure::Refused)?;
+            // Bounded; on timeout the focus moves anyway (no input is sent in this mode).
+            let _ = wait_until(sys, KEYS_WAIT, |s| !s.focus_keys_held());
+        }
         Mode::Paste => {
             if let Verdict::CopyOnly(r) = check_target(sys, target) {
                 return Err(Failure::Refused(r));
@@ -236,8 +245,12 @@ pub(crate) fn run(
     if mode == Mode::Focus {
         return Ok(());
     }
-    // The same window, the same process, still in front: only now is input sent.
+    // The same window, the same process, no key pressed meanwhile, still in front: only now
+    // is input sent.
     check_window(sys, window, pid).map_err(Failure::Refused)?;
+    if sys.keys_held() {
+        return Err(Failure::Refused(Refusal::KeysHeld));
+    }
     if sys.foreground() != Some(window) {
         return Err(Failure::Refused(Refusal::NotForeground));
     }
@@ -283,6 +296,10 @@ impl WindowSys for WinWindows {
 
     fn keys_held(&self) -> bool {
         crate::win::paste_blocking_keys_held()
+    }
+
+    fn focus_keys_held(&self) -> bool {
+        crate::win::focus_blocking_keys_held()
     }
 
     fn set_foreground(&mut self, window: u64) -> bool {
@@ -337,6 +354,10 @@ mod tests {
         fg_after_polls: Option<u32>,
         fg_reads: std::cell::Cell<u32>,
         keys_polls: std::cell::Cell<u32>,
+        /// Alt or Enter held for the first n reads (focus-mode wait).
+        focus_keys_polls: std::cell::Cell<u32>,
+        /// Keys go down when the target takes the focus (user presses during the wait).
+        keys_down_on_focus: bool,
         /// Applied when the target takes the focus (simulates a reused handle).
         on_focus: Option<WindowFacts>,
         events: Vec<&'static str>,
@@ -360,6 +381,8 @@ mod tests {
                 fg_after_polls: Some(0),
                 fg_reads: std::cell::Cell::new(0),
                 keys_polls: std::cell::Cell::new(0),
+                focus_keys_polls: std::cell::Cell::new(0),
+                keys_down_on_focus: false,
                 on_focus: None,
                 events: Vec::new(),
                 sent: 0,
@@ -391,8 +414,20 @@ mod tests {
                 false
             }
         }
+        fn focus_keys_held(&self) -> bool {
+            let left = self.focus_keys_polls.get();
+            if left > 0 {
+                self.focus_keys_polls.set(left - 1);
+                true
+            } else {
+                false
+            }
+        }
         fn set_foreground(&mut self, window: u64) -> bool {
             self.events.push("set_foreground");
+            if self.keys_down_on_focus {
+                self.keys_polls.set(u32::MAX);
+            }
             match self.fg_after_polls {
                 Some(0) => {
                     self.fg = Some(window);
@@ -654,6 +689,41 @@ mod tests {
             run(&mut f, &target(), Mode::Focus),
             refused(Refusal::NotForeground)
         );
+    }
+
+    #[test]
+    fn keys_pressed_while_the_focus_moves_stop_the_paste() {
+        let mut f = Fake::new();
+        f.keys_down_on_focus = true;
+        assert_eq!(paste(&mut f), refused(Refusal::KeysHeld));
+        assert_eq!(f.sent, 0);
+        assert_eq!(f.events, vec!["set_foreground"]);
+        // Also when the focus arrives a little later.
+        let mut f = Fake::new();
+        f.keys_down_on_focus = true;
+        f.fg_after_polls = Some(3);
+        assert_eq!(paste(&mut f), refused(Refusal::KeysHeld));
+        assert_eq!(f.sent, 0);
+    }
+
+    #[test]
+    fn focus_mode_waits_for_enter_and_alt_before_moving_the_focus() {
+        let mut f = Fake::new();
+        f.focus_keys_polls.set(5);
+        assert_eq!(run(&mut f, &target(), Mode::Focus), Ok(()));
+        assert_eq!(f.slept, POLL * 5);
+        assert_eq!(f.events, vec!["set_foreground"]);
+    }
+
+    #[test]
+    fn focus_mode_moves_the_focus_after_the_bounded_wait_anyway() {
+        let mut f = Fake::new();
+        f.focus_keys_polls.set(u32::MAX);
+        assert_eq!(run(&mut f, &target(), Mode::Focus), Ok(()));
+        assert!(f.slept <= KEYS_WAIT + FOREGROUND_WAIT);
+        assert!(f.slept >= KEYS_WAIT - POLL);
+        assert_eq!(f.events, vec!["set_foreground"]);
+        assert_eq!(f.sent, 0);
     }
 
     #[test]

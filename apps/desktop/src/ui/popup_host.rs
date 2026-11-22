@@ -467,7 +467,9 @@ impl Host {
             return;
         };
         if self.pasting {
-            return; // the previous copy is still returning the focus or pasting
+            // The previous copy is still returning the focus or pasting.
+            self.show_toast(paste_rules::BUSY_TOAST, false);
+            return;
         }
         let (_, enter_pastes) = PASTE_PREFS.get();
         let after = paste_rules::after_copy(kind, via, enter_pastes, self.injector.is_some());

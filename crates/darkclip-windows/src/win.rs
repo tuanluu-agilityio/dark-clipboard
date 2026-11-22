@@ -625,14 +625,14 @@ impl RawWindow {
         unsafe { PostMessageW(Some(hwnd), WM_DARKCLIP_STOP, WPARAM(0), LPARAM(0)) }.is_ok()
     }
 
-    /// `IsWindow`: the handle still names an existing window (teardown tests). A destroyed
-    /// window's handle value may in theory be reused later by another window.
     /// The handle value (paste tests use it as a `PasteTarget` window).
     #[cfg(test)]
     pub(crate) fn value(self) -> u64 {
         self.0 as u64
     }
 
+    /// `IsWindow`: the handle still names an existing window (teardown tests). A destroyed
+    /// window's handle value may in theory be reused later by another window.
     #[cfg(test)]
     pub(crate) fn is_window(self) -> bool {
         let hwnd = HWND(self.0 as *mut c_void);
@@ -810,12 +810,22 @@ pub(crate) fn own_integrity() -> Option<u32> {
     token_integrity(me)
 }
 
-/// True while Shift, Alt, a Win key or Enter is down (they would change or follow the paste).
+/// True while Shift, Alt (VK_MENU covers both Alt keys, so AltGr too), a Win key or Enter is
+/// down (they would change or follow the paste).
 pub(crate) fn paste_blocking_keys_held() -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, VK_LWIN, VK_MENU, VK_RETURN, VK_RWIN, VK_SHIFT,
     };
     [VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN, VK_RETURN]
+        .iter()
+        // SAFETY: plain value argument; only reads the key state (the high bit means down).
+        .any(|vk| unsafe { GetAsyncKeyState(i32::from(vk.0)) } < 0)
+}
+
+/// True while Alt (VK_MENU covers both Alt keys, so AltGr too) or Enter is down.
+pub(crate) fn focus_blocking_keys_held() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU, VK_RETURN};
+    [VK_MENU, VK_RETURN]
         .iter()
         // SAFETY: plain value argument; only reads the key state (the high bit means down).
         .any(|vk| unsafe { GetAsyncKeyState(i32::from(vk.0)) } < 0)
@@ -844,14 +854,19 @@ fn key_event(
     up: bool,
 ) -> windows::Win32::UI::Input::KeyboardAndMouse::INPUT {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        MapVirtualKeyW, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+        KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC,
     };
+    // SAFETY: plain value arguments; returns the scan code of the key, or 0 if there is none.
+    let scan = unsafe { MapVirtualKeyW(u32::from(vk.0), MAPVK_VK_TO_VSC) };
+    // Scan codes from MAPVK_VK_TO_VSC fit in 16 bits; 0 (unknown) is what was sent before.
+    let scan = u16::try_from(scan).unwrap_or(0);
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
                 wVk: vk,
-                wScan: 0,
+                wScan: scan,
                 dwFlags: if up {
                     KEYEVENTF_KEYUP
                 } else {

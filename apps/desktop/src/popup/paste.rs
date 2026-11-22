@@ -54,6 +54,10 @@ pub fn paste_toast(err: &PlatformError) -> Msg {
     }
 }
 
+/// The toast for a copy asked while a focus return or paste is still running (the copy is not
+/// started: it would race the paste).
+pub const BUSY_TOAST: Msg = Msg::ErrClipboardBusy;
+
 /// Content-free log name of a paste result.
 pub fn outcome_name(r: &Result<(), PlatformError>) -> &'static str {
     match r {
@@ -148,6 +152,11 @@ mod tests {
             paste_toast(&PlatformError::Backend { code: 5 }),
             Msg::UiPasteManual
         );
+    }
+
+    #[test]
+    fn a_copy_during_a_paste_says_busy() {
+        assert_eq!(BUSY_TOAST, Msg::ErrClipboardBusy);
     }
 
     #[test]
