@@ -328,38 +328,47 @@ fn scan_clip(
 struct Hashed {
     hash: [u8; 32],
     thumbnail: Option<Vec<u8>>,
+    /// Dimensions that were missing on the decoded rep and have been filled in.
+    filled_dims: Option<(u32, u32)>,
 }
 
 /// Canonical hash; for an image with a decodable PNG, over its pixels (so the same picture in
-/// two encodings dedupes), plus a thumbnail and missing dimensions filled in. A decode failure
-/// keeps the fallback hash over the encoded bytes. The RGBA buffer is wiped and dropped here.
-fn decode_and_hash(reps: &mut [RawRepresentation], kind: ClipType) -> Hashed {
+/// two encodings dedupes), plus a thumbnail (unless `want_thumbnail` is false) and missing
+/// dimensions filled in on the decoded rep. A decode failure keeps the fallback hash over the
+/// encoded bytes. The RGBA buffer is wiped and dropped here.
+fn decode_and_hash(reps: &mut [RawRepresentation], kind: ClipType, want_thumbnail: bool) -> Hashed {
     if kind == ClipType::Image {
-        let decoded = reps
+        let idx = reps
             .iter()
-            .find(|r| r.mime == Mime::ImagePng && !r.truncated)
-            .and_then(|r| {
-                image::decode_png(&r.bytes, image::MAX_PIXELS, image::MAX_RGBA_BYTES).ok()
-            });
-        if let Some(mut img) = decoded {
+            .position(|r| r.mime == Mime::ImagePng && !r.truncated);
+        let decoded = idx.and_then(|i| {
+            image::decode_png(&reps[i].bytes, image::MAX_PIXELS, image::MAX_RGBA_BYTES).ok()
+        });
+        if let (Some(i), Some(mut img)) = (idx, decoded) {
             let hash = canonical_hash(kind, reps, Some((&img.rgba, img.width, img.height)));
-            let thumb = image::thumbnail(&img, image::THUMB_MAX_SIDE);
+            let thumb = if want_thumbnail {
+                image::thumbnail(&img, image::THUMB_MAX_SIDE)
+            } else {
+                Vec::new()
+            };
             wipe_bytes(&mut img.rgba);
-            for r in reps.iter_mut().filter(|r| r.mime == Mime::ImagePng) {
-                if r.width.is_none() || r.height.is_none() {
-                    r.width = Some(img.width);
-                    r.height = Some(img.height);
-                }
+            let mut filled_dims = None;
+            if reps[i].width.is_none() || reps[i].height.is_none() {
+                reps[i].width = Some(img.width);
+                reps[i].height = Some(img.height);
+                filled_dims = Some((img.width, img.height));
             }
             return Hashed {
                 hash,
                 thumbnail: (!thumb.is_empty()).then_some(thumb),
+                filled_dims,
             };
         }
     }
     Hashed {
         hash: canonical_hash(kind, reps, None),
         thumbnail: None,
+        filled_dims: None,
     }
 }
 
@@ -843,9 +852,13 @@ impl Actor {
             }
         };
         // Only now, after the policy decision and sensitive handling, are pixels decoded.
-        let thumbnail_png = decode_and_hash(&mut reps, classified.kind);
-        let hash = thumbnail_png.hash;
-        let thumbnail_png = thumbnail_png.thumbnail;
+        let masked = sensitivity.level == SensitivityLevel::Masked;
+        let hashed = decode_and_hash(&mut reps, classified.kind, !masked);
+        if let (Some((w, h)), false) = (hashed.filled_dims, masked) {
+            classified.preview = darkclip_core::image_preview(w, h);
+        }
+        let hash = hashed.hash;
+        let thumbnail_png = hashed.thumbnail;
         let outcome = self.storage.upsert_clip(NewClip {
             classified,
             hash,
@@ -2513,6 +2526,26 @@ mod tests {
     }
 
     #[test]
+    fn masked_image_clip_has_no_thumbnail() {
+        let (a, _) = two_encodings();
+        let html = format!("<p>{}</p>", api_key_text()).into_bytes();
+        let h = start(masked_policy());
+        h.fake.copy(FakeCopy {
+            formats: vec![
+                (pf("PNG", Some(Mime::ImagePng), a.len()), a),
+                (pf("HTML Format", Some(Mime::TextHtml), html.len()), html),
+            ],
+            markers: Vec::new(),
+            source: None,
+        });
+        let (id, _) = h.wait_added();
+        let clip = h.ro().get_clip(&id).unwrap().unwrap();
+        assert_eq!(clip.kind, ClipType::Image);
+        assert_eq!(clip.sensitivity.level, SensitivityLevel::Masked);
+        assert!(clip.metadata.image_thumb_sha256.is_none());
+    }
+
+    #[test]
     fn image_clip_has_thumbnail_and_dimensions() {
         let px: Vec<u8> = vec![120; 600 * 40 * 4];
         let mut bytes = Vec::new();
@@ -2530,5 +2563,6 @@ mod tests {
         assert!(clip.metadata.image_thumb_sha256.is_some());
         let rep = &clip.representations[0];
         assert_eq!((rep.width, rep.height), (Some(600), Some(40)));
+        assert_eq!(clip.preview, "Image 600\u{00d7}40");
     }
 }

@@ -6,12 +6,17 @@
 
 use png::{BitDepth, ColorType, Decoder, Limits, Transformations};
 use std::io::Cursor;
+use zeroize::Zeroizing;
 
 /// Decoded-size caps used by capture: 64 megapixels, 256 MiB of RGBA.
 pub const MAX_PIXELS: u64 = 64 * 1024 * 1024;
 pub const MAX_RGBA_BYTES: u64 = 256 * 1024 * 1024;
 /// Thumbnail bound (ADR-0003).
 pub const THUMB_MAX_SIDE: u32 = 256;
+/// Longest accepted side in pixels.
+pub const MAX_SIDE: u32 = 32_768;
+/// `png` working-memory limit (decoder internals only, not the output buffer).
+const DECODER_WORKING_BYTES: usize = 8 * 1024 * 1024;
 
 /// Why a PNG was not decoded. No variant holds image data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,13 +49,15 @@ pub fn decode_png(
     max_pixels: u64,
     max_rgba_bytes: u64,
 ) -> Result<DecodedImage, ImageError> {
-    let limit_bytes = usize::try_from(max_rgba_bytes).unwrap_or(usize::MAX);
     let mut decoder = Decoder::new_with_limits(
         Cursor::new(bytes),
         Limits {
-            bytes: limit_bytes.saturating_add(1024 * 1024),
+            bytes: DECODER_WORKING_BYTES,
         },
     );
+    // Metadata chunks are never needed and iCCP/text would be inflated eagerly.
+    decoder.set_ignore_iccp_chunk(true);
+    decoder.set_ignore_text_chunk(true);
     decoder.set_transformations(Transformations::normalize_to_color8());
     let info = decoder
         .read_header_info()
@@ -58,6 +65,10 @@ pub fn decode_png(
     let (w, h) = (info.width, info.height);
     if w == 0 || h == 0 {
         return Err(ImageError::Corrupt);
+    }
+    // A very wide row makes the decoder's own row buffers large whatever the pixel count.
+    if w > MAX_SIDE || h > MAX_SIDE {
+        return Err(ImageError::TooLarge);
     }
     let pixels = u64::from(w) * u64::from(h);
     if pixels > max_pixels || pixels.saturating_mul(4) > max_rgba_bytes {
@@ -69,43 +80,46 @@ pub fn decode_png(
         return Err(ImageError::Corrupt);
     }
     // At most 4 bytes per pixel, so already bounded by the cap checked above.
-    let mut buf = vec![0u8; reader.output_buffer_size().ok_or(ImageError::TooLarge)?];
+    let mut buf = Zeroizing::new(vec![
+        0u8;
+        reader
+            .output_buffer_size()
+            .ok_or(ImageError::TooLarge)?
+    ]);
     let frame = reader
         .next_frame(&mut buf)
         .map_err(|_| ImageError::Corrupt)?;
     buf.truncate(frame.buffer_size());
     let px = usize::try_from(pixels).map_err(|_| ImageError::TooLarge)?;
-    let rgba = match color {
-        ColorType::Rgba => buf,
+    let mut out = Zeroizing::new(Vec::new());
+    match color {
+        ColorType::Rgba => out = Zeroizing::new(std::mem::take(&mut *buf)),
         ColorType::Rgb => {
-            let mut out = Vec::with_capacity(px * 4);
+            out.reserve_exact(px * 4);
             for c in buf.as_chunks::<3>().0 {
                 out.extend_from_slice(c);
                 out.push(255);
             }
-            out
         }
         ColorType::GrayscaleAlpha => {
-            let mut out = Vec::with_capacity(px * 4);
+            out.reserve_exact(px * 4);
             for c in buf.as_chunks::<2>().0 {
                 out.extend_from_slice(&[c[0], c[0], c[0], c[1]]);
             }
-            out
         }
         ColorType::Grayscale => {
-            let mut out = Vec::with_capacity(px * 4);
-            for &g in &buf {
+            out.reserve_exact(px * 4);
+            for &g in buf.iter() {
                 out.extend_from_slice(&[g, g, g, 255]);
             }
-            out
         }
         ColorType::Indexed => return Err(ImageError::Corrupt),
-    };
-    if rgba.len() != px * 4 {
+    }
+    if out.len() != px * 4 {
         return Err(ImageError::Corrupt);
     }
     Ok(DecodedImage {
-        rgba,
+        rgba: std::mem::take(&mut *out),
         width: w,
         height: h,
     })
@@ -128,7 +142,7 @@ pub fn thumbnail(img: &DecodedImage, max_side: u32) -> Vec<u8> {
             ((h * max_side + long / 2) / long).max(1),
         )
     };
-    let mut out = Vec::with_capacity((tw * th * 4) as usize);
+    let mut out = Zeroizing::new(Vec::with_capacity((tw * th * 4) as usize));
     for ty in 0..th {
         let y0 = ty * h / th;
         let y1 = ((ty + 1) * h).div_ceil(th).clamp(y0 + 1, h);
@@ -168,6 +182,7 @@ pub fn thumbnail(img: &DecodedImage, max_side: u32) -> Vec<u8> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use std::io::Write;
 
     fn crc32(data: &[u8]) -> u32 {
         let mut c = 0xFFFF_FFFFu32;
@@ -280,6 +295,46 @@ pub(crate) mod tests {
             decode_png(&ga, MAX_PIXELS, MAX_RGBA_BYTES).unwrap().rgba,
             vec![7, 7, 7, 9]
         );
+    }
+
+    #[test]
+    fn decode_rejects_over_side_cap() {
+        let wide = encode(
+            40_000,
+            1,
+            ColorType::Grayscale,
+            BitDepth::Eight,
+            &vec![0; 40_000],
+            None,
+        );
+        assert_eq!(
+            decode_png(&wide, MAX_PIXELS, MAX_RGBA_BYTES).err(),
+            Some(ImageError::TooLarge)
+        );
+    }
+
+    #[test]
+    fn small_image_with_large_iccp_decodes() {
+        // 1x1 PNG with a ~64 MiB (deflated) iCCP chunk: ignored, never inflated.
+        let mut out = Vec::new();
+        {
+            let mut e = png::Encoder::new(&mut out, 1, 1);
+            e.set_color(ColorType::Rgba);
+            e.set_depth(BitDepth::Eight);
+            let mut w = e.write_header().unwrap();
+            let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+            let zeros = vec![0u8; 1024 * 1024];
+            for _ in 0..64 {
+                z.write_all(&zeros).unwrap();
+            }
+            let mut chunk = vec![b'x', 0, 0];
+            chunk.extend_from_slice(&z.finish().unwrap());
+            w.write_chunk(png::chunk::iCCP, &chunk).unwrap();
+            w.write_image_data(&[1, 2, 3, 4]).unwrap();
+            w.finish().unwrap();
+        }
+        let d = decode_png(&out, MAX_PIXELS, MAX_RGBA_BYTES).unwrap();
+        assert_eq!(d.rgba, vec![1, 2, 3, 4]);
     }
 
     #[test]

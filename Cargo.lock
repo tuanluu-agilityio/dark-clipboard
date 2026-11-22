@@ -85,10 +85,12 @@ dependencies = [
  "darkclip-core",
  "darkclip-platform",
  "darkclip-storage",
+ "flate2",
  "png",
  "serde",
  "serde_json",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
