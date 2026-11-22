@@ -151,8 +151,8 @@ FTS notes:
 ## 5. Hashing and deduplication
 
 - `content_hash = SHA-256( "dc1\0" || kind || "\0" || canonical_primary )` where `canonical_primary` is:
-  - text kinds: the plain text, with CRLF normalized to LF and the trailing newline kept (a copied line with and without a final newline counts as different on purpose);
-  - image: the decoded RGBA pixels plus width/height (so the same image copied as DIB or PNG dedupes);
+  - text kinds: the plain text, with CRLF and lone CR normalized to LF (lone CR added by D-020) and the trailing newline kept (a copied line with and without a final newline counts as different on purpose);
+  - image: the decoded RGBA pixels plus width/height (so the same image copied as DIB or PNG dedupes). Without decoded pixels, a fallback hashes the encoded bytes behind an `enc ` tag (degraded dedupe; callers should always pass RGBA, D-020);
   - files: the sorted, newline-joined absolute paths.
 - Rich text dedupes by its plain text: copying the same paragraph from Word and from a browser yields one clip. The latest representations replace the older ones (`last_copied_at` updated).
 - On duplicate: update `last_copied_at`, `copy_count += 1`, and the source; never create a second row.
