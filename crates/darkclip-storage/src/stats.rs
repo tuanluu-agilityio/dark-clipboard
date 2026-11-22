@@ -4,13 +4,13 @@
 //! - `db_bytes` = `(page_count - freelist_count) * page_size` of the main database:
 //!   the pages in use. Free pages are not counted, so deleting rows lowers it
 //!   immediately, without a `VACUUM`. The `-wal` file is not counted.
-//! - `blob_bytes` = sum of the sizes of the blob files on disk (thumbnails included),
-//!   each file counted once however many clips share it.
+//! - `blob_bytes` = sum of the sizes of the blob files that rows reference (thumbnails
+//!   included), each file once however many clips share it. Orphans and stray files
+//!   are excluded, so they can never trigger eviction.
 
-use crate::blobs::BLOBS_DIR;
+use crate::blobs;
 use crate::{Storage, StorageError};
 use darkclip_core::ClipType;
-use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageStats {
@@ -20,22 +20,6 @@ pub struct StorageStats {
     pub by_kind: Vec<(ClipType, u64)>,
     pub db_bytes: u64,
     pub blob_bytes: u64,
-}
-
-fn dir_bytes(dir: &Path) -> u64 {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return 0;
-    };
-    let mut total = 0u64;
-    for e in rd.flatten() {
-        let Ok(t) = e.file_type() else { continue };
-        if t.is_dir() {
-            total = total.saturating_add(dir_bytes(&e.path()));
-        } else if t.is_file() {
-            total = total.saturating_add(e.metadata().map_or(0, |m| m.len()));
-        }
-    }
-    total
 }
 
 fn count(n: i64) -> Result<u64, StorageError> {
@@ -57,8 +41,9 @@ impl Storage {
         Ok(count(used)?.saturating_mul(count(size)?))
     }
 
-    pub(crate) fn blob_bytes(&self) -> u64 {
-        dir_bytes(&self.dir.join(BLOBS_DIR))
+    /// Bytes of blob files referenced by rows (orphans and stray files excluded).
+    pub(crate) fn blob_bytes(&self) -> Result<u64, StorageError> {
+        blobs::referenced_bytes(&self.conn, &self.dir)
     }
 
     pub fn stats(&self) -> Result<StorageStats, StorageError> {
@@ -86,7 +71,7 @@ impl Storage {
             pinned: count(pinned)?,
             by_kind,
             db_bytes: self.db_bytes()?,
-            blob_bytes: self.blob_bytes(),
+            blob_bytes: self.blob_bytes()?,
         })
     }
 }

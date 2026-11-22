@@ -225,6 +225,24 @@ fn referenced_set(conn: &Connection) -> Result<HashSet<String>, StorageError> {
     Ok(set)
 }
 
+/// Total size of the blob files that rows reference (thumbnails included), each file
+/// once. Orphans, `.tmp` files and stray files do not count.
+pub(crate) fn referenced_bytes(conn: &Connection, data_dir: &Path) -> Result<u64, StorageError> {
+    let mut total = 0u64;
+    for name in referenced_set(conn)? {
+        let path = data_dir
+            .join(BLOBS_DIR)
+            .join(name.get(..2).unwrap_or("00"))
+            .join(&name);
+        if let Ok(m) = fs::metadata(path) {
+            if m.is_file() {
+                total = total.saturating_add(m.len());
+            }
+        }
+    }
+    Ok(total)
+}
+
 fn is_blob_name(name: &str) -> bool {
     name.len() == 64 && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }

@@ -226,7 +226,7 @@ impl Storage {
         if p.max_storage_mb > 0 {
             let limit = u64::from(p.max_storage_mb).saturating_mul(1024 * 1024);
             loop {
-                let total = self.db_bytes()?.saturating_add(self.blob_bytes());
+                let total = self.db_bytes()?.saturating_add(self.blob_bytes()?);
                 if total <= limit {
                     break;
                 }
@@ -384,7 +384,9 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::*;
     use crate::StorageError;
-    use darkclip_core::{Mime, RetentionPolicy, Sensitivity, Timestamp};
+    use darkclip_core::{
+        Mime, RetentionPolicy, SensitiveCategory, Sensitivity, SensitivityLevel, Timestamp,
+    };
 
     const DAY: i64 = 86_400_000;
 
@@ -576,13 +578,19 @@ mod tests {
         let mut s = open(tmp.path(), c.clone());
         set(&c, T0);
         let mut masked = text_clip("masked secret");
+        masked.sensitivity = Sensitivity {
+            level: SensitivityLevel::Masked,
+            categories: vec![SensitiveCategory::ApiKey],
+        };
         masked.expires_at = Some(Timestamp(T0 + 120_000));
         let secret = ins(&mut s, masked);
+        let stored = s.get_clip(&secret).unwrap().unwrap();
+        assert_eq!(stored.sensitivity.level, SensitivityLevel::Masked);
+        assert_eq!(stored.validate(), Ok(()));
         let mut later = text_clip("not yet expired");
         later.expires_at = Some(Timestamp(T0 + 10 * DAY));
         let later = ins(&mut s, later);
         let plain = ins(&mut s, text_clip("plain"));
-        let _ = Sensitivity::default();
         set(&c, T0 + 120_000);
         let p = RetentionPolicy {
             max_items: 2,
@@ -597,6 +605,47 @@ mod tests {
         assert!(s.get_clip(&secret).unwrap().is_none());
         assert!(s.get_clip(&later).unwrap().is_some());
         assert!(s.get_clip(&plain).unwrap().is_some());
+    }
+
+    #[test]
+    fn expired_pinned_still_removed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = clock();
+        let mut s = open(tmp.path(), c.clone());
+        let mut n = text_clip("pinned but expiring");
+        n.expires_at = Some(Timestamp(T0 + 1000));
+        let id = ins(&mut s, n);
+        s.set_pinned(&id, true).unwrap();
+        set(&c, T0 + 1000);
+        let r = s.apply_retention(&no_limits()).unwrap();
+        assert_eq!(r.expired, 1);
+        assert!(s.get_clip(&id).unwrap().is_none());
+    }
+
+    #[test]
+    fn orphan_and_stray_files_do_not_trigger_eviction() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path(), clock());
+        let a = ins(&mut s, new_clip(vec![raw(Mime::TextPlain, &big(1))]));
+        let b = ins(&mut s, new_clip(vec![raw(Mime::TextPlain, &big(2))]));
+        let shard = tmp.path().join("blobs").join("ab");
+        std::fs::create_dir_all(&shard).unwrap();
+        std::fs::write(shard.join("e".repeat(64)), vec![0u8; 3 * 1024 * 1024]).unwrap();
+        std::fs::write(
+            tmp.path().join("blobs").join("Thumbs.db"),
+            vec![0u8; 1024 * 1024],
+        )
+        .unwrap();
+        let st = s.stats().unwrap();
+        assert!(st.blob_bytes < 1024 * 1024 + 200 * 1024, "referenced only");
+        let p = RetentionPolicy {
+            max_storage_mb: 2,
+            ..no_limits()
+        };
+        let r = s.apply_retention(&p).unwrap();
+        assert_eq!(r.evicted_size, 0);
+        assert!(s.get_clip(&a).unwrap().is_some());
+        assert!(s.get_clip(&b).unwrap().is_some());
     }
 
     #[test]
