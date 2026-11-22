@@ -11,6 +11,8 @@ pub struct RawRepresentation {
     pub bytes: Vec<u8>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    /// The adapter cut this format at the plan's byte cap.
+    pub truncated: bool,
 }
 
 /// Prints mime, format and length only (GC-06).
@@ -71,6 +73,7 @@ fn count_u64(n: usize) -> u64 {
 }
 
 pub fn classify(reps: &[RawRepresentation]) -> Classified {
+    let truncated = reps.iter().any(|r| r.truncated);
     if let Some(r) = find(reps, Mime::UriList) {
         let text = String::from_utf8_lossy(&r.bytes);
         let lines: Vec<&str> = text
@@ -83,6 +86,7 @@ pub fn classify(reps: &[RawRepresentation]) -> Classified {
             preview: make_preview(&lines.join(" ")),
             metadata: ClipMetadata {
                 file_count: Some(count_u64(lines.len())),
+                truncated,
                 ..ClipMetadata::default()
             },
             plain_text: None,
@@ -98,7 +102,10 @@ pub fn classify(reps: &[RawRepresentation]) -> Classified {
             return Classified {
                 kind: ClipType::Image,
                 preview,
-                metadata: ClipMetadata::default(),
+                metadata: ClipMetadata {
+                    truncated,
+                    ..ClipMetadata::default()
+                },
                 plain_text: None,
             };
         }
@@ -120,6 +127,7 @@ pub fn classify(reps: &[RawRepresentation]) -> Classified {
         metadata: ClipMetadata {
             char_count: Some(count_u64(text.chars().count())),
             line_count: Some(count_u64(text.lines().count())),
+            truncated,
             ..ClipMetadata::default()
         },
         plain_text: Some(text),
@@ -137,6 +145,7 @@ mod tests {
             bytes: s.as_bytes().to_vec(),
             width: None,
             height: None,
+            truncated: false,
         }
     }
 
@@ -217,5 +226,16 @@ mod tests {
         assert!(!d.contains("116"));
         assert!(d.contains("len"));
         assert!(d.contains("14"));
+    }
+
+    #[test]
+    fn truncated_rep_sets_metadata_flag() {
+        let mut r = rep(Mime::TextPlain, "hello");
+        assert!(!classify(&[r.clone()]).metadata.truncated);
+        r.truncated = true;
+        assert!(classify(&[r]).metadata.truncated);
+        let mut u = rep(Mime::UriList, "file:///a");
+        u.truncated = true;
+        assert!(classify(&[u]).metadata.truncated);
     }
 }

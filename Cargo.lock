@@ -72,6 +72,8 @@ name = "darkclip-platform"
 version = "0.0.1"
 dependencies = [
  "darkclip-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

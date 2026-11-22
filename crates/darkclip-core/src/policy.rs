@@ -60,7 +60,10 @@ pub enum SkipReason {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadPlan {
     pub formats: Vec<AvailableFormat>,
+    /// Cap for every non-image format (plain, HTML, RTF, uri-list): truncated on a UTF-8 boundary.
     pub truncate_text_at: u64,
+    /// Cap for every image: over-cap images are rejected, never truncated.
+    pub image_max_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,6 +146,7 @@ fn decide(input: &PreReadInput<'_>) -> Result<ReadPlan, SkipReason> {
     Ok(ReadPlan {
         formats,
         truncate_text_at: input.caps.text_max_bytes,
+        image_max_bytes: input.caps.image_max_bytes,
     })
 }
 
@@ -300,6 +304,20 @@ mod tests {
         let plan = assert_reads(&p);
         assert_eq!(plan.formats, vec![text()]);
         assert_eq!(plan.truncate_text_at, 1024 * 1024);
+        assert_eq!(plan.image_max_bytes, 20 * 1024 * 1024);
+    }
+
+    #[test]
+    fn plan_carries_both_caps() {
+        let mut c = Case::new();
+        c.caps = SizeCaps {
+            text_max_bytes: 5,
+            image_max_bytes: 7,
+        };
+        let d = c.decide();
+        let plan = assert_reads(&d);
+        assert_eq!(plan.truncate_text_at, 5);
+        assert_eq!(plan.image_max_bytes, 7);
     }
 
     #[test]

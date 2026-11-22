@@ -1,11 +1,19 @@
-//! Platform traits, capability types and a `FakeClipboard` for tests.
+//! Platform traits, capability types and a `FakePlatform` for tests (ADR-0004).
 //!
 //! Must not depend on: OS crates (only traits, capability types, a fake for tests).
 
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn crate_builds() {}
-}
+pub mod caps;
+pub mod error;
+#[cfg(any(test, feature = "fake"))]
+pub mod fake;
+pub mod traits;
+
+pub use caps::{Capabilities, ShortcutSupport, SourceSupport, Support};
+pub use error::PlatformError;
+pub use traits::{
+    ChangeSignal, ClipboardAccess, ClipboardMeta, ClipboardMonitor, PasteInjector, PasteTarget,
+    PlatformBundle, PlatformFormat, SourceResolver,
+};

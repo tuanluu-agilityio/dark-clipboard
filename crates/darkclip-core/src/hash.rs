@@ -93,6 +93,7 @@ mod tests {
             bytes: s.as_bytes().to_vec(),
             width: None,
             height: None,
+            truncated: false,
         }]
     }
 
@@ -103,6 +104,7 @@ mod tests {
             bytes: s.as_bytes().to_vec(),
             width: None,
             height: None,
+            truncated: false,
         }]
     }
 
@@ -136,6 +138,7 @@ mod tests {
                 bytes,
                 width: Some(2),
                 height: Some(1),
+                truncated: false,
             }]
         };
         let a = canonical_hash(ClipType::Image, &mk("PNG", vec![9, 9]), Some((&px, 2, 1)));
@@ -173,6 +176,7 @@ mod tests {
             bytes: same_bytes,
             width: Some(1),
             height: Some(1),
+            truncated: false,
         }];
         assert_ne!(pixel, canonical_hash(ClipType::Image, &reps, None));
     }
