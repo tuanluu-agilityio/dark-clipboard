@@ -5,7 +5,7 @@ Updated: 2026-11-22
 ## Where we are
 
 - **Phase 0 (discovery and architecture): complete**, pending owner approval of the blueprint.
-- **Current phase:** Phase 1 Foundation (`docs/plans/phase-1-foundation.md`). Task 001 done (merged 2026-11-22). **In progress: 002 core model, i18n** (`docs/tasks/002-core-model-i18n.md`, builder/sonnet). After 002, tasks 003–006 can run in parallel.
+- **Current phase:** Phase 1 Foundation (`docs/plans/phase-1-foundation.md`). Task 001 done (merged 2026-11-22). Task 002 done. **Next: 003–006 in parallel** (policy, classify/hash, sensitive, platform traits); previously listed next: (`docs/tasks/002-core-model-i18n.md`, builder/sonnet). After 002, tasks 003–006 can run in parallel.
 - Git: local only (D-013). Branch `main`; Phase 0 is the first commit. No remote yet: tasks merge locally with `git merge --no-ff`.
 
 ## Waiting on owner

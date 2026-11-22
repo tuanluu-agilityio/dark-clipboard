@@ -19,4 +19,6 @@ Do not re-open a settled decision unless the owner asks. Supersede it with a new
 | D-013 | 2026-11-22 | Local only for now: rename `master` → `main`, Phase 0 is the first commit, no GitHub remote yet; tasks merge locally with `git merge --no-ff`. Remote + protected `main` later (Q-03 stays open) | bootstrap plan | Owner |
 | D-014 | 2026-11-22 | Model policy inherited from Darkshot decision 154: never `fable`; `haiku` never for privacy/concurrency/integrity | CLAUDE.md | Owner (Darkshot) |
 | D-016 | 2026-11-22 | `deny.toml` ignores private workspace crates (`[licenses.private] ignore = true`) while the licence is undecided (Q-01) | Task 001 review | Orchestrator |
+| D-017 | 2026-11-22 | OS entropy allowed in core only for UUID v7 random bits (GC-02 clarified); `serde_json` is a dev-dependency of core until non-test code needs it | Task 002 review | Orchestrator |
+| D-018 | 2026-11-22 | Schema constraints beyond serde (lengths, counts, masked ⇒ expiry) enforced by `Clip::validate`, added in Task 007 | Task 002 review | Orchestrator |
 | D-015 | 2026-11-22 | Task numbering: three digits from 001; Phase 2 uses 1NN, Phase 3 2NN, Phase 4 3NN, Phase 5 4NN | roadmap | Phase 0 |
