@@ -19,8 +19,10 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 - Portable Rust workspace: `darkclip-core` (models, capture policy and privacy markers, classification and hashing, sensitive-data detection, i18n en/vi), `darkclip-platform` (adapter traits, capabilities, fake platform), `darkclip-storage` (SQLite + FTS5 with accent-insensitive search, content-addressed blobs, retention, migrations), `darkclip-app` (single capture actor, Application API, settings). Headless only: no OS adapter or UI yet.
 - Quality gates: banned-crate, privacy-boundary and logging checks; cargo-deny.
 
+### Fixed
+- Windows: clipboard writes through OLE with a flush (for example Notepad) keep their source app, and an excluded app without privacy markers that writes this way is now skipped (F-14).
+
 ### Known issues
-- Windows: text copied from apps that write the clipboard through OLE with a flush (for example Notepad) is stored without a source app; an excluded app without privacy markers that writes this way would not be matched by the excluded-app list (F-14).
 - Windows verification covered KeePassXC 2.8.0 and Darkshot; Bitwarden, 1Password, Office and RDP are untested.
 - No application build exists yet (no OS adapter, no UI).
 - macOS and Linux behaviour is untested.
