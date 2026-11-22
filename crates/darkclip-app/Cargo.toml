@@ -12,9 +12,12 @@ workspace = true
 darkclip-core = { path = "../darkclip-core" }
 darkclip-platform = { path = "../darkclip-platform" }
 darkclip-storage = { path = "../darkclip-storage" }
+png = "0.18.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+zeroize = "1.9.2"
 
 [dev-dependencies]
 darkclip-platform = { path = "../darkclip-platform", features = ["fake"] }
+flate2 = "1.1.11"
 tempfile = "3.27.0"

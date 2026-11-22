@@ -1,6 +1,7 @@
 # ADR-0001: Desktop UI framework
 
 - Status: **Accepted (conditional)**, 2026-11-22. Conditions are listed under "Revisit triggers".
+- Owner approval: 2026-11-22 (D-034). Licence decided: GPLv3.
 - Deciders: Phase 0 architecture (owner approval pending)
 - Evidence: `docs/spikes/ui-shell-comparison.md`
 

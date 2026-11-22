@@ -10,6 +10,7 @@ pub mod capture;
 pub mod config;
 pub mod envelope;
 pub mod events;
+pub mod image;
 pub mod permission;
 pub mod settings;
 

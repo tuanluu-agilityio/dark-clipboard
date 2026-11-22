@@ -6,18 +6,17 @@ Updated: 2026-11-22
 
 - **Phase 0 (discovery and architecture): complete**, pending owner approval of the blueprint.
 - **Phase 1 Foundation: COMPLETE (2026-11-22).** Tasks 001–011 and 013 merged; phase review 012 done (its one blocker, the bench, was a measurement artifact; fixed and re-measured in 013). Workspace: 263 tests pass, 2 benches ignored (median p95 17.5 ms worst-case corpus, 15.7 ms realistic).
-- **Phase 2 Windows capture: IN PROGRESS.** Task packages `docs/tasks/101…108` + `103b` written (D-031). Order: 101 → 105 → 102 → 103 → 103b → 104 → 106 → 107 → 108. Tasks 101 (monitor thread, `ChangeSignal.source`), 105 (owner → exe name source) and 102 (`snapshot_meta`: formats + markers by id) and 103 (`read` with caps; DIB→PNG; own DROPFILES parser) done. **Current: Task 103b** (`task/103b-app-image-decode`). Task 107 needs the owner at the machine. Real-clipboard-writing tests are `#[ignore]` and not run by agents.
-- Git: local only (D-013). Branch `main`; Phase 0 is the first commit. No remote yet: tasks merge locally with `git merge --no-ff`.
+- **Phase 2 Windows capture: IN PROGRESS.** Task packages `docs/tasks/101…108` + `103b` written (D-031). Order: 101 → 105 → 102 → 103 → 103b → 104 → 106 → 107 → 108. Tasks 101 (monitor thread, `ChangeSignal.source`), 105 (owner → exe name source) and 102 (`snapshot_meta`: formats + markers by id) 103 (`read` with caps; DIB→PNG; own DROPFILES parser) and 103b (PNG decode → pixel hash, thumbnails, bomb caps) done. **Current: Task 104** (`task/104-windows-write`). Task 107 needs the owner at the machine. Real-clipboard-writing tests are `#[ignore]` and not run by agents.
+- Git: remote `origin` = `github.com/tuanluu-agilityio/dark-clipboard` (public), pushed 2026-11-22 as is (owner, D-035). From Task 103b on, tasks merge via PR (`gh pr create` / `gh pr merge --merge --delete-branch`).
 
 ## Waiting on owner
 
 | ID | Question | Blocks |
 |---|---|---|
-| Q-01 | Licence: GPLv3, or permissive app licence + Slint Royalty-free licence (attribution) | Phase 5 Task 409; nothing earlier |
-| Q-02 | Approve ADR-0001 (Slint over the preferred Tauri, based on measured memory and startup) | Phase 3 start |
-| Q-03 | GitHub repo: public or private, name `dark-clipboard`, protected `main` like Darkshot | Nothing now (local merges per D-013) |
-| Q-04 | Test hardware for Phase 4: Mac (macOS 26), Linux with KDE, GNOME and a wlroots compositor | Phase 4 |
-| Q-05 | Is GNOME Wayland a must for 0.1.0? (affects whether to build a Shell extension) | Phase 4 scope |
+| Q-04 | Test hardware for Phase 4 (Mac, Linux KDE/GNOME/wlroots): **none yet, test later** (owner 2026-11-22). Phase 4 adapters can be built but every row stays `untested` | Phase 4 verification |
+| Q-07 | Protect `main` on GitHub (ruleset like Darkshot: no deletion, no force-push, PR required). The orchestrator's attempt was blocked by the permission classifier; owner to enable it in Settings → Rules or allow the command | Nothing (PR flow is used anyway) |
+
+Answered 2026-11-22 (D-034): Q-01 GPLv3 · Q-02 Slint approved (ADR-0001 accepted) · Q-03 public repo exists · Q-05 left to the orchestrator: GNOME Wayland is **not** a must for 0.1.0.
 
 ## Follow-ups recorded (not yet scheduled to a task)
 - F-08 (Task 101 review nits; resolver-on-restart part fixed in 105): if `post_stop` fails the monitor thread is detached with its listener; `start()` while running silently drops the new `tx`; `Win32_System_Memory` feature only used by test code. Non-Windows build of `darkclip-windows` unverified (no other target installed).
