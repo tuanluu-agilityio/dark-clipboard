@@ -10,6 +10,8 @@ export global Theme {
     in property <color> danger: #FF7B72;
     in property <color> success: #4ADE80;
     in property <color> warning: #F5C04A;
+    // Monospace font for code clips; set from src/theme.rs (a different face per OS).
+    in property <string> mono-font: "Consolas";
 }
 
 // Every user-visible string is set from Rust (`darkclip_core::i18n`), never written here.
@@ -36,4 +38,11 @@ export global Strings {
     in property <string> undo;
     in property <string> close;
     in property <string> key-hints;
+    // Previews and item detail (Task 206)
+    in property <string> detail-label;
+    in property <string> load-full-text;
+    in property <string> load-larger-image;
+    in property <string> no-image-preview;
+    in property <string> masked-detail;
+    in property <string> text-cut;
 }

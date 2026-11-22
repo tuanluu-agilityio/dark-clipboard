@@ -447,6 +447,21 @@ impl Storage {
         }
     }
 
+    /// The stored thumbnail PNG of an image clip. `None` when the clip is missing, has no
+    /// thumbnail, or is masked (a masked clip never exposes anything but its masked preview).
+    pub fn read_thumbnail(&self, id: &ClipId) -> Result<Option<Vec<u8>>, StorageError> {
+        let Some(clip) = self.get_clip(id)? else {
+            return Ok(None);
+        };
+        if clip.sensitivity.level == SensitivityLevel::Masked {
+            return Ok(None);
+        }
+        match clip.metadata.image_thumb_sha256 {
+            Some(sha) => blobs::read(&self.dir, &sha).map(Some),
+            None => Ok(None),
+        }
+    }
+
     pub fn mark_used(&mut self, id: &ClipId) -> Result<(), StorageError> {
         self.ensure_writable()?;
         let now = self.clock.now();

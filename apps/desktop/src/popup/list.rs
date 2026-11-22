@@ -2,7 +2,7 @@
 //! responses (dropping stale ones by generation), pages through the recent list with the search
 //! cursor and keeps the selection. The Slint host mirrors `visible()` into a `VecModel`.
 //!
-//! Only previews are held here, never full content (Task 206 adds the detail view). Nothing is
+//! Only previews are held here, never full content (the detail pane's loads are in `detail`). Nothing is
 //! logged; `Debug` never prints a preview, a query or a source name (GC-06).
 
 use super::keys::Move;
@@ -119,6 +119,8 @@ pub struct Item {
     pub pinned: bool,
     pub masked: bool,
     pub source: Option<String>,
+    /// When the clip was last copied (for the relative time on the row).
+    pub at: Timestamp,
 }
 
 /// Never prints the preview or the source name (GC-06).
@@ -142,6 +144,7 @@ impl From<ClipSummaryView> for Item {
             pinned: v.pinned,
             masked: v.masked,
             source: v.source_app,
+            at: v.last_copied_at,
         }
     }
 }

@@ -15,8 +15,8 @@ pub mod permission;
 pub mod settings;
 
 pub use api::{
-    App, AppStatus, Caller, CaptureStatus, ClipApi, ClipSummaryView, ClipView, CopyMode,
-    GetOptions, StorageStatsView,
+    App, AppStatus, Caller, CaptureStatus, ClipApi, ClipDetailView, ClipSummaryView, ClipView,
+    CopyMode, GetOptions, ImageDetailView, PixelsView, StorageStatsView,
 };
 pub use capture::{ActorCommand, CaptureHandle};
 pub use config::CaptureConfig;

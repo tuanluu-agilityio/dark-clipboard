@@ -98,7 +98,7 @@ impl From<ClipSummary> for ClipSummaryView {
 #[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct ClipContent {
     pub text: String,
-    /// The text was cut at 100 KiB (on a character boundary).
+    /// The text was cut at the cap (100 KiB for `get_clip`, 32 KiB for the popup).
     pub truncated: bool,
 }
 
@@ -109,6 +109,57 @@ impl std::fmt::Debug for ClipContent {
             .field("text", &"<redacted>")
             .field("truncated", &self.truncated)
             .finish()
+    }
+}
+
+/// 8-bit RGBA pixels for the popup, decoded off the UI thread. UI only (never serialized).
+#[derive(Clone, PartialEq, Eq)]
+pub struct PixelsView {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// Never prints pixels (GC-06).
+impl std::fmt::Debug for PixelsView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PixelsView")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .finish_non_exhaustive()
+    }
+}
+
+/// An image clip's detail: the original size and the stored 256 px thumbnail, decoded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageDetailView {
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub thumbnail: Option<PixelsView>,
+}
+
+/// What the popup's detail pane needs beyond the preview (Task 206). UI only: not part of
+/// `ClipApi`, so the CLI and MCP surfaces are unchanged. For a masked clip every field but
+/// `masked` is empty and nothing was read from storage.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct ClipDetailView {
+    pub masked: bool,
+    pub image: Option<ImageDetailView>,
+    /// `text/uri-list` lines of a file clip (at most `MAX_FILE_URIS`). Paths: shown in the UI,
+    /// never logged.
+    pub file_uris: Vec<String>,
+    /// How many lines the clip has in all.
+    pub file_total: usize,
+}
+
+/// Never prints file paths (GC-06).
+impl std::fmt::Debug for ClipDetailView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClipDetailView")
+            .field("masked", &self.masked)
+            .field("image", &self.image)
+            .field("file_total", &self.file_total)
+            .finish_non_exhaustive()
     }
 }
 
@@ -217,9 +268,24 @@ pub trait ClipApi {
 /// fixed by the schema, so these use `InvalidArgument`.
 const NOT_YET: ApiError = ApiError::InvalidArgument("not available until P1");
 
+/// The in-process UI methods are for `Caller::Ui` alone.
+fn ui_only(c: &Caller) -> Result<(), ApiError> {
+    if *c == Caller::Ui {
+        Ok(())
+    } else {
+        Err(ApiError::PermissionDenied("UI only"))
+    }
+}
+
 const MAX_LIMIT: u16 = 200;
 const MAX_LIMIT_MCP: u16 = 50;
 const CONTENT_MAX_BYTES: usize = 100 * 1024;
+/// File names the detail pane may carry (the rest is counted).
+pub const MAX_FILE_URIS: usize = 100;
+/// Text the popup's detail pane may load (a long wrapped `Text` is slow to lay out).
+pub const UI_TEXT_MAX_BYTES: usize = 32 * 1024;
+/// A stored thumbnail is at most 256 px; this bounds its decoded size.
+const THUMB_RGBA_MAX: u64 = 2 * 1024 * 1024;
 const ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -276,6 +342,182 @@ pub struct App {
 }
 
 impl App {
+    /// Detail for the popup's pane (Task 206): image size and decoded thumbnail, or the file
+    /// list. UI only: any other caller gets `PermissionDenied`. Runs on the caller's thread
+    /// (the popup's worker). Masked clips answer `masked: true` without any read of content;
+    /// expired or missing: `NotFound`. One reader guard covers the check and the reads, and the
+    /// clip is checked again after the read (a clip that turned masked, expired or was replaced
+    /// meanwhile answers `NotFound`).
+    pub fn ui_clip_detail(&self, c: &Caller, id: ClipId) -> Result<ClipDetailView, ApiError> {
+        ui_only(c)?;
+        let st = self.reader();
+        let clip = self.visible_clip_in(&st, c, &id)?;
+        if clip.sensitivity.level == SensitivityLevel::Masked {
+            return Ok(ClipDetailView {
+                masked: true,
+                ..ClipDetailView::default()
+            });
+        }
+        let mut out = ClipDetailView::default();
+        match clip.kind {
+            ClipType::Image => {
+                let rep = clip
+                    .representations
+                    .iter()
+                    .find(|r| r.mime == Mime::ImagePng);
+                let png = st.read_thumbnail(&id).map_err(|e| map_storage(&e))?;
+                self.recheck(&st, c, &clip)?;
+                let thumbnail = png.and_then(|png| {
+                    crate::image::decode_png(&png, crate::image::MAX_PIXELS, THUMB_RGBA_MAX)
+                        .ok()
+                        .map(|d| PixelsView {
+                            width: d.width,
+                            height: d.height,
+                            rgba: d.rgba,
+                        })
+                });
+                out.image = Some(ImageDetailView {
+                    width: rep.and_then(|r| r.width),
+                    height: rep.and_then(|r| r.height),
+                    thumbnail,
+                });
+            }
+            ClipType::Files => {
+                let ord = clip
+                    .representations
+                    .iter()
+                    .position(|r| r.mime == Mime::UriList);
+                if let Some(ord) = ord {
+                    let ord = u32::try_from(ord).map_err(|_| ApiError::Internal)?;
+                    let bytes = st
+                        .read_representation(&id, ord)
+                        .map_err(|e| map_storage(&e))?;
+                    self.recheck(&st, c, &clip)?;
+                    let text = String::from_utf8_lossy(&bytes);
+                    let lines: Vec<&str> = text
+                        .lines()
+                        .map(str::trim)
+                        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                        .collect();
+                    out.file_total = lines.len();
+                    out.file_uris = lines
+                        .into_iter()
+                        .take(MAX_FILE_URIS)
+                        .map(str::to_string)
+                        .collect();
+                }
+            }
+            _ => {}
+        }
+        Ok(out)
+    }
+
+    /// The full image of an image clip, decoded and downscaled to at most `max_side` px
+    /// (never upscaled). UI only. Heavy: the popup calls it on its worker thread, on demand.
+    /// Masked clips and non-images answer `NotFound` before anything is read.
+    pub fn ui_clip_image(
+        &self,
+        c: &Caller,
+        id: ClipId,
+        max_side: u32,
+    ) -> Result<PixelsView, ApiError> {
+        ui_only(c)?;
+        let bytes = {
+            let st = self.reader();
+            let clip = self.visible_clip_in(&st, c, &id)?;
+            if clip.sensitivity.level == SensitivityLevel::Masked || clip.kind != ClipType::Image {
+                return Err(ApiError::NotFound);
+            }
+            let ord = clip
+                .representations
+                .iter()
+                .position(|r| r.mime == Mime::ImagePng)
+                .ok_or(ApiError::NotFound)?;
+            let ord = u32::try_from(ord).map_err(|_| ApiError::Internal)?;
+            let bytes = st
+                .read_representation(&id, ord)
+                .map_err(|e| map_storage(&e))?;
+            self.recheck(&st, c, &clip)?;
+            bytes
+        };
+        // Decoding runs without the reader guard.
+        let img = crate::image::decode_png(
+            &bytes,
+            crate::image::MAX_PIXELS,
+            crate::image::MAX_RGBA_BYTES,
+        )
+        .map_err(|_| ApiError::InvalidArgument("image cannot be shown"))?;
+        let small = crate::image::downscale(&img, max_side)
+            .ok_or(ApiError::InvalidArgument("image cannot be shown"))?;
+        Ok(PixelsView {
+            width: small.width,
+            height: small.height,
+            rgba: small.rgba,
+        })
+    }
+
+    /// The plain text of a clip for the popup's pane, cut at `UI_TEXT_MAX_BYTES` on a character
+    /// boundary. UI only. Masked, expired or missing clips (and clips without text) answer
+    /// `NotFound`; nothing is read for a masked clip.
+    pub fn ui_clip_text(&self, c: &Caller, id: ClipId) -> Result<ClipContent, ApiError> {
+        ui_only(c)?;
+        let st = self.reader();
+        let clip = self.visible_clip_in(&st, c, &id)?;
+        self.read_text(&st, c, &clip, UI_TEXT_MAX_BYTES)?
+            .ok_or(ApiError::NotFound)
+    }
+
+    /// The clip's plain text cut at `cap` bytes, or `None` for a masked clip or one without a
+    /// text representation. Re-checks the clip after the read.
+    fn read_text(
+        &self,
+        st: &Storage,
+        c: &Caller,
+        clip: &Clip,
+        cap: usize,
+    ) -> Result<Option<ClipContent>, ApiError> {
+        if clip.sensitivity.level == SensitivityLevel::Masked {
+            return Ok(None);
+        }
+        let Some(ord) = clip
+            .representations
+            .iter()
+            .position(|r| r.mime == Mime::TextPlain)
+        else {
+            return Ok(None);
+        };
+        let ord = u32::try_from(ord).map_err(|_| ApiError::Internal)?;
+        let bytes = st
+            .read_representation(&clip.id, ord)
+            .map_err(|e| map_storage(&e))?;
+        self.recheck(st, c, clip)?;
+        let full = String::from_utf8_lossy(&bytes);
+        let mut end = full.len().min(cap);
+        while !full.is_char_boundary(end) {
+            end -= 1;
+        }
+        Ok(Some(ClipContent {
+            text: full[..end].to_string(),
+            truncated: end < full.len(),
+        }))
+    }
+
+    /// After a content read: the clip must still exist, be visible to `c`, unexpired, not
+    /// masked and unchanged (same content hash, so its representations were not replaced).
+    /// Otherwise the bytes just read are dropped by the caller via `NotFound`.
+    fn recheck(&self, st: &Storage, c: &Caller, before: &Clip) -> Result<(), ApiError> {
+        let now = self.visible_clip_in(st, c, &before.id)?;
+        if now.sensitivity.level == SensitivityLevel::Masked
+            || now.content_hash != before.content_hash
+            // A same-hash bump may reorder representations: the ordinal read must still mean
+            // the same MIME.
+            || now.representations != before.representations
+        {
+            return Err(ApiError::NotFound);
+        }
+        Ok(())
+    }
+
     /// Loads settings, opens storage, starts the capture actor. `events` receives every
     /// `AppEvent` after the App has updated its status from it.
     pub fn start(
@@ -451,8 +693,13 @@ impl App {
     /// The clip, or `NotFound` when it is missing or hidden from this caller (masked clips
     /// are visible to the UI only).
     fn visible_clip(&self, c: &Caller, id: &ClipId) -> Result<Clip, ApiError> {
-        let clip = self
-            .reader()
+        let st = self.reader();
+        self.visible_clip_in(&st, c, id)
+    }
+
+    /// `visible_clip` on a reader the caller already holds.
+    fn visible_clip_in(&self, st: &Storage, c: &Caller, id: &ClipId) -> Result<Clip, ApiError> {
+        let clip = st
             .get_clip(id)
             .map_err(|e| map_storage(&e))?
             .ok_or(ApiError::NotFound)?;
@@ -504,30 +751,13 @@ impl ClipApi for App {
 
     fn get_clip(&self, c: &Caller, id: ClipId, opts: GetOptions) -> Result<ClipView, ApiError> {
         PermissionGuard::check(c, Operation::GetClip)?;
-        let clip = self.visible_clip(c, &id)?;
-        let mut content = None;
-        if opts.include_content && clip.sensitivity.level != SensitivityLevel::Masked {
-            let ord = clip
-                .representations
-                .iter()
-                .position(|r| r.mime == Mime::TextPlain);
-            if let Some(ord) = ord {
-                let ord = u32::try_from(ord).map_err(|_| ApiError::Internal)?;
-                let bytes = self
-                    .reader()
-                    .read_representation(&id, ord)
-                    .map_err(|e| map_storage(&e))?;
-                let full = String::from_utf8_lossy(&bytes);
-                let mut end = full.len().min(CONTENT_MAX_BYTES);
-                while !full.is_char_boundary(end) {
-                    end -= 1;
-                }
-                content = Some(ClipContent {
-                    text: full[..end].to_string(),
-                    truncated: end < full.len(),
-                });
-            }
-        }
+        let st = self.reader();
+        let clip = self.visible_clip_in(&st, c, &id)?;
+        let content = if opts.include_content {
+            self.read_text(&st, c, &clip, CONTENT_MAX_BYTES)?
+        } else {
+            None
+        };
         Ok(ClipView { clip, content })
     }
 
@@ -1353,6 +1583,272 @@ mod tests {
         assert_eq!(a.get_storage_stats(&Caller::Ui).unwrap().clips, 2);
         // The UI still can.
         a.delete_clip(&Caller::Ui, masked).unwrap();
+    }
+
+    fn png_of(w: u32, h: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut e = png::Encoder::new(&mut bytes, w, h);
+        e.set_color(png::ColorType::Rgba);
+        e.set_depth(png::BitDepth::Eight);
+        let mut wr = e.write_header().unwrap();
+        wr.write_image_data(&vec![90u8; (w * h * 4) as usize])
+            .unwrap();
+        wr.finish().unwrap();
+        bytes
+    }
+
+    fn image_clip(w: u32, h: u32, masked: bool) -> NewClip {
+        let png = png_of(w, h);
+        let reps = vec![RawRepresentation {
+            mime: Mime::ImagePng,
+            platform_format: "PNG".into(),
+            bytes: png.clone(),
+            width: Some(w),
+            height: Some(h),
+            truncated: false,
+        }];
+        let mut n = new_clip("x", masked);
+        n.classified = classify(&reps);
+        if masked {
+            n.classified.preview = "[masked image]".into();
+        }
+        n.hash = canonical_hash(n.classified.kind, &reps, None);
+        n.reps = reps;
+        // Even a thumbnail handed to storage must not be served for a masked clip.
+        let img = crate::image::decode_png(&png, 1 << 26, 1 << 28).unwrap();
+        n.thumbnail_png = Some(crate::image::thumbnail(&img, crate::image::THUMB_MAX_SIDE));
+        n
+    }
+
+    fn files_clip(uris: &str) -> NewClip {
+        let reps = vec![RawRepresentation {
+            mime: Mime::UriList,
+            platform_format: "CF_HDROP".into(),
+            bytes: uris.as_bytes().to_vec(),
+            width: None,
+            height: None,
+            truncated: false,
+        }];
+        let mut n = new_clip("x", false);
+        n.classified = classify(&reps);
+        n.hash = canonical_hash(n.classified.kind, &reps, None);
+        n.reps = reps;
+        n
+    }
+
+    /// Seeds `clips`, then starts the App on the same directory.
+    fn start_with_clips(clips: &[NewClip]) -> H {
+        start_with_clips_clock(clips).0
+    }
+
+    /// Like `start_with_clips`, also giving the test clock (to move time forward).
+    fn start_with_clips_clock(clips: &[NewClip]) -> (H, Arc<TestClock>) {
+        let dir = tempfile::tempdir().unwrap();
+        let test_clock = Arc::new(TestClock(AtomicI64::new(T0)));
+        let clock: Arc<dyn Clock> = test_clock.clone();
+        let mut ids = Vec::new();
+        {
+            let mut s = Storage::open(dir.path(), OpenMode::ReadWrite, Arc::clone(&clock)).unwrap();
+            for c in clips {
+                match s.upsert_clip(c).unwrap() {
+                    darkclip_storage::UpsertOutcome::Inserted(id)
+                    | darkclip_storage::UpsertOutcome::Bumped(id) => ids.push(id),
+                }
+            }
+        }
+        let (platform, fake) = FakePlatform::new();
+        let (tx, events) = mpsc::channel();
+        let cfg = CaptureConfig {
+            debounce_ms: 5,
+            open_retries: 10,
+            retry_delay_ms: 1,
+            lang: Lang::En,
+        };
+        let (app, _) = App::start(
+            platform.bundle(),
+            dir.path(),
+            &dir.path().join("settings.json"),
+            clock,
+            cfg,
+            tx,
+        )
+        .unwrap();
+        (
+            H {
+                dir,
+                app: Some(app),
+                fake,
+                events,
+                ids,
+            },
+            test_clock,
+        )
+    }
+
+    #[test]
+    fn ui_detail_of_an_image_has_size_and_decoded_thumbnail() {
+        let h = start_with_clips(&[image_clip(600, 40, false)]);
+        let d = h.app().ui_clip_detail(&Caller::Ui, h.ids[0]).unwrap();
+        assert!(!d.masked);
+        let img = d.image.unwrap();
+        assert_eq!((img.width, img.height), (Some(600), Some(40)));
+        let t = img.thumbnail.unwrap();
+        assert_eq!((t.width, t.height), (256, 17));
+        assert_eq!(t.rgba.len(), 256 * 17 * 4);
+        assert!(d.file_uris.is_empty());
+    }
+
+    #[test]
+    fn ui_detail_of_files_lists_uris_and_counts_the_rest() {
+        let many: String = (0..130)
+            .map(|i| {
+                format!(
+                    "file:///C:/d/f{i}.txt
+"
+                )
+            })
+            .collect();
+        let h = start_with_clips(&[
+            files_clip(
+                "# c
+file:///C:/a%20b.txt
+file:///C:/c.txt
+",
+            ),
+            files_clip(&many),
+        ]);
+        let d = h.app().ui_clip_detail(&Caller::Ui, h.ids[0]).unwrap();
+        assert_eq!(d.file_total, 2);
+        assert_eq!(d.file_uris, ["file:///C:/a%20b.txt", "file:///C:/c.txt"]);
+        let big = h.app().ui_clip_detail(&Caller::Ui, h.ids[1]).unwrap();
+        assert_eq!(big.file_total, 130);
+        assert_eq!(big.file_uris.len(), MAX_FILE_URIS);
+    }
+
+    #[test]
+    fn ui_detail_of_a_masked_clip_reads_nothing() {
+        let h = start_with_clips(&[image_clip(8, 8, true), new_clip("secret text", true)]);
+        for id in &h.ids {
+            let d = h.app().ui_clip_detail(&Caller::Ui, *id).unwrap();
+            assert!(d.masked);
+            assert!(d.image.is_none());
+            assert!(d.file_uris.is_empty());
+            // No full image either, and no thumbnail at the storage level.
+            assert_eq!(
+                h.app().ui_clip_image(&Caller::Ui, *id, 1024).unwrap_err(),
+                ApiError::NotFound
+            );
+            assert_eq!(h.app().reader().read_thumbnail(id).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn ui_image_is_downscaled_and_only_for_images() {
+        let h = start_with_clips(&[image_clip(2000, 10, false), new_clip("plain", false)]);
+        let p = h.app().ui_clip_image(&Caller::Ui, h.ids[0], 1024).unwrap();
+        assert_eq!((p.width, p.height), (1024, 5));
+        assert_eq!(p.rgba.len(), 1024 * 5 * 4);
+        assert_eq!(
+            h.app()
+                .ui_clip_image(&Caller::Ui, h.ids[1], 1024)
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        let t = h.app().ui_clip_detail(&Caller::Ui, h.ids[1]).unwrap();
+        assert!(t.image.is_none() && t.file_uris.is_empty() && !t.masked);
+        let missing = ClipId::new_v7(Timestamp(1));
+        assert_eq!(
+            h.app().ui_clip_detail(&Caller::Ui, missing).unwrap_err(),
+            ApiError::NotFound
+        );
+    }
+
+    #[test]
+    fn ui_methods_are_for_the_ui_caller_only() {
+        let h = start_with_clips(&[image_clip(8, 8, false), new_clip("some text", false)]);
+        let a = h.app();
+        for c in [Caller::Cli, mcp()] {
+            assert!(matches!(
+                a.ui_clip_detail(&c, h.ids[0]),
+                Err(ApiError::PermissionDenied(_))
+            ));
+            assert!(matches!(
+                a.ui_clip_image(&c, h.ids[0], 64),
+                Err(ApiError::PermissionDenied(_))
+            ));
+            assert!(matches!(
+                a.ui_clip_text(&c, h.ids[1]),
+                Err(ApiError::PermissionDenied(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn ui_methods_answer_not_found_for_expired_clips_masked_and_pinned() {
+        let mut expiring_image = image_clip(8, 8, false);
+        expiring_image.expires_at = Some(Timestamp(T0 + 60_000));
+        let mut expiring_text = new_clip("expiring text", false);
+        expiring_text.expires_at = Some(Timestamp(T0 + 60_000));
+        let masked_image = image_clip(9, 9, true);
+        let (h, clock) = start_with_clips_clock(&[
+            expiring_image,
+            expiring_text,
+            masked_image,
+            new_clip("masked text", true),
+        ]);
+        let a = h.app();
+        // Pinned does not outlive the privacy TTL (D-025); a masked clip cannot be pinned.
+        a.pin_clip(&Caller::Ui, h.ids[0], true).unwrap();
+        a.pin_clip(&Caller::Ui, h.ids[1], true).unwrap();
+        assert!(a.pin_clip(&Caller::Ui, h.ids[2], true).is_err());
+        // Before expiry the unmasked ones answer.
+        assert!(a.ui_clip_detail(&Caller::Ui, h.ids[0]).is_ok());
+        assert!(a.ui_clip_text(&Caller::Ui, h.ids[1]).is_ok());
+        clock.0.store(T0 + 2 * 3_600_000, Ordering::SeqCst);
+        for id in &h.ids {
+            assert_eq!(
+                a.ui_clip_detail(&Caller::Ui, *id).unwrap_err(),
+                ApiError::NotFound
+            );
+            assert_eq!(
+                a.ui_clip_image(&Caller::Ui, *id, 64).unwrap_err(),
+                ApiError::NotFound
+            );
+            assert_eq!(
+                a.ui_clip_text(&Caller::Ui, *id).unwrap_err(),
+                ApiError::NotFound
+            );
+        }
+    }
+
+    #[test]
+    fn ui_text_is_cut_at_32_kib_on_a_char_boundary_and_never_for_masked() {
+        assert_eq!(UI_TEXT_MAX_BYTES, 32 * 1024);
+        let big: String = "€".repeat(20_000);
+        let h = start(&[(&big, false), ("short", false), ("secret", true)], None);
+        let a = h.app();
+        let t = a.ui_clip_text(&Caller::Ui, h.ids[0]).unwrap();
+        assert!(t.truncated);
+        assert!(t.text.len() <= UI_TEXT_MAX_BYTES && t.text.len().is_multiple_of(3));
+        let s = a.ui_clip_text(&Caller::Ui, h.ids[1]).unwrap();
+        assert_eq!((s.text.as_str(), s.truncated), ("short", false));
+        assert_eq!(
+            a.ui_clip_text(&Caller::Ui, h.ids[2]).unwrap_err(),
+            ApiError::NotFound
+        );
+        // The shared CLI/MCP path keeps its own 100 KiB cap.
+        let c = a
+            .get_clip(
+                &Caller::Ui,
+                h.ids[0],
+                GetOptions {
+                    include_content: true,
+                },
+            )
+            .unwrap()
+            .content
+            .unwrap();
+        assert!(c.text.len() > UI_TEXT_MAX_BYTES);
     }
 
     #[test]

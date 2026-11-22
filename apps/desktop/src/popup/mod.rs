@@ -4,11 +4,13 @@
 // The popup runs on Windows first; other platforms compile it but do not show it yet.
 #![cfg_attr(not(windows), allow(dead_code))]
 
+pub mod detail;
 pub mod highlight;
 pub mod keys;
 pub mod list;
 pub mod paste;
 pub mod place;
+pub mod row;
 
 /// How to bring a model from `old` to `new` without replacing rows needlessly (a replaced
 /// chip loses the keyboard focus). `None`: the set changed (length or `key` per slot), rebuild.
