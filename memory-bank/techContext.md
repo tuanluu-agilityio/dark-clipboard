@@ -27,8 +27,9 @@ Updated: 2026-11-22
 | `uuid` (v7) | core | sortable ids |
 | `sha2` | core | content hashing |
 | `rusqlite` 0.43 (bundled SQLite 3.54.1) | storage | SQLite + FTS5 |
+| `flate2` 1.1 (dev only) | darkclip-app tests (iCCP fixture) | test data |
 | `png` 0.18 | storage, darkclip-windows (DIB→PNG, Task 103), app (103b) | thumbnails, DIB→PNG |
-| `zeroize` 1.9 | darkclip-windows (Task 103) | wipe intermediate clipboard buffers |
+| `zeroize` 1.9 | darkclip-windows (Task 103), darkclip-app (103b) | wipe intermediate clipboard buffers |
 | `windows` 0.62.2 (cfg(windows) only, default features off; added Task 101) | darkclip-windows | Win32 clipboard (spike-proven) |
 | `objc2-app-kit` | darkclip-macos | NSPasteboard (Phase 4) |
 | `x11rb`, `wayland-client`, `wayland-protocols(-wlr)` | darkclip-linux | X11/Wayland (Phase 4) |
