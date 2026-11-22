@@ -1,13 +1,19 @@
-//! `dark-clipboard`: Phase 2 developer binary. `--headless` runs capture without a UI until
-//! Ctrl+C. The windowed app arrives in Phase 3.
+//! `dark-clipboard`: the desktop app. No flag starts the Slint app hidden (single instance, see
+//! `single_instance.rs`); `--headless` runs capture without a UI until Ctrl+C; `--toggle` and
+//! `--quit` ask the running instance to toggle the popup or quit.
 //!
 //! Logging is content-free (GC-06): see `log.rs`. Nothing here formats a model type or any
 //! clipboard data. Threads and channels only (GC-05); no network (GC-08).
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+// The only unsafe code is in `single_instance::win`, which opts in explicitly.
+#![deny(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod log;
+mod single_instance;
+mod theme;
+mod ui;
 
 use darkclip_app::events::{UNAVAILABLE_READ, UNAVAILABLE_RETENTION, UNAVAILABLE_STORAGE_WRITE};
 use darkclip_app::{App, AppEvent, CaptureConfig};
@@ -22,10 +28,24 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+/// What the process does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Start the UI app hidden (or forward to the running instance).
+    App,
+    /// Capture without a window until Ctrl+C.
+    Headless,
+    /// Ask the running instance to toggle the popup.
+    Toggle,
+    /// Ask the running instance to quit.
+    Quit,
+    Help,
+}
+
 /// Parsed command line.
 #[derive(Debug, PartialEq, Eq)]
 struct Cli {
-    headless: bool,
+    mode: Mode,
     data_dir: Option<PathBuf>,
     /// Hidden test flag: stop by itself after this many milliseconds.
     exit_after_ms: Option<u64>,
@@ -34,14 +54,25 @@ struct Cli {
 /// `Err(())` is a malformed command line (exit code 2).
 fn parse_args(args: &[String]) -> Result<Cli, ()> {
     let mut cli = Cli {
-        headless: false,
+        mode: Mode::App,
         data_dir: None,
         exit_after_ms: None,
+    };
+    let mut chosen: Option<Mode> = None;
+    let mut pick = |m: Mode| -> Result<(), ()> {
+        if chosen.is_some_and(|c| c != m) {
+            return Err(());
+        }
+        chosen = Some(m);
+        Ok(())
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--headless" => cli.headless = true,
+            "--headless" => pick(Mode::Headless)?,
+            "--toggle" => pick(Mode::Toggle)?,
+            "--quit" => pick(Mode::Quit)?,
+            "--help" => pick(Mode::Help)?,
             "--data-dir" => cli.data_dir = Some(PathBuf::from(it.next().ok_or(())?)),
             "--exit-after-ms" => {
                 cli.exit_after_ms = Some(it.next().ok_or(())?.parse().map_err(|_| ())?);
@@ -49,6 +80,7 @@ fn parse_args(args: &[String]) -> Result<Cli, ()> {
             _ => return Err(()),
         }
     }
+    cli.mode = chosen.unwrap_or(Mode::App);
     Ok(cli)
 }
 
@@ -175,12 +207,13 @@ fn platform() -> Result<darkclip_platform::PlatformBundle, darkclip_platform::Pl
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let lang = Lang::En;
+    // Until the settings are read, messages follow the OS language.
+    let lang = ui::os_lang();
     let Ok(cli) = parse_args(&args) else {
         eprintln!("{}", t(lang, Msg::CliUsage));
         return ExitCode::from(2);
     };
-    if !cli.headless {
+    if cli.mode == Mode::Help {
         println!("{}", t(lang, Msg::CliUsage));
         return ExitCode::SUCCESS;
     }
@@ -188,7 +221,95 @@ fn main() -> ExitCode {
         eprintln!("{}", t(lang, Msg::CliNotSupportedYet));
         return ExitCode::from(2);
     }
-    run_headless(&cli, lang)
+    match cli.mode {
+        Mode::Headless => run_headless(&cli, lang),
+        _ => run_app(&cli, lang),
+    }
+}
+
+#[cfg(not(windows))]
+fn run_app(_cli: &Cli, _lang: Lang) -> ExitCode {
+    ExitCode::from(2)
+}
+
+/// Default start, `--toggle` and `--quit`: take the instance lock or forward a command.
+#[cfg(windows)]
+fn run_app(cli: &Cli, lang: Lang) -> ExitCode {
+    use single_instance::{start_or_forward, Command, Start, WinTransport};
+
+    let Some(data_dir) = cli.data_dir.clone().or_else(default_data_dir) else {
+        eprintln!("{}", t(lang, Msg::CliStartFailed));
+        return ExitCode::from(1);
+    };
+    if std::fs::create_dir_all(&data_dir).is_err() {
+        eprintln!("{}", t(lang, Msg::CliStartFailed));
+        return ExitCode::from(1);
+    }
+    let log = Arc::new(Log::open(&data_dir));
+    // A `--data-dir` run gets its own instance scope, so a test never talks to the user's app.
+    let Some(transport) = WinTransport::new(cli.data_dir.as_deref()) else {
+        log.event("start_failed", &[("stage", Val::Name("instance"))]);
+        eprintln!("{}", t(lang, Msg::CliStartFailed));
+        return ExitCode::from(1);
+    };
+    let (cmd, start_if_free) = match cli.mode {
+        Mode::Toggle => (Command::Toggle, false),
+        Mode::Quit => (Command::Quit, false),
+        _ => (Command::Toggle, true),
+    };
+    let guard = match start_or_forward(&transport, cmd, start_if_free) {
+        Start::Primary(g) => g,
+        Start::Forwarded => {
+            log.event("forwarded", &[("cmd", Val::Name(cmd.name()))]);
+            return ExitCode::SUCCESS;
+        }
+        Start::NotRunning => {
+            eprintln!("{}", t(lang, Msg::ErrAppNotRunning));
+            return ExitCode::from(1);
+        }
+        Start::Failed => {
+            log.event("start_failed", &[("stage", Val::Name("forward"))]);
+            eprintln!("{}", t(lang, Msg::CliStartFailed));
+            return ExitCode::from(1);
+        }
+    };
+    log.event(
+        "start",
+        &[("version", Val::Name(env!("CARGO_PKG_VERSION")))],
+    );
+    // `--data-dir` keeps everything (settings and data) in that folder, for tests.
+    let settings_path = if cli.data_dir.is_some() {
+        Some(data_dir.join("settings.json"))
+    } else {
+        default_settings_path()
+    };
+    let Some(settings_path) = settings_path else {
+        log.event("start_failed", &[("stage", Val::Name("settings_path"))]);
+        eprintln!("{}", t(lang, Msg::CliStartFailed));
+        return ExitCode::from(1);
+    };
+    if let Some(dir) = settings_path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let ok = ui::run(
+        ui::RunArgs {
+            start: ui::StartArgs {
+                data_dir,
+                settings_path,
+                os_lang: lang,
+            },
+            exit_after_ms: cli.exit_after_ms,
+            log: Arc::clone(&log),
+        },
+        |handler| transport.listen(Arc::clone(&log), handler),
+    );
+    drop(guard);
+    if ok {
+        ExitCode::SUCCESS
+    } else {
+        eprintln!("{}", t(lang, Msg::CliStartFailed));
+        ExitCode::from(1)
+    }
 }
 
 fn run_headless(cli: &Cli, lang: Lang) -> ExitCode {
@@ -348,13 +469,42 @@ mod tests {
             "5",
         ]))
         .unwrap();
-        assert!(c.headless);
+        assert_eq!(c.mode, Mode::Headless);
         assert_eq!(c.data_dir, Some(PathBuf::from("x")));
         assert_eq!(c.exit_after_ms, Some(5));
         assert!(parse_args(&a(&[])).is_ok());
         assert!(parse_args(&a(&["--data-dir"])).is_err());
         assert!(parse_args(&a(&["--exit-after-ms", "x"])).is_err());
         assert!(parse_args(&a(&["--what"])).is_err());
+    }
+
+    #[test]
+    fn parses_mode_flags() {
+        assert_eq!(parse_args(&a(&[])).unwrap().mode, Mode::App);
+        assert_eq!(
+            parse_args(&a(&["--headless"])).unwrap().mode,
+            Mode::Headless
+        );
+        assert_eq!(parse_args(&a(&["--toggle"])).unwrap().mode, Mode::Toggle);
+        assert_eq!(parse_args(&a(&["--quit"])).unwrap().mode, Mode::Quit);
+        assert_eq!(parse_args(&a(&["--help"])).unwrap().mode, Mode::Help);
+        // --data-dir and --exit-after-ms work with every mode.
+        for m in ["--headless", "--toggle", "--quit"] {
+            let c = parse_args(&a(&[m, "--data-dir", "d", "--exit-after-ms", "7"])).unwrap();
+            assert_eq!(c.data_dir, Some(PathBuf::from("d")));
+            assert_eq!(c.exit_after_ms, Some(7));
+        }
+        let c = parse_args(&a(&["--data-dir", "d", "--exit-after-ms", "7"])).unwrap();
+        assert_eq!((c.mode, c.exit_after_ms), (Mode::App, Some(7)));
+    }
+
+    #[test]
+    fn two_modes_at_once_are_rejected() {
+        assert!(parse_args(&a(&["--headless", "--toggle"])).is_err());
+        assert!(parse_args(&a(&["--toggle", "--quit"])).is_err());
+        assert!(parse_args(&a(&["--quit", "--help"])).is_err());
+        // The same flag twice is harmless.
+        assert!(parse_args(&a(&["--toggle", "--toggle"])).is_ok());
     }
 
     #[test]

@@ -1,0 +1,20 @@
+// Dark palette (D-037: dark only). The values are set from `src/theme.rs` at start-up, which is
+// the single source of truth; the defaults below only matter before that call.
+export global Theme {
+    in property <color> bg: #1C1E22;
+    in property <color> surface: #24272C;
+    in property <color> line: #383C43;
+    in property <color> text: #E7E9EC;
+    in property <color> text-muted: #A3A9B2;
+    in property <color> accent: #4C8DFF;
+    in property <color> danger: #FF7B72;
+    in property <color> success: #4ADE80;
+    in property <color> warning: #F5C04A;
+}
+
+// Every user-visible string is set from Rust (`darkclip_core::i18n`), never written here.
+export global Strings {
+    in property <string> app-name;
+    in property <string> placeholder;
+    in property <string> status;
+}
