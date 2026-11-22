@@ -509,6 +509,9 @@ impl App {
         let now = self.visible_clip_in(st, c, &before.id)?;
         if now.sensitivity.level == SensitivityLevel::Masked
             || now.content_hash != before.content_hash
+            // A same-hash bump may reorder representations: the ordinal read must still mean
+            // the same MIME.
+            || now.representations != before.representations
         {
             return Err(ApiError::NotFound);
         }

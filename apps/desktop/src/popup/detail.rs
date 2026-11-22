@@ -399,6 +399,12 @@ impl<P: Clone> DetailModel<P> {
 
     pub fn set_open(&mut self, open: bool, item: Option<&Item>) -> Vec<DetailRequest> {
         self.open = open;
+        if !open {
+            // The host skips queued jobs while the pane is closed, so nothing is pending now.
+            self.detail_pending = false;
+            self.text_pending = false;
+            self.image_pending = false;
+        }
         self.sync(item)
     }
 
@@ -976,6 +982,36 @@ mod tests {
     #[test]
     fn display_cap_is_32_kib() {
         assert_eq!(TEXT_DISPLAY_CAP, 32 * 1024);
+    }
+
+    #[test]
+    fn closing_the_pane_forgets_pending_loads_so_reopening_asks_again() {
+        let img = item(ClipType::Image, false);
+        let txt = item(ClipType::Text, false);
+        let mut m: DetailModel<u8> = DetailModel::default();
+        assert_eq!(m.set_open(true, Some(&img)).len(), 1);
+        // Closed while the load is pending (the queued job is skipped by the host).
+        assert!(m.set_open(false, Some(&img)).is_empty());
+        let again = m.set_open(true, Some(&img));
+        assert_eq!(
+            again,
+            vec![DetailRequest {
+                id: img.id,
+                want: Want::Detail
+            }]
+        );
+        // Same for a pending full text and a pending larger image.
+        m.set_open(true, Some(&txt));
+        assert!(m.load_full_text(&txt).is_some());
+        m.set_open(false, Some(&txt));
+        m.set_open(true, Some(&txt));
+        assert!(m.load_full_text(&txt).is_some());
+        m.set_open(true, Some(&img));
+        m.on_detail(img.id, Ok(thumb_data(4000, 3000)), 100);
+        assert!(m.load_full_image(&img).is_some());
+        m.set_open(false, Some(&img));
+        m.set_open(true, Some(&img));
+        assert!(m.load_full_image(&img).is_some());
     }
 
     #[test]
