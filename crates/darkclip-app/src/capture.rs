@@ -92,6 +92,9 @@ struct RetentionHooks {
     attempts: AtomicU32,
     #[cfg(test)]
     fail: std::sync::atomic::AtomicBool,
+    /// Tests: errors the next `upsert_clip` calls return, in order, before touching storage.
+    #[cfg(test)]
+    inject: Mutex<std::collections::VecDeque<StorageError>>,
     /// Tests: `next_expiry` fails after a successful retention.
     #[cfg(test)]
     expiry_fail: std::sync::atomic::AtomicBool,
@@ -859,7 +862,7 @@ impl Actor {
         }
         let hash = hashed.hash;
         let thumbnail_png = hashed.thumbnail;
-        let outcome = self.storage.upsert_clip(NewClip {
+        let outcome = self.insert_with_retry(NewClip {
             classified,
             hash,
             reps,
@@ -882,6 +885,48 @@ impl Actor {
             Ok(UpsertOutcome::Bumped(id)) => self.emit(AppEvent::ClipBumped(id)),
             Err(_) => self.emit(AppEvent::Unavailable(UNAVAILABLE_STORAGE_WRITE)),
         }
+    }
+
+    /// F-02: on `StorageFull` run retention once and retry the insert once with the same
+    /// value. If the retry fails with any error the failure is counted and returned (event
+    /// from the caller); the actor stays alive. The clip data is wiped afterwards.
+    fn insert_with_retry(&mut self, mut new: NewClip) -> Result<UpsertOutcome, StorageError> {
+        let mut result = self.try_upsert(&new);
+        if result == Err(StorageError::StorageFull) {
+            self.run_retention();
+            result = self.try_upsert(&new);
+            if result.is_err() {
+                self.counters
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .count_storage_full();
+            }
+        }
+        wipe_reps(&mut new.reps);
+        wipe_string(&mut new.classified.preview);
+        if let Some(t) = new.classified.plain_text.as_mut() {
+            wipe_string(t);
+        }
+        if let Some(t) = new.thumbnail_png.as_mut() {
+            wipe_bytes(t);
+        }
+        result
+    }
+
+    fn try_upsert(&mut self, new: &NewClip) -> Result<UpsertOutcome, StorageError> {
+        #[cfg(test)]
+        {
+            let injected = self
+                .hooks
+                .inject
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .pop_front();
+            if let Some(e) = injected {
+                return Err(e);
+            }
+        }
+        self.storage.upsert_clip(new)
     }
 
     fn discard(
@@ -1657,6 +1702,91 @@ mod tests {
     }
 
     #[test]
+    fn storage_full_runs_retention_then_retries_once() {
+        let h = start(PrivacyPolicy::default());
+        h.sentinel();
+        let hooks = &h.cap().hooks;
+        let before = hooks.attempts.load(Ordering::SeqCst);
+        hooks
+            .inject
+            .lock()
+            .unwrap()
+            .push_back(StorageError::StorageFull);
+        h.fake.copy(text_copy("second clip"));
+        let (_, seen) = h.wait_added();
+        assert!(
+            !seen.iter().any(|e| matches!(e, AppEvent::Unavailable(_))),
+            "{seen:?}"
+        );
+        assert_eq!(hooks.attempts.load(Ordering::SeqCst), before + 1);
+        assert_eq!(h.clip_count(), 2);
+        assert_eq!(h.cap().skip_counters().storage_full(), 0);
+    }
+
+    #[test]
+    fn storage_full_twice_reports_unavailable() {
+        let h = start(PrivacyPolicy::default());
+        h.sentinel();
+        let hooks = &h.cap().hooks;
+        let before = hooks.attempts.load(Ordering::SeqCst);
+        hooks
+            .inject
+            .lock()
+            .unwrap()
+            .extend([StorageError::StorageFull, StorageError::StorageFull]);
+        h.fake.copy(text_copy("never stored"));
+        let (_, seen) = h.wait_for("Unavailable", |e| {
+            *e == AppEvent::Unavailable(UNAVAILABLE_STORAGE_WRITE)
+        });
+        assert!(no_store_events(&seen), "{seen:?}");
+        // Exactly one retention run, one retry.
+        assert_eq!(hooks.attempts.load(Ordering::SeqCst), before + 1);
+        assert_eq!(h.cap().skip_counters().storage_full(), 1);
+        assert_eq!(h.clip_count(), 1);
+        // The actor is alive and stores again.
+        h.fake.copy(text_copy("after the failure"));
+        h.wait_added();
+        assert_eq!(h.clip_count(), 2);
+    }
+
+    #[test]
+    fn storage_full_then_other_retry_error_is_counted() {
+        let h = start(PrivacyPolicy::default());
+        h.sentinel();
+        let hooks = &h.cap().hooks;
+        hooks.inject.lock().unwrap().extend([
+            StorageError::StorageFull,
+            StorageError::Sqlite("Other".into()),
+        ]);
+        h.fake.copy(text_copy("never stored either"));
+        let (_, seen) = h.wait_for("Unavailable", |e| {
+            *e == AppEvent::Unavailable(UNAVAILABLE_STORAGE_WRITE)
+        });
+        assert!(no_store_events(&seen), "{seen:?}");
+        assert_eq!(h.cap().skip_counters().storage_full(), 1);
+        assert_eq!(h.clip_count(), 1);
+    }
+
+    #[test]
+    fn non_full_insert_error_is_not_retried() {
+        let h = start(PrivacyPolicy::default());
+        h.sentinel();
+        let hooks = &h.cap().hooks;
+        let before = hooks.attempts.load(Ordering::SeqCst);
+        hooks
+            .inject
+            .lock()
+            .unwrap()
+            .push_back(StorageError::Sqlite("Other".into()));
+        h.fake.copy(text_copy("single failure"));
+        h.wait_for("Unavailable", |e| {
+            *e == AppEvent::Unavailable(UNAVAILABLE_STORAGE_WRITE)
+        });
+        assert_eq!(hooks.attempts.load(Ordering::SeqCst), before);
+        assert_eq!(h.cap().skip_counters().storage_full(), 0);
+    }
+
+    #[test]
     fn shutdown_within_deadline() {
         let mut h = start(PrivacyPolicy::default());
         h.fake.copy(text_copy("before shutdown"));
@@ -1966,7 +2096,7 @@ mod tests {
             }];
             let classified = classify(&reps);
             let hash = canonical_hash(classified.kind, &reps, None);
-            s.upsert_clip(NewClip {
+            s.upsert_clip(&NewClip {
                 classified,
                 hash,
                 reps,
@@ -2197,7 +2327,7 @@ mod tests {
             }];
             let classified = classify(&reps);
             let hash = canonical_hash(classified.kind, &reps, None);
-            s.upsert_clip(NewClip {
+            s.upsert_clip(&NewClip {
                 classified,
                 hash,
                 reps,
@@ -2423,7 +2553,7 @@ mod tests {
             }];
             let classified = classify(&reps);
             let hash = canonical_hash(classified.kind, &reps, None);
-            s.upsert_clip(NewClip {
+            s.upsert_clip(&NewClip {
                 classified,
                 hash,
                 reps,

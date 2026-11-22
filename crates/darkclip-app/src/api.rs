@@ -21,7 +21,7 @@ use darkclip_core::{
     CaptureMode, Clip, ClipId, ClipType, Clock, CollectionId, Mime, SensitivityLevel, TagId,
     Timestamp,
 };
-use darkclip_platform::PlatformBundle;
+use darkclip_platform::{Capabilities, PlatformBundle};
 use darkclip_storage::{ClipSummary, OpenMode, SearchQuery, Storage};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -265,6 +265,8 @@ pub struct App {
     persist: bool,
     status: Arc<Mutex<StatusState>>,
     clock: Arc<dyn Clock>,
+    /// What the platform adapter reported at start.
+    caps: Capabilities,
     pump: Option<JoinHandle<()>>,
 }
 
@@ -301,6 +303,7 @@ impl App {
             lang: settings.ui.language,
             ..cfg
         };
+        let caps = bundle.caps;
         let cap = CaptureHandle::spawn(
             bundle,
             writer,
@@ -318,6 +321,7 @@ impl App {
             persist,
             status,
             clock,
+            caps,
             pump: Some(pump),
         };
         Ok((app, outcome))
@@ -337,6 +341,11 @@ impl App {
             }
         }
         r
+    }
+
+    /// The platform capabilities reported when the App started.
+    pub fn capabilities(&self) -> Capabilities {
+        self.caps
     }
 
     pub fn settings(&self) -> Settings {
@@ -777,7 +786,7 @@ mod tests {
         {
             let mut s = Storage::open(dir.path(), OpenMode::ReadWrite, Arc::clone(&clock)).unwrap();
             for (text, masked) in seed {
-                match s.upsert_clip(new_clip(text, *masked)).unwrap() {
+                match s.upsert_clip(&new_clip(text, *masked)).unwrap() {
                     darkclip_storage::UpsertOutcome::Inserted(id)
                     | darkclip_storage::UpsertOutcome::Bumped(id) => ids.push(id),
                 }
@@ -827,6 +836,14 @@ mod tests {
         Caller::Mcp {
             client_id: "claude-code".into(),
         }
+    }
+
+    #[test]
+    fn capabilities_exposed() {
+        let h = start(&[], None);
+        let caps = h.app().capabilities();
+        assert_eq!(caps.backend, "fake");
+        assert_eq!(caps.write, darkclip_platform::Support::Native);
     }
 
     #[test]

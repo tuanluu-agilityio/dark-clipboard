@@ -45,6 +45,34 @@ Status: Phase 0, 2026-11-22. Decisions referenced: ADR-0001 (UI), ADR-0002 (moni
 
 `scripts/check.ps1` enforces the "must not depend on" column with `cargo tree`, following Darkshot's banned-crate check.
 
+### 1a. Layer view, updated 2026-11-22 (Changed by D-039)
+
+Same architecture as above, redrawn: Slint instead of Tauri, the CLI/MCP write path made explicit (ADR-0006), the two security choke points shown as their own boxes, and reserved places for the P2 Rule Engine and AI.
+
+```
+   Desktop UI (Slint)            CLI (P2)                 MCP stdio (P2)
+        |                         | reads: DB read-only     |
+        |                         +---- writes: IPC --------+--> desktop process (only writer)
+        v                                                   v
+ +------------------- darkclip-app (Application Services) --------------------+
+ | ClipService . SearchService . RetentionJob . Settings                       |
+ | [CaptureActor]  the only thread that reads/writes the OS clipboard          |
+ | [PermissionGuard]  CLI/MCP scopes, read-only default, never sensitive       |
+ | RuleRunner (P2: executes a fixed set of actions) . AI port (P2, optional)   |
+ +-------+--------------------------+-----------------------------+-----------+
+         v                          v                             v
+  darkclip-storage           darkclip-platform              darkclip-ai (P2, optional)
+  SQLite . FTS5 . blobs      traits + Capabilities          provider trait, local first
+                                    | implemented by
+                    +---------------+----------------+
+               darkclip-windows  darkclip-macos  darkclip-linux (X11 / Wayland)
+
+  All of the above depend on darkclip-core (models . policy . rule evaluation (P2) .
+  hash . sensitive detection . i18n). Core depends on nothing: no I/O, no OS, no SQLite.
+```
+
+Placement rules for future parts: rule **evaluation** is pure data + logic in core (deterministic, tested like `policy`); rule **actions** run only in app services, never in adapters. AI providers live in `darkclip-ai` and are reachable only through `PermissionGuard`. A `ClipRepository` trait is introduced only when encryption at rest or sync needs a second storage implementation.
+
 ## 2. Runtime model (desktop app)
 
 ```

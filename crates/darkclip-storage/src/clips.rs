@@ -94,7 +94,7 @@ struct PreparedRep<'a> {
 
 impl Storage {
     /// Inserts or, on content_hash conflict, bumps last_copied_at/copy_count/source and replaces representations.
-    pub fn upsert_clip(&mut self, new: NewClip) -> Result<UpsertOutcome, StorageError> {
+    pub fn upsert_clip(&mut self, new: &NewClip) -> Result<UpsertOutcome, StorageError> {
         self.ensure_writable()?;
         let now = self.clock.now();
         let tx = self

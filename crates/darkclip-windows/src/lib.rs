@@ -38,14 +38,16 @@ use darkclip_platform::{
 #[cfg(windows)]
 const NOT_YET: Support = Support::Unsupported { reason: "not yet" };
 
-/// What exists in this build: the monitor. Everything else is reported as not available.
+/// What exists in this build: monitor, read, write and marker detection (Tasks 101-105; the
+/// real-clipboard tests are still unrun until Task 107). The rest is reported as not
+/// available.
 #[cfg(windows)]
 fn capabilities() -> Capabilities {
     Capabilities {
         monitor: Support::Native,
-        read_without_focus: NOT_YET,
-        write: NOT_YET,
-        concealed_markers: NOT_YET,
+        read_without_focus: Support::Native,
+        write: Support::Native,
+        concealed_markers: Support::Native,
         source_app: SourceSupport::Owner,
         // No hotkey is registered by this adapter yet; `UserBound` claims nothing native.
         global_shortcut: ShortcutSupport::UserBound,
@@ -78,7 +80,10 @@ mod tests {
         assert_eq!(b.caps.backend, "win32");
         assert_eq!(b.caps.monitor, Support::Native);
         assert_eq!(b.caps.source_app, SourceSupport::Owner);
-        assert!(matches!(b.caps.write, Support::Unsupported { .. }));
+        assert_eq!(b.caps.read_without_focus, Support::Native);
+        assert_eq!(b.caps.write, Support::Native);
+        assert_eq!(b.caps.concealed_markers, Support::Native);
+        assert!(matches!(b.caps.auto_paste, Support::Unsupported { .. }));
         // Read-only: whatever owns the clipboard now is `None` or a bare file name.
         assert!(b.source.resolve().is_none_or(|s| !s.app_id.contains('\\')));
         assert!(b.paste.is_none());

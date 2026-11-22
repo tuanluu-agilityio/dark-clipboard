@@ -29,6 +29,8 @@ Only Windows has been tested so far. See `docs/architecture/platform-compatibili
 
 Contributors and AI agents: start with `CLAUDE.md` / `AGENTS.md` and `memory-bank/activeContext.md`. Quality gate: `powershell -File scripts/check.ps1` (Windows) or `bash scripts/check.sh`.
 
+Developer run (Windows only for now, no UI): `cargo run -p dark-clipboard -- --headless` captures the clipboard into `%LOCALAPPDATA%\DarkClipboard` until Ctrl+C. `--data-dir <path>` picks another folder. A content-free log is written to `<data dir>\logs\dark-clipboard.log`. Windows capture is not yet tested on a real clipboard (Task 107).
+
 ## Licence
 
 Not decided yet (open question Q-01 in `memory-bank/activeContext.md`).

@@ -91,11 +91,21 @@ pub struct SkipCounters {
     counts: HashMap<SkipReason, u64>,
     /// Reads discarded because the clipboard changed between snapshot and read.
     changed_during_read: u64,
+    /// Inserts that failed with `StorageFull` again after one retention run and one retry.
+    storage_full: u64,
 }
 
 impl SkipCounters {
     pub fn count_changed_during_read(&mut self) {
         self.changed_during_read = self.changed_during_read.saturating_add(1);
+    }
+
+    pub fn count_storage_full(&mut self) {
+        self.storage_full = self.storage_full.saturating_add(1);
+    }
+
+    pub fn storage_full(&self) -> u64 {
+        self.storage_full
     }
 
     /// Not a `SkipReason`: no event is sent (the newer change brings its own signal).

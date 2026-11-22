@@ -63,6 +63,25 @@ messages! {
         "Dữ liệu được tạo bởi phiên bản mới hơn"
     ),
     ErrInternal => ("Internal error", "Lỗi nội bộ"),
+    // Command line (headless dev binary)
+    CliUsage => (
+        "Usage: dark-clipboard --headless [--data-dir <path>]
+The windowed app arrives in a later release.",
+        "Cách dùng: dark-clipboard --headless [--data-dir <đường dẫn>]
+Ứng dụng có cửa sổ sẽ có ở bản sau."
+    ),
+    CliNotSupportedYet => (
+        "Dark Clipboard does not support this operating system yet.",
+        "Dark Clipboard chưa hỗ trợ hệ điều hành này."
+    ),
+    CliStartFailed => (
+        "Dark Clipboard could not start.",
+        "Dark Clipboard không thể khởi động."
+    ),
+    CliRunning => (
+        "Dark Clipboard is running headless. Press Ctrl+C to stop.",
+        "Dark Clipboard đang chạy không giao diện. Nhấn Ctrl+C để dừng."
+    ),
 }
 
 /// Messages allowed to read the same in both languages.

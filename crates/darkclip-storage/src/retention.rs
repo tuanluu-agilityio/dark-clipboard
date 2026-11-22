@@ -352,7 +352,7 @@ pub(crate) mod test_support {
     }
 
     pub fn ins(s: &mut Storage, n: NewClip) -> ClipId {
-        match s.upsert_clip(n).unwrap() {
+        match s.upsert_clip(&n).unwrap() {
             UpsertOutcome::Inserted(id) => id,
             UpsertOutcome::Bumped(_) => panic!("expected Inserted"),
         }
