@@ -1,7 +1,7 @@
 //! `WinAccess`: clipboard access from the capture actor's thread.
 //!
-//! `sequence()` (Task 101), `snapshot_meta` (Task 102) and `read` (Task 103) work; `write`
-//! arrives in Task 104. Adapter rule (S-5): a failed `OpenClipboard` returns
+//! `sequence()` (Task 101), `snapshot_meta` (Task 102), `read` (Task 103) and `write`
+//! (Task 104, copy-back). Adapter rule (S-5): a failed `OpenClipboard` returns
 //! `PlatformError::Busy` once; the actor owns retries. No policy here (GC-04), no content in
 //! errors (GC-06).
 //!
@@ -24,8 +24,6 @@ use darkclip_platform::{
     ClipboardAccess, ClipboardMeta, PlatformError, PlatformFormat, SourceResolver,
 };
 use zeroize::Zeroizing;
-
-const NOT_YET: PlatformError = PlatformError::Unsupported("not yet");
 
 /// The OS calls `snapshot_meta` needs. The real implementation is `WinOs`; tests use a fake.
 pub(crate) trait ClipboardOs {
@@ -385,10 +383,304 @@ fn format_name<V: OpenClipboardView>(open: &V, id: u32) -> String {
         .unwrap_or_else(|| format!("#0x{id:04X}"))
 }
 
+/// The OS calls `write` needs (Task 104). The real implementation is `WinOs`; tests use a fake.
+pub(crate) trait ClipboardWriteOs: ClipboardOs {
+    /// A movable global memory block holding one format's data. Freed (and wiped) on drop
+    /// unless `ClipboardWriter::set` handed it to the system.
+    type Block;
+    /// The clipboard, open by this thread with our owner window; closed when dropped.
+    type Writer<'a>: ClipboardWriter<Self::Block>
+    where
+        Self: 'a;
+
+    /// `GlobalAlloc(GMEM_MOVEABLE)` holding a copy of `bytes`.
+    fn alloc(&mut self, bytes: &[u8]) -> Result<Self::Block, PlatformError>;
+
+    /// One `OpenClipboard(owner)` attempt; `Busy` when another process holds it (S-5). The
+    /// owner is a message-only window created lazily on the calling thread (S-2).
+    fn open_for_write(&mut self) -> Result<Self::Writer<'_>, PlatformError>;
+}
+
+/// Calls made while the clipboard is open for writing.
+pub(crate) trait ClipboardWriter<B> {
+    /// `EmptyClipboard`: our owner window becomes the clipboard owner.
+    fn empty(&mut self) -> Result<(), PlatformError>;
+    /// `SetClipboardData(id, block)`. On success the system owns the block; on failure the
+    /// block is dropped here, which frees it.
+    fn set(&mut self, id: u32, block: B) -> Result<(), PlatformError>;
+    /// `GetClipboardSequenceNumber`, read while the clipboard is still open.
+    fn sequence_while_open(&self) -> u64;
+}
+
+/// `write` called from another thread than the first one: the owner window belongs to the
+/// first thread (S-2).
+pub(crate) const WRONG_THREAD: PlatformError = PlatformError::Backend { code: -2 };
+/// Nothing in the clip can be written on Windows (for example only `http:` URIs).
+const NOTHING_TO_WRITE: PlatformError = PlatformError::Unsupported("nothing to write");
+
+/// Where a written format's id comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Target {
+    Standard(u32),
+    Registered(&'static str),
+}
+
+/// One format to write and its data, wiped on drop.
+struct Planned {
+    target: Target,
+    bytes: Zeroizing<Vec<u8>>,
+}
+
+/// The formats a set of representations becomes, in order: plain text → `CF_UNICODETEXT`;
+/// HTML → `HTML Format`; RTF → `Rich Text Format`; PNG → `PNG`, `CF_DIBV5`, `CF_DIB`;
+/// `file://` URI lists → `CF_HDROP`. Only the first convertible representation of each MIME
+/// is used. A representation that cannot be converted (an undecodable PNG, a URI list with
+/// any URI that is not a drive or UNC `file:` URI) is skipped. D-012: the only formats this
+/// function can produce are those above; no exclusion, history or cloud marker is written.
+fn plan_write(reps: &[RawRepresentation]) -> Vec<Planned> {
+    let mut out = Vec::new();
+    let mut done: Vec<Mime> = Vec::new();
+    for rep in reps {
+        if done.contains(&rep.mime) {
+            continue;
+        }
+        let planned: Option<Vec<Planned>> = match rep.mime {
+            Mime::TextPlain => Some(vec![Planned {
+                target: Target::Standard(CF_UNICODETEXT),
+                bytes: utf16z_of_utf8(&rep.bytes),
+            }]),
+            Mime::TextHtml => Some(vec![Planned {
+                target: Target::Registered(formats::HTML_FORMAT),
+                bytes: nul_terminated(&rep.bytes),
+            }]),
+            Mime::TextRtf => Some(vec![Planned {
+                target: Target::Registered(formats::RTF_FORMAT),
+                bytes: nul_terminated(&rep.bytes),
+            }]),
+            Mime::ImagePng => dib::png_to_dibs(&rep.bytes).ok().map(|pair| {
+                vec![
+                    Planned {
+                        target: Target::Registered(formats::PNG),
+                        bytes: Zeroizing::new(rep.bytes.clone()),
+                    },
+                    Planned {
+                        target: Target::Standard(CF_DIBV5),
+                        bytes: pair.v5,
+                    },
+                    Planned {
+                        target: Target::Standard(CF_DIB),
+                        bytes: pair.dib,
+                    },
+                ]
+            }),
+            Mime::UriList => uri_list_to_dropfiles(&rep.bytes).map(|block| {
+                vec![Planned {
+                    target: Target::Standard(CF_HDROP),
+                    bytes: block,
+                }]
+            }),
+        };
+        if let Some(p) = planned {
+            done.push(rep.mime);
+            out.extend(p);
+        }
+    }
+    out
+}
+
+/// UTF-8 (lossy) as UTF-16LE with a terminating NUL, in buffers reserved up front and wiped
+/// on drop.
+fn utf16z_of_utf8(bytes: &[u8]) -> Zeroizing<Vec<u8>> {
+    let text = Zeroizing::new(String::from_utf8_lossy(bytes).into_owned());
+    // Each UTF-8 byte yields at most one UTF-16 unit (two bytes).
+    let mut out = Zeroizing::new(Vec::with_capacity(
+        text.len().saturating_mul(2).saturating_add(2),
+    ));
+    for u in text.encode_utf16() {
+        out.extend_from_slice(&u.to_le_bytes());
+    }
+    out.extend_from_slice(&[0, 0]);
+    out
+}
+
+/// `bytes` with one terminating NUL: readers of `HTML Format` / `Rich Text Format` expect a
+/// C string, and the stored bytes have none because `read` stops at the NUL.
+fn nul_terminated(bytes: &[u8]) -> Zeroizing<Vec<u8>> {
+    let mut out = Zeroizing::new(Vec::with_capacity(bytes.len().saturating_add(1)));
+    out.extend_from_slice(bytes);
+    if out.last() != Some(&0) {
+        out.push(0);
+    }
+    out
+}
+
+/// Size of the `DROPFILES` header: `pFiles`, `pt` (two LONGs), `fNC`, `fWide`.
+const DROPFILES_HEADER: u32 = 20;
+
+/// A `text/uri-list` as a wide `DROPFILES` block for `CF_HDROP`: the 20-byte header
+/// (`pFiles = 20`, `fWide = 1`), each path UTF-16 and NUL-terminated, then a final NUL.
+/// Lines starting with `#` are comments (RFC 2483). `None` when the list has no URI or any
+/// URI is not a `file:` URI naming a drive or UNC path: that representation is skipped (a
+/// partial file list would paste something else than what was copied). Buffers are wiped on
+/// drop.
+fn uri_list_to_dropfiles(list: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
+    let list = std::str::from_utf8(list).ok()?;
+    let mut paths: Vec<Zeroizing<String>> = Vec::new();
+    for line in list.split('\n') {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        paths.push(file_uri_to_path(line)?);
+    }
+    if paths.is_empty() {
+        return None;
+    }
+    let units = paths
+        .iter()
+        .map(|p| p.encode_utf16().count().saturating_add(1))
+        .fold(1usize, usize::saturating_add);
+    let mut out = Zeroizing::new(Vec::with_capacity(
+        (DROPFILES_HEADER as usize).saturating_add(units.saturating_mul(2)),
+    ));
+    out.extend_from_slice(&DROPFILES_HEADER.to_le_bytes()); // pFiles
+    out.extend_from_slice(&[0u8; 12]); // pt.x, pt.y, fNC
+    out.extend_from_slice(&1u32.to_le_bytes()); // fWide
+    for p in &paths {
+        for u in p.encode_utf16() {
+            out.extend_from_slice(&u.to_le_bytes());
+        }
+        out.extend_from_slice(&[0, 0]);
+    }
+    out.extend_from_slice(&[0, 0]);
+    Some(out)
+}
+
+/// A `file:` URI (as `text::file_uri` writes them) as a Windows path: `file:///C:/a%20b` →
+/// `C:\a b`, `file://host/share/x` → `\\host\share\x` (`localhost` counts as local).
+/// `None` for another scheme, a query or fragment, a path that is neither a drive nor a UNC
+/// path, a bad escape, invalid UTF-8 or an embedded NUL.
+fn file_uri_to_path(uri: &str) -> Option<Zeroizing<String>> {
+    if !uri.get(..5)?.eq_ignore_ascii_case("file:") || uri.contains(['?', '#']) {
+        return None;
+    }
+    let rest = uri.get(5..)?;
+    let (host, path) = match rest.strip_prefix("//") {
+        Some(after) => after.split_once('/')?,
+        None => ("", rest.strip_prefix('/')?),
+    };
+    let mut out = Zeroizing::new(String::with_capacity(uri.len().saturating_add(2)));
+    if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
+        let decoded = percent_decode(path)?;
+        let drive = matches!(decoded.as_bytes(), [d, b':'] | [d, b':', b'/', ..] if d.is_ascii_alphabetic());
+        if !drive {
+            return None;
+        }
+        out.push_str(&decoded);
+    } else {
+        let host = percent_decode(host)?;
+        let path = percent_decode(path)?;
+        if host.contains(['/', '\\']) || path.is_empty() {
+            return None;
+        }
+        out.push_str("//");
+        out.push_str(&host);
+        out.push('/');
+        out.push_str(&path);
+    }
+    if out.contains('\0') {
+        return None;
+    }
+    // Same length in bytes: '/' and '\' are both one byte.
+    let mut windows = Zeroizing::new(String::with_capacity(out.len()));
+    windows.extend(out.chars().map(|c| if c == '/' { '\\' } else { c }));
+    Some(windows)
+}
+
+/// Percent-decodes `s` as UTF-8; `None` on a bad escape or invalid UTF-8. Wiped on drop.
+fn percent_decode(s: &str) -> Option<Zeroizing<String>> {
+    let b = s.as_bytes();
+    let mut out = Zeroizing::new(Vec::with_capacity(b.len()));
+    let mut i = 0;
+    while let Some(&c) = b.get(i) {
+        if c == b'%' {
+            let hex = s.get(i + 1..i + 3)?;
+            if !hex.bytes().all(|h| h.is_ascii_hexdigit()) {
+                return None;
+            }
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    let text = std::str::from_utf8(&out).ok()?;
+    Some(Zeroizing::new(text.to_owned()))
+}
+
+/// `write` over the seam (Task 104). Rejects a call from another thread than the first one
+/// (the owner window lives there, S-2). Converts and allocates every block before opening
+/// the clipboard, so it is held briefly; then one `OpenClipboard` attempt (`Busy`
+/// otherwise), `EmptyClipboard`, `SetClipboardData` per format, and the sequence number read
+/// before `CloseClipboard`. Any failure after the open closes the clipboard and returns
+/// `Backend`; every block not handed to the system is freed on every path (drop).
+pub(crate) fn write_reps<O: ClipboardWriteOs>(
+    os: &mut O,
+    owner_thread: &mut Option<std::thread::ThreadId>,
+    reps: &[RawRepresentation],
+) -> Result<u64, PlatformError> {
+    let me = std::thread::current().id();
+    match *owner_thread {
+        Some(t) if t != me => return Err(WRONG_THREAD),
+        Some(_) => {}
+        None => *owner_thread = Some(me),
+    }
+    let planned = plan_write(reps);
+    if planned.is_empty() {
+        return Err(NOTHING_TO_WRITE);
+    }
+    let mut blocks: Vec<(u32, O::Block)> = Vec::with_capacity(planned.len());
+    for p in planned {
+        let id = match p.target {
+            Target::Standard(id) => id,
+            Target::Registered(name) => os
+                .register(name)
+                .ok_or(PlatformError::Backend { code: -1 })?,
+        };
+        blocks.push((id, os.alloc(&p.bytes)?));
+        // `p.bytes` is wiped here.
+    }
+
+    let mut open = os.open_for_write()?;
+    open.empty().map_err(|e| after_open(&e))?;
+    // On an early return the blocks left in the iterator are dropped, which frees them.
+    for (id, block) in blocks {
+        open.set(id, block).map_err(|e| after_open(&e))?;
+    }
+    // Self-write suppression (spike answer 8, capture rule 5): the actor ignores exactly this
+    // sequence number. It is read while we still hold the clipboard, so no other process can
+    // have changed it in between; read after `CloseClipboard`, another writer could already
+    // have replaced our data, and the actor would then drop their change as ours.
+    let seq = open.sequence_while_open();
+    drop(open); // CloseClipboard
+    Ok(seq)
+}
+
+/// A failure while the clipboard is open is always `Backend`, never `Busy`: a retry would
+/// start over on a clipboard we already emptied.
+fn after_open(e: &PlatformError) -> PlatformError {
+    match e {
+        PlatformError::Backend { code } => PlatformError::Backend { code: *code },
+        _ => PlatformError::Backend { code: -1 },
+    }
+}
+
 /// The real seam over `win.rs`.
 #[derive(Default)]
 pub(crate) struct WinOs {
-    _private: (),
+    /// The clipboard owner window for `write`, created on the first write (S-2).
+    owner: Option<win::OwnerWindow>,
 }
 
 impl ClipboardOs for WinOs {
@@ -400,6 +692,37 @@ impl ClipboardOs for WinOs {
 
     fn open(&mut self) -> Result<win::ClipboardGuard, PlatformError> {
         win::ClipboardGuard::open_for_read()
+    }
+}
+
+impl ClipboardWriteOs for WinOs {
+    type Block = win::GlobalBlock;
+    type Writer<'a> = win::ClipboardGuard;
+
+    fn alloc(&mut self, bytes: &[u8]) -> Result<win::GlobalBlock, PlatformError> {
+        win::GlobalBlock::with_bytes(bytes)
+    }
+
+    fn open_for_write(&mut self) -> Result<win::ClipboardGuard, PlatformError> {
+        let owner = match &mut self.owner {
+            Some(w) => w,
+            slot @ None => slot.insert(win::OwnerWindow::create()?),
+        };
+        win::ClipboardGuard::open_for_write(owner)
+    }
+}
+
+impl ClipboardWriter<win::GlobalBlock> for win::ClipboardGuard {
+    fn empty(&mut self) -> Result<(), PlatformError> {
+        win::ClipboardGuard::empty(self)
+    }
+
+    fn set(&mut self, id: u32, block: win::GlobalBlock) -> Result<(), PlatformError> {
+        win::ClipboardGuard::set_block(self, id, block)
+    }
+
+    fn sequence_while_open(&self) -> u64 {
+        u64::from(win::clipboard_sequence())
     }
 }
 
@@ -438,6 +761,8 @@ impl OpenClipboardView for win::ClipboardGuard {
 pub struct WinAccess {
     os: WinOs,
     markers: MarkerCache,
+    /// The thread of the first `write`: the owner window belongs to it (S-2).
+    write_thread: Option<std::thread::ThreadId>,
 }
 
 impl WinAccess {
@@ -462,8 +787,10 @@ impl ClipboardAccess for WinAccess {
         read_plan(&mut self.os, plan)
     }
 
-    fn write(&mut self, _reps: &[RawRepresentation]) -> Result<u64, PlatformError> {
-        Err(NOT_YET)
+    /// Replaces the clipboard with `reps` (copy-back) and returns the sequence number of that
+    /// change, read before `CloseClipboard`. Never writes marker formats (D-012).
+    fn write(&mut self, reps: &[RawRepresentation]) -> Result<u64, PlatformError> {
+        write_reps(&mut self.os, &mut self.write_thread, reps)
     }
 }
 
@@ -478,6 +805,8 @@ mod tests {
     use darkclip_core::policy::AvailableFormat;
     use darkclip_core::{Mime, Platform, SourceConfidence};
     use std::cell::{Cell, RefCell};
+    use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+    use std::sync::Arc;
 
     /// Fake OS: a clipboard of `(id, registered name)` entries plus DWORD data for some ids.
     /// Registration mimics atoms (case-insensitive, one id per name).
@@ -508,6 +837,44 @@ mod tests {
         size_calls: RefCell<Vec<u32>>,
         /// Every `(id, max)` passed to `copy_data`.
         copy_calls: RefCell<Vec<(u32, usize)>>,
+        /// Write seam: every call, in order.
+        events: RefCell<Vec<Ev>>,
+        /// `EmptyClipboard` fails.
+        empty_fails: bool,
+        /// The n-th `SetClipboardData` (0-based) fails.
+        fail_set_at: Option<usize>,
+        /// Blocks allocated, and blocks freed (shared with the blocks).
+        allocs: Cell<u32>,
+        freed: Arc<AtomicU32>,
+        /// `(id, bytes)` handed to the clipboard, in order.
+        written: RefCell<Vec<(u32, Vec<u8>)>>,
+        /// The sequence number: +1 per `SetClipboardData` and per `CloseClipboard`, so a
+        /// value read after close differs from the one read before.
+        write_seq: Cell<u64>,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Ev {
+        Open,
+        Empty,
+        Set(u32),
+        Seq(u64),
+        Close,
+    }
+
+    /// A fake global block: counts itself as freed when dropped without being handed over.
+    struct FakeBlock {
+        bytes: Vec<u8>,
+        handed: bool,
+        freed: Arc<AtomicU32>,
+    }
+
+    impl Drop for FakeBlock {
+        fn drop(&mut self) {
+            if !self.handed {
+                self.freed.fetch_add(1, AtomicOrdering::SeqCst);
+            }
+        }
     }
 
     impl FakeOs {
@@ -529,7 +896,29 @@ mod tests {
                 files: Vec::new(),
                 size_calls: RefCell::new(Vec::new()),
                 copy_calls: RefCell::new(Vec::new()),
+                events: RefCell::new(Vec::new()),
+                empty_fails: false,
+                fail_set_at: None,
+                allocs: Cell::new(0),
+                freed: Arc::new(AtomicU32::new(0)),
+                written: RefCell::new(Vec::new()),
+                write_seq: Cell::new(1000),
             }
+        }
+
+        fn freed(&self) -> u32 {
+            self.freed.load(AtomicOrdering::SeqCst)
+        }
+
+        fn sets(&self) -> Vec<u32> {
+            self.events
+                .borrow()
+                .iter()
+                .filter_map(|e| match e {
+                    Ev::Set(id) => Some(*id),
+                    _ => None,
+                })
+                .collect()
         }
 
         /// A standard format with content.
@@ -629,6 +1018,69 @@ mod tests {
                 return Err(PlatformError::Busy);
             }
             Ok(FakeOpen(self))
+        }
+    }
+
+    struct FakeWriter<'a>(&'a FakeOs);
+
+    impl Drop for FakeWriter<'_> {
+        fn drop(&mut self) {
+            self.0.events.borrow_mut().push(Ev::Close);
+            self.0.write_seq.set(self.0.write_seq.get() + 1);
+        }
+    }
+
+    impl ClipboardWriteOs for FakeOs {
+        type Block = FakeBlock;
+        type Writer<'a> = FakeWriter<'a>;
+
+        fn alloc(&mut self, bytes: &[u8]) -> Result<FakeBlock, PlatformError> {
+            self.allocs.set(self.allocs.get() + 1);
+            Ok(FakeBlock {
+                bytes: bytes.to_vec(),
+                handed: false,
+                freed: Arc::clone(&self.freed),
+            })
+        }
+
+        fn open_for_write(&mut self) -> Result<FakeWriter<'_>, PlatformError> {
+            self.opens.set(self.opens.get() + 1);
+            if self.busy {
+                return Err(PlatformError::Busy);
+            }
+            self.events.borrow_mut().push(Ev::Open);
+            Ok(FakeWriter(self))
+        }
+    }
+
+    impl ClipboardWriter<FakeBlock> for FakeWriter<'_> {
+        fn empty(&mut self) -> Result<(), PlatformError> {
+            self.0.events.borrow_mut().push(Ev::Empty);
+            if self.0.empty_fails {
+                return Err(PlatformError::Backend { code: 1418 });
+            }
+            Ok(())
+        }
+
+        fn set(&mut self, id: u32, mut block: FakeBlock) -> Result<(), PlatformError> {
+            let n = self.0.sets().len();
+            self.0.events.borrow_mut().push(Ev::Set(id));
+            if self.0.fail_set_at == Some(n) {
+                return Err(PlatformError::Busy); // any failure; mapped to Backend
+            }
+            block.handed = true;
+            self.0
+                .written
+                .borrow_mut()
+                .push((id, std::mem::take(&mut block.bytes)));
+            self.0.write_seq.set(self.0.write_seq.get() + 1);
+            Ok(())
+        }
+
+        fn sequence_while_open(&self) -> u64 {
+            let seq = self.0.write_seq.get();
+            self.0.events.borrow_mut().push(Ev::Seq(seq));
+            seq
         }
     }
 
@@ -1199,12 +1651,6 @@ mod tests {
     }
 
     #[test]
-    fn write_is_unsupported() {
-        let mut a = WinAccess::new();
-        assert_eq!(a.write(&[]).unwrap_err(), NOT_YET);
-    }
-
-    #[test]
     fn snapshot_meta_on_current_clipboard_does_not_fail() {
         // Read-only: names, markers and the two marker DWORDs only.
         let mut a = WinAccess::new();
@@ -1375,5 +1821,355 @@ mod tests {
             }
         }
         assert!(saw_text);
+    }
+
+    /// Task 104: `write` over the fake seam.
+    mod write {
+        use super::*;
+
+        fn raw(mime: Mime, name: &str, bytes: Vec<u8>) -> RawRepresentation {
+            RawRepresentation {
+                mime,
+                platform_format: name.to_owned(),
+                bytes,
+                width: None,
+                height: None,
+                truncated: false,
+            }
+        }
+
+        fn write_with(os: &mut FakeOs, reps: &[RawRepresentation]) -> Result<u64, PlatformError> {
+            let mut thread = None;
+            write_reps(os, &mut thread, reps)
+        }
+
+        /// One representation of every kind the adapter writes.
+        fn all_reps() -> Vec<RawRepresentation> {
+            vec![
+                raw(
+                    Mime::TextPlain,
+                    "CF_UNICODETEXT",
+                    "Xin chào".as_bytes().to_vec(),
+                ),
+                raw(
+                    Mime::TextHtml,
+                    "HTML Format",
+                    b"Version:0.9\r\n<b>x</b>".to_vec(),
+                ),
+                raw(Mime::TextRtf, "Rich Text Format", b"{\\rtf1 x}".to_vec()),
+                raw(Mime::ImagePng, "PNG", png_1x1()),
+                raw(Mime::UriList, "CF_HDROP", b"file:///C:/a%20b.txt".to_vec()),
+            ]
+        }
+
+        #[test]
+        fn uri_list_to_dropfiles_layout() {
+            let block =
+                uri_list_to_dropfiles(b"file:///C:/a%20b.txt\r\nfile://srv/share/%C4%91.txt\r\n")
+                    .unwrap();
+            // DROPFILES: pFiles = 20, pt = (0, 0), fNC = 0, fWide = 1.
+            assert_eq!(block[..4], 20u32.to_le_bytes());
+            assert_eq!(block[4..16], [0u8; 12]);
+            assert_eq!(block[16..20], 1u32.to_le_bytes());
+            let expected: Vec<u8> = r"C:\a b.txt"
+                .encode_utf16()
+                .chain([0])
+                .chain(r"\\srv\share\đ.txt".encode_utf16())
+                .chain([0, 0]) // end of name, then the empty name (double NUL)
+                .flat_map(u16::to_le_bytes)
+                .collect();
+            assert_eq!(block[20..], expected[..]);
+            // Task 103's parser reads it back, and `file_uri` gives the same URIs.
+            let files = text::parse_dropfiles(&block, true, 1 << 20).unwrap();
+            assert!(!files.more);
+            let (list, cut) = text::uri_list(&files.names, 1 << 20);
+            assert!(!cut);
+            assert_eq!(list, "file:///C:/a%20b.txt\r\nfile://srv/share/%C4%91.txt");
+            // localhost, comments and a bare drive root.
+            let block = uri_list_to_dropfiles(b"# comment\nfile://localhost/D:/x\n").unwrap();
+            let files = text::parse_dropfiles(&block, true, 1 << 20).unwrap();
+            assert_eq!(files.names.len(), 1);
+            assert_eq!(String::from_utf16(&files.names[0]).unwrap(), r"D:\x");
+        }
+
+        #[test]
+        fn non_file_uris_skipped() {
+            for list in [
+                &b"https://example.com/a"[..],
+                b"file:///C:/a.txt\r\nhttps://example.com/b",
+                b"file:///home/user/a.txt", // not a Windows path
+                b"file:///C:/a%2",          // bad escape
+                b"file:///C:/a%00b",        // embedded NUL
+                b"file:///C:/a.txt?x=1",
+                b"mailto:a@example.com",
+                b"# only a comment",
+                b"",
+            ] {
+                assert!(uri_list_to_dropfiles(list).is_none(), "{list:?}");
+            }
+            // Through `write`: the URI list is skipped, the other representation is written.
+            let mut os = FakeOs::new();
+            let reps = [
+                raw(Mime::UriList, "CF_HDROP", b"https://example.com/a".to_vec()),
+                raw(Mime::TextPlain, "CF_UNICODETEXT", b"x".to_vec()),
+            ];
+            write_with(&mut os, &reps).unwrap();
+            assert_eq!(os.sets(), vec![CF_UNICODETEXT]);
+            // Nothing writable at all: an error, and the clipboard is never opened.
+            let mut os = FakeOs::new();
+            let reps = [raw(
+                Mime::UriList,
+                "CF_HDROP",
+                b"https://example.com/a".to_vec(),
+            )];
+            assert!(matches!(
+                write_with(&mut os, &reps),
+                Err(PlatformError::Unsupported(_))
+            ));
+            assert_eq!(os.opens.get(), 0);
+        }
+
+        #[test]
+        fn writes_png_dibv5_dib_for_image() {
+            let mut os = FakeOs::new();
+            let png = png_1x1();
+            write_with(&mut os, &[raw(Mime::ImagePng, "PNG", png.clone())]).unwrap();
+            let png_id = os.atom("PNG");
+            assert_eq!(os.sets(), vec![png_id, CF_DIBV5, CF_DIB]);
+            let written = os.written.borrow();
+            assert_eq!(written[0].1, png, "PNG bytes as stored");
+            // CF_DIBV5: V5 header, 32-bit BI_BITFIELDS, alpha mask; pixel (1, 2, 3, 255) as BGRA.
+            let v5 = &written[1].1;
+            assert_eq!(v5[..4], 124u32.to_le_bytes());
+            assert_eq!(v5[14..16], 32u16.to_le_bytes());
+            assert_eq!(v5[16..20], 3u32.to_le_bytes());
+            assert_eq!(v5[52..56], 0xFF00_0000u32.to_le_bytes());
+            assert_eq!(v5[124..], [3, 2, 1, 255]);
+            // CF_DIB: 40-byte header, 32-bit BI_RGB.
+            let d = &written[2].1;
+            assert_eq!(d[..4], 40u32.to_le_bytes());
+            assert_eq!(d[14..16], 32u16.to_le_bytes());
+            assert_eq!(d[16..20], 0u32.to_le_bytes());
+            assert_eq!(d[40..], [3, 2, 1, 255]);
+            // Each block handed over exactly once; none freed by us.
+            assert_eq!(os.allocs.get(), 3);
+            assert_eq!(os.freed(), 0);
+        }
+
+        #[test]
+        fn writes_text_html_rtf_and_files() {
+            let mut os = FakeOs::new();
+            write_with(&mut os, &all_reps()).unwrap();
+            let html = os.atom("HTML Format");
+            let rtf = os.atom("Rich Text Format");
+            let png = os.atom("PNG");
+            assert_eq!(
+                os.sets(),
+                vec![CF_UNICODETEXT, html, rtf, png, CF_DIBV5, CF_DIB, CF_HDROP]
+            );
+            let written = os.written.borrow();
+            assert_eq!(written[0].1, utf16z("Xin chào"));
+            assert_eq!(written[1].1, b"Version:0.9\r\n<b>x</b>\0");
+            assert_eq!(written[2].1, b"{\\rtf1 x}\0");
+            let files = text::parse_dropfiles(&written[6].1, true, 1 << 20).unwrap();
+            assert_eq!(String::from_utf16(&files.names[0]).unwrap(), r"C:\a b.txt");
+            // Order of events: open, empty, sets, sequence, close.
+            let ev = os.events.borrow();
+            assert_eq!(ev[..2], [Ev::Open, Ev::Empty]);
+            assert!(matches!(ev[ev.len() - 2], Ev::Seq(_)));
+            assert_eq!(ev[ev.len() - 1], Ev::Close);
+        }
+
+        #[test]
+        fn no_marker_formats_written() {
+            let mut os = FakeOs::new();
+            write_with(&mut os, &all_reps()).unwrap();
+            // No marker name was ever registered, so no marker id can have been written.
+            let names = os.registered_names.borrow();
+            for marker in formats::MARKER_NAMES {
+                assert!(
+                    !names.iter().any(|n| n.eq_ignore_ascii_case(marker)),
+                    "{marker} registered"
+                );
+            }
+            let marker_ids: Vec<u32> = formats::MARKER_NAMES.iter().map(|m| os.atom(m)).collect();
+            for id in os.sets() {
+                assert!(!marker_ids.contains(&id), "marker id {id:#x} written");
+            }
+            // Only the expected formats, each once.
+            let mut sets = os.sets();
+            let n = sets.len();
+            sets.sort_unstable();
+            sets.dedup();
+            assert_eq!(sets.len(), n);
+            assert_eq!(n, 7);
+        }
+
+        #[test]
+        fn returns_seq_read_before_close() {
+            let mut os = FakeOs::new();
+            let seq = write_with(
+                &mut os,
+                &[raw(Mime::TextPlain, "CF_UNICODETEXT", b"x".to_vec())],
+            )
+            .unwrap();
+            let ev = os.events.borrow().clone();
+            let seq_at = ev.iter().position(|e| matches!(e, Ev::Seq(_))).unwrap();
+            let close_at = ev.iter().position(|e| *e == Ev::Close).unwrap();
+            assert!(seq_at < close_at, "{ev:?}");
+            assert_eq!(ev[seq_at], Ev::Seq(seq));
+            // After the last set, before close: 1000 + 1 set.
+            assert_eq!(seq, 1001);
+            assert_ne!(seq, os.write_seq.get(), "the value after close differs");
+        }
+
+        #[test]
+        fn failure_after_empty_frees_handles() {
+            // The second SetClipboardData fails: the clipboard is closed, `Backend` is returned,
+            // the failing block and every block not yet handed over are freed.
+            let mut os = FakeOs::new();
+            os.fail_set_at = Some(1);
+            let err = write_with(&mut os, &all_reps()).unwrap_err();
+            assert!(matches!(err, PlatformError::Backend { .. }), "{err:?}");
+            assert_eq!(os.allocs.get(), 7);
+            assert_eq!(os.written.borrow().len(), 1);
+            assert_eq!(os.freed(), 6);
+            assert_eq!(*os.events.borrow().last().unwrap(), Ev::Close);
+            assert!(!os.events.borrow().iter().any(|e| matches!(e, Ev::Seq(_))));
+
+            // EmptyClipboard fails: closed, `Backend`, every block freed, nothing set.
+            let mut os = FakeOs::new();
+            os.empty_fails = true;
+            let err = write_with(&mut os, &all_reps()).unwrap_err();
+            assert!(matches!(err, PlatformError::Backend { .. }));
+            assert_eq!(os.freed(), os.allocs.get());
+            assert!(os.sets().is_empty());
+            assert_eq!(*os.events.borrow(), vec![Ev::Open, Ev::Empty, Ev::Close]);
+        }
+
+        #[test]
+        fn busy_once() {
+            let mut os = FakeOs::new();
+            os.busy = true;
+            assert_eq!(
+                write_with(&mut os, &all_reps()).unwrap_err(),
+                PlatformError::Busy
+            );
+            assert_eq!(
+                os.opens.get(),
+                1,
+                "one attempt; retries belong to the actor"
+            );
+            assert!(os.events.borrow().is_empty());
+            assert_eq!(os.freed(), os.allocs.get(), "every block freed");
+        }
+
+        #[test]
+        fn wrong_thread_rejected() {
+            let mut os = FakeOs::new();
+            let mut thread = None;
+            let reps = [raw(Mime::TextPlain, "CF_UNICODETEXT", b"x".to_vec())];
+            write_reps(&mut os, &mut thread, &reps).unwrap();
+            assert_eq!(os.opens.get(), 1);
+            let (os, thread) = std::thread::spawn(move || {
+                let mut os = os;
+                let mut thread = thread;
+                let reps = [raw(Mime::TextPlain, "CF_UNICODETEXT", b"y".to_vec())];
+                assert_eq!(
+                    write_reps(&mut os, &mut thread, &reps).unwrap_err(),
+                    WRONG_THREAD
+                );
+                (os, thread)
+            })
+            .join()
+            .unwrap();
+            assert_eq!(os.opens.get(), 1, "never opened from the other thread");
+            assert_eq!(os.allocs.get(), 1);
+            // Back on the first thread, writing works again.
+            let mut os = os;
+            let mut thread = thread;
+            write_reps(&mut os, &mut thread, &reps).unwrap();
+            assert_eq!(os.opens.get(), 2);
+        }
+
+        #[test]
+        fn win_access_write_rejects_other_thread_without_touching_clipboard() {
+            // Nothing writable: returns before any window or clipboard call, but still records
+            // the thread, so a later call from another thread is rejected (no clipboard write).
+            let mut a = WinAccess::new();
+            let reps = [raw(
+                Mime::UriList,
+                "CF_HDROP",
+                b"https://example.com/".to_vec(),
+            )];
+            assert!(matches!(a.write(&reps), Err(PlatformError::Unsupported(_))));
+            let err = std::thread::spawn(move || a.write(&reps).unwrap_err())
+                .join()
+                .unwrap();
+            assert_eq!(err, WRONG_THREAD);
+        }
+
+        #[test]
+        #[ignore = "writes the real clipboard"]
+        fn real_clipboard_write_copyback_suppressed() {
+            use darkclip_platform::ClipboardMonitor;
+            let mut m = crate::monitor::WinMonitor::new(Box::new(|| None));
+            let (tx, rx) = std::sync::mpsc::channel();
+            m.start(tx).unwrap();
+            let mut a = WinAccess::new();
+            let reps = [raw(
+                Mime::TextPlain,
+                "CF_UNICODETEXT",
+                b"darkclip test 104".to_vec(),
+            )];
+            let seq = retry(|| a.write(&reps));
+            // The monitor's signal for our write carries exactly the returned number.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            let mut found = false;
+            while let Ok(s) = rx.recv_timeout(deadline - std::time::Instant::now()) {
+                if s.seq == seq {
+                    found = true;
+                    break;
+                }
+                assert!(s.seq < seq, "signal {} after our write {seq}", s.seq);
+            }
+            m.stop();
+            assert!(found, "no signal with seq {seq}");
+        }
+
+        #[test]
+        #[ignore = "writes the real clipboard"]
+        fn real_clipboard_write_image_readable_by_read() {
+            // 2x1: opaque red, half-transparent green.
+            let mut png_bytes = Vec::new();
+            {
+                let mut enc = png::Encoder::new(&mut png_bytes, 2, 1);
+                enc.set_color(png::ColorType::Rgba);
+                enc.set_depth(png::BitDepth::Eight);
+                let mut w = enc.write_header().unwrap();
+                w.write_image_data(&[255, 0, 0, 255, 0, 255, 0, 128])
+                    .unwrap();
+            }
+            let mut a = WinAccess::new();
+            retry(|| a.write(&[raw(Mime::ImagePng, "PNG", png_bytes.clone())]));
+            let meta = retry(|| a.snapshot_meta());
+            assert!(meta.markers.is_empty(), "D-012: {:?}", meta.markers);
+            for (name, alpha) in [("PNG", 128), ("CF_DIBV5", 128), ("CF_DIB", 255)] {
+                let p = plan(&[(Mime::ImagePng, name)], 0, 1 << 20);
+                let reps = retry(|| a.read(&p));
+                assert_eq!(reps.len(), 1, "{name}");
+                assert_eq!(
+                    (reps[0].width, reps[0].height),
+                    (Some(2), Some(1)),
+                    "{name}"
+                );
+                let mut dec = png::Decoder::new(std::io::Cursor::new(&reps[0].bytes[..]));
+                dec.set_transformations(png::Transformations::EXPAND);
+                let mut r = dec.read_info().unwrap();
+                let mut buf = vec![0; r.output_buffer_size().unwrap()];
+                r.next_frame(&mut buf).unwrap();
+                assert_eq!(buf[..8], [255, 0, 0, 255, 0, 255, 0, alpha], "{name}");
+            }
+        }
     }
 }
