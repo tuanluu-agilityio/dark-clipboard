@@ -18,6 +18,7 @@ mod clips;
 mod db;
 mod error;
 mod migrate;
+mod search;
 
 use darkclip_core::{
     Classified, ClipId, ClipboardSource, Clock, RawRepresentation, Sensitivity, Timestamp,
@@ -26,6 +27,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub use error::StorageError;
+pub use search::{ClipSummary, Cursor, SearchQuery};
 
 /// The clip store: one SQLite connection plus the data directory.
 pub struct Storage {

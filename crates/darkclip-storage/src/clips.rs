@@ -270,6 +270,26 @@ impl Storage {
             }
         }
 
+        // FTS row: masked clips index only the masked preview, never body or note.
+        let masked = clip.sensitivity.level == SensitivityLevel::Masked;
+        let body = if masked {
+            String::new()
+        } else {
+            new.reps
+                .iter()
+                .find(|r| r.mime == Mime::TextPlain)
+                .map(|r| String::from_utf8_lossy(&r.bytes).into_owned())
+                .unwrap_or_default()
+        };
+        let note = clip.note.as_deref().filter(|_| !masked).unwrap_or_default();
+        crate::search::index_clip(
+            &tx,
+            &id_s,
+            &clip.preview,
+            crate::search::truncate_body(&body),
+            note,
+        )?;
+
         #[cfg(test)]
         if self.fail_before_commit {
             return Err(StorageError::Io(std::io::ErrorKind::Interrupted));
