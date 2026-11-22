@@ -51,13 +51,14 @@ Phase 2 complete 2026-11-23 (Bitwarden/1Password rows n/a on the test machine; s
 | Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
 |---|---|---|---|---|---|---|---|---|
 | 200 Split capture.rs | task/200-split-capture | specialist | opus | done | 132,555 | 50,869 (security-reviewer opus: APPROVED, mechanical equivalence check) | 0 | 183,424 |
-| 201 Desktop skeleton | task/201-desktop-skeleton | builder | sonnet | in progress | | | | |
+| 201 Desktop skeleton | task/201-desktop-skeleton | builder | sonnet | done | 147,056 | 116,203 (reviewer opus ×2: CR (2 blocking: shutdown hang, CI) → APPROVED) | 32,543 | 295,802 |
+| 202 Tray | task/202-tray | builder | sonnet | next | | | | |
 
 ## Totals by model
 
 | Model | Tokens |
 |---|---|
-| opus | 5,744,699 |
-| sonnet | 2,112,098 |
+| opus | 5,860,902 |
+| sonnet | 2,291,697 |
 | haiku | 0 |
-| **Total** | **7,856,797** (subagents only; orchestrator not measured) |
+| **Total** | **8,152,599** (subagents only; orchestrator not measured) |

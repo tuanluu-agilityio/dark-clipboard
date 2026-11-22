@@ -33,4 +33,4 @@ Windows app skeleton: `cargo run -p dark-clipboard` starts the app hidden (a sec
 
 ## Licence
 
-Not decided yet (open question Q-01 in `memory-bank/activeContext.md`).
+GPL-3.0-only (see [LICENSE](LICENSE)). The UI uses Slint under its GPLv3 option.
