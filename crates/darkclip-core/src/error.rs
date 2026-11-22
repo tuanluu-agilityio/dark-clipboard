@@ -13,4 +13,7 @@ pub enum CoreError {
     InvalidTag,
     #[error("field `{field}` is longer than {max} characters")]
     TooLong { field: &'static str, max: usize },
+    /// A schema constraint that serde cannot express was violated (`Clip::validate`).
+    #[error("field `{field}` violates a schema constraint")]
+    Invalid { field: &'static str },
 }

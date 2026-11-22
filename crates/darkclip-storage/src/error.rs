@@ -1,0 +1,83 @@
+//! Storage errors. No variant carries clip content, SQL parameters, SQLite's
+//! free-text message or a file path (GC-06): only codes and kinds.
+
+use darkclip_core::CoreError;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StorageError {
+    /// SQLite or rusqlite failure, as a code name only (no SQL parameters, no message).
+    Sqlite(String),
+    /// Filesystem failure, kind only (no path).
+    Io(std::io::ErrorKind),
+    /// The database was written by a newer Dark Clipboard. Never downgraded.
+    SchemaTooNew {
+        found: u32,
+        supported: u32,
+    },
+    NotFound,
+    /// A write was attempted on a read-only store, or a read-only open found a
+    /// schema that needs a migration.
+    ReadOnly,
+    /// The clip violates a schema constraint (`Clip::validate`). Field name only.
+    /// Added to the Task 007 interface: `upsert_clip` must call `Clip::validate`.
+    Invalid(CoreError),
+}
+
+impl std::fmt::Display for StorageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Sqlite(code) => write!(f, "database error ({code})"),
+            Self::Io(kind) => write!(f, "file error ({kind:?})"),
+            Self::SchemaTooNew { found, supported } => write!(
+                f,
+                "database schema version {found} is newer than supported version {supported}"
+            ),
+            Self::NotFound => f.write_str("not found"),
+            Self::ReadOnly => f.write_str("storage is read-only"),
+            Self::Invalid(e) => write!(f, "invalid clip: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for StorageError {}
+
+impl From<std::io::Error> for StorageError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e.kind())
+    }
+}
+
+impl From<CoreError> for StorageError {
+    fn from(e: CoreError) -> Self {
+        Self::Invalid(e)
+    }
+}
+
+/// Maps a rusqlite error to a code. The message part of `SqliteFailure` and every
+/// payload (parameter names, column names, inner conversion errors that may echo a
+/// value) are dropped on purpose.
+impl From<rusqlite::Error> for StorageError {
+    fn from(e: rusqlite::Error) -> Self {
+        use rusqlite::Error as E;
+        let code = match e {
+            E::SqliteFailure(err, _message_dropped) => {
+                format!("{:?}/{}", err.code, err.extended_code)
+            }
+            E::QueryReturnedNoRows => return Self::NotFound,
+            E::FromSqlConversionFailure(..) => "FromSqlConversionFailure".to_owned(),
+            E::IntegralValueOutOfRange(..) => "IntegralValueOutOfRange".to_owned(),
+            E::InvalidColumnType(..) => "InvalidColumnType".to_owned(),
+            E::InvalidColumnIndex(..) => "InvalidColumnIndex".to_owned(),
+            E::InvalidColumnName(..) => "InvalidColumnName".to_owned(),
+            E::InvalidParameterName(..) => "InvalidParameterName".to_owned(),
+            E::InvalidParameterCount(..) => "InvalidParameterCount".to_owned(),
+            E::ToSqlConversionFailure(..) => "ToSqlConversionFailure".to_owned(),
+            E::ExecuteReturnedResults => "ExecuteReturnedResults".to_owned(),
+            E::StatementChangedRows(..) => "StatementChangedRows".to_owned(),
+            E::InvalidPath(..) => "InvalidPath".to_owned(),
+            E::NulError(..) => "NulError".to_owned(),
+            _ => "Other".to_owned(),
+        };
+        Self::Sqlite(code)
+    }
+}

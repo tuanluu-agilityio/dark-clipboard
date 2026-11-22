@@ -276,6 +276,73 @@ pub struct Clip {
     pub metadata: ClipMetadata,
 }
 
+pub const REF_NAME_MAX_CHARS: usize = 80;
+
+fn check_ref_names<'a>(
+    field: &'static str,
+    mut names: impl Iterator<Item = &'a str>,
+) -> Result<(), CoreError> {
+    names.try_for_each(|n| match n.chars().count() {
+        0 => Err(CoreError::Invalid { field }),
+        c if c > REF_NAME_MAX_CHARS => Err(CoreError::TooLong {
+            field,
+            max: REF_NAME_MAX_CHARS,
+        }),
+        _ => Ok(()),
+    })
+}
+
+impl Clip {
+    /// Enforces the `clip.schema.json` constraints that serde does not: preview and
+    /// note length, at least one representation, `copy_count >= 1`, blob storage
+    /// iff `blob_sha256`, masked clips expire, ref names 1-80 chars, non-empty `app_id`.
+    /// Errors name the field only, never its value (GC-06).
+    pub fn validate(&self) -> Result<(), CoreError> {
+        let invalid = |field| Err(CoreError::Invalid { field });
+        if self.preview.chars().count() > PREVIEW_MAX_CHARS {
+            return Err(CoreError::TooLong {
+                field: "preview",
+                max: PREVIEW_MAX_CHARS,
+            });
+        }
+        if self
+            .note
+            .as_ref()
+            .is_some_and(|n| n.chars().count() > NOTE_MAX_CHARS)
+        {
+            return Err(CoreError::TooLong {
+                field: "note",
+                max: NOTE_MAX_CHARS,
+            });
+        }
+        if self.representations.is_empty() {
+            return invalid("representations");
+        }
+        if self.copy_count < 1 {
+            return invalid("copy_count");
+        }
+        if self
+            .representations
+            .iter()
+            .any(|r| (r.storage == Storage::Blob) != r.blob_sha256.is_some())
+        {
+            return invalid("blob_sha256");
+        }
+        if self.sensitivity.level == SensitivityLevel::Masked && self.expires_at.is_none() {
+            return invalid("expires_at");
+        }
+        check_ref_names("tags", self.tags.iter().map(|t| t.name.as_str()))?;
+        check_ref_names(
+            "collections",
+            self.collections.iter().map(|c| c.name.as_str()),
+        )?;
+        if self.source.as_ref().is_some_and(|s| s.app_id.is_empty()) {
+            return invalid("source.app_id");
+        }
+        Ok(())
+    }
+}
+
 /// Never prints the preview, note, source or hash (GC-06).
 impl std::fmt::Debug for Clip {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -614,6 +681,103 @@ mod tests {
             ),
             "{r:?}"
         );
+    }
+
+    #[test]
+    fn clip_validate_rejects_each_violation() {
+        let base: Clip = serde_json::from_str(CLIP_TEXT).unwrap();
+        for src in [CLIP_TEXT, CLIP_IMAGE, CLIP_MASKED] {
+            let c: Clip = serde_json::from_str(src).unwrap();
+            assert_eq!(c.validate(), Ok(()));
+        }
+        let invalid = |field| Err(CoreError::Invalid { field });
+        let check = |f: &dyn Fn(&mut Clip), want: Result<(), CoreError>| {
+            let mut c = base.clone();
+            f(&mut c);
+            assert_eq!(c.validate(), want);
+        };
+        let tag = |name: &str| TagRef {
+            id: TagId::parse("019a8f41-1111-7222-8333-444455556666").unwrap(),
+            name: name.to_string(),
+        };
+        let coll = |name: &str| CollectionRef {
+            id: CollectionId::parse("019a8f41-1111-7222-8333-444455556666").unwrap(),
+            name: name.to_string(),
+        };
+
+        // preview <= 512 chars (counted in chars, not bytes)
+        check(&|c| c.preview = "é".repeat(512), Ok(()));
+        check(
+            &|c| c.preview = "a".repeat(513),
+            Err(CoreError::TooLong {
+                field: "preview",
+                max: 512,
+            }),
+        );
+        // note <= 4000 chars
+        check(&|c| c.note = Some("n".repeat(4000)), Ok(()));
+        check(
+            &|c| c.note = Some("n".repeat(4001)),
+            Err(CoreError::TooLong {
+                field: "note",
+                max: 4000,
+            }),
+        );
+        // >= 1 representation
+        check(&|c| c.representations.clear(), invalid("representations"));
+        // copy_count >= 1
+        check(&|c| c.copy_count = 0, invalid("copy_count"));
+        // blob storage => blob_sha256 (and inline => none, the schema's else branch)
+        check(
+            &|c| {
+                c.representations[0].storage = Storage::Blob;
+                c.representations[0].blob_sha256 = None;
+            },
+            invalid("blob_sha256"),
+        );
+        check(
+            &|c| {
+                c.representations[0].storage = Storage::Inline;
+                c.representations[0].blob_sha256 = Some([7; 32]);
+            },
+            invalid("blob_sha256"),
+        );
+        // masked => expires_at
+        check(
+            &|c| {
+                c.sensitivity.level = SensitivityLevel::Masked;
+                c.expires_at = None;
+            },
+            invalid("expires_at"),
+        );
+        // ref names 1-80 chars
+        check(&|c| c.tags = vec![tag(&"t".repeat(80))], Ok(()));
+        check(&|c| c.tags = vec![tag("")], invalid("tags"));
+        check(
+            &|c| c.tags = vec![tag(&"t".repeat(81))],
+            Err(CoreError::TooLong {
+                field: "tags",
+                max: 80,
+            }),
+        );
+        check(&|c| c.collections = vec![coll("")], invalid("collections"));
+        check(
+            &|c| c.collections = vec![coll(&"c".repeat(81))],
+            Err(CoreError::TooLong {
+                field: "collections",
+                max: 80,
+            }),
+        );
+        // non-empty app_id
+        check(
+            &|c| {
+                if let Some(s) = c.source.as_mut() {
+                    s.app_id.clear();
+                }
+            },
+            invalid("source.app_id"),
+        );
+        assert!(base.source.is_some());
     }
 
     #[test]
