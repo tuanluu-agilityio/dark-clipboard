@@ -15,6 +15,7 @@ pub mod model;
 pub mod policy;
 pub mod preview;
 pub mod redact;
+pub mod sensitive;
 pub mod time;
 
 pub use classify::{classify, Classified, RawRepresentation};
