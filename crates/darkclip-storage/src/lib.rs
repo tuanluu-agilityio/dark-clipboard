@@ -51,7 +51,9 @@ pub enum OpenMode {
 }
 
 /// A classified capture ready to store. `classified.preview` must already be the
-/// masked preview for masked clips; storage stores what it is given.
+/// masked preview for masked clips; storage stores what it is given. `Clone` so the capture
+/// actor can retry once after `StorageFull` (F-02); the spare copy is wiped by the caller.
+#[derive(Clone)]
 pub struct NewClip {
     pub classified: Classified,
     pub hash: [u8; 32],

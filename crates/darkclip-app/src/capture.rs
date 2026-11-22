@@ -92,6 +92,9 @@ struct RetentionHooks {
     attempts: AtomicU32,
     #[cfg(test)]
     fail: std::sync::atomic::AtomicBool,
+    /// Tests: the next N `upsert_clip` calls fail with `StorageFull`.
+    #[cfg(test)]
+    full_inserts: AtomicU32,
     /// Tests: `next_expiry` fails after a successful retention.
     #[cfg(test)]
     expiry_fail: std::sync::atomic::AtomicBool,
@@ -859,7 +862,7 @@ impl Actor {
         }
         let hash = hashed.hash;
         let thumbnail_png = hashed.thumbnail;
-        let outcome = self.storage.upsert_clip(NewClip {
+        let outcome = self.insert_with_retry(NewClip {
             classified,
             hash,
             reps,
@@ -880,8 +883,50 @@ impl Actor {
                 self.emit(AppEvent::ClipAdded(id));
             }
             Ok(UpsertOutcome::Bumped(id)) => self.emit(AppEvent::ClipBumped(id)),
-            Err(_) => self.emit(AppEvent::Unavailable(UNAVAILABLE_STORAGE_WRITE)),
+            Err(e) => {
+                if e == StorageError::StorageFull {
+                    self.counters
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .count_storage_full();
+                }
+                self.emit(AppEvent::Unavailable(UNAVAILABLE_STORAGE_WRITE));
+            }
         }
+    }
+
+    /// F-02: on `StorageFull` run retention once and retry the insert once. A second
+    /// failure is returned to the caller (event and counter); the actor stays alive.
+    fn insert_with_retry(&mut self, new: NewClip) -> Result<UpsertOutcome, StorageError> {
+        let spare = new.clone();
+        let first = self.try_upsert(new);
+        if first != Err(StorageError::StorageFull) {
+            let mut spare = spare;
+            wipe_reps(&mut spare.reps);
+            wipe_string(&mut spare.classified.preview);
+            return first;
+        }
+        self.run_retention();
+        let second = self.try_upsert(spare.clone());
+        let mut spare = spare;
+        wipe_reps(&mut spare.reps);
+        wipe_string(&mut spare.classified.preview);
+        second
+    }
+
+    fn try_upsert(&mut self, new: NewClip) -> Result<UpsertOutcome, StorageError> {
+        #[cfg(test)]
+        {
+            let injected = self
+                .hooks
+                .full_inserts
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .is_ok();
+            if injected {
+                return Err(StorageError::StorageFull);
+            }
+        }
+        self.storage.upsert_clip(new)
     }
 
     fn discard(
@@ -1654,6 +1699,46 @@ mod tests {
         // Still alive.
         h.sentinel();
         assert_eq!(h.clip_count(), 1);
+    }
+
+    #[test]
+    fn storage_full_runs_retention_then_retries_once() {
+        let h = start(PrivacyPolicy::default());
+        h.sentinel();
+        let hooks = &h.cap().hooks;
+        let before = hooks.attempts.load(Ordering::SeqCst);
+        hooks.full_inserts.store(1, Ordering::SeqCst);
+        h.fake.copy(text_copy("second clip"));
+        let (_, seen) = h.wait_added();
+        assert!(
+            !seen.iter().any(|e| matches!(e, AppEvent::Unavailable(_))),
+            "{seen:?}"
+        );
+        assert_eq!(hooks.attempts.load(Ordering::SeqCst), before + 1);
+        assert_eq!(h.clip_count(), 2);
+        assert_eq!(h.cap().skip_counters().storage_full(), 0);
+    }
+
+    #[test]
+    fn storage_full_twice_reports_unavailable() {
+        let h = start(PrivacyPolicy::default());
+        h.sentinel();
+        let hooks = &h.cap().hooks;
+        let before = hooks.attempts.load(Ordering::SeqCst);
+        hooks.full_inserts.store(2, Ordering::SeqCst);
+        h.fake.copy(text_copy("never stored"));
+        let (_, seen) = h.wait_for("Unavailable", |e| {
+            *e == AppEvent::Unavailable(UNAVAILABLE_STORAGE_WRITE)
+        });
+        assert!(no_store_events(&seen), "{seen:?}");
+        // Exactly one retention run, one retry.
+        assert_eq!(hooks.attempts.load(Ordering::SeqCst), before + 1);
+        assert_eq!(h.cap().skip_counters().storage_full(), 1);
+        assert_eq!(h.clip_count(), 1);
+        // The actor is alive and stores again.
+        h.fake.copy(text_copy("after the failure"));
+        h.wait_added();
+        assert_eq!(h.clip_count(), 2);
     }
 
     #[test]

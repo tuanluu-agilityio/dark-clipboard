@@ -18,6 +18,9 @@ pub enum StorageError {
     /// A write was attempted on a read-only store, or a read-only open found a
     /// schema that needs a migration.
     ReadOnly,
+    /// The disk (or the database size limit) is full: SQLITE_FULL or an I/O `StorageFull`.
+    /// The capture actor reacts with one retention run and one retry (F-02).
+    StorageFull,
     /// The clip violates a schema constraint (`Clip::validate`). Field name only.
     /// Added to the Task 007 interface: `upsert_clip` must call `Clip::validate`.
     Invalid(CoreError),
@@ -32,6 +35,7 @@ impl std::fmt::Display for StorageError {
                 f,
                 "database schema version {found} is newer than supported version {supported}"
             ),
+            Self::StorageFull => f.write_str("storage is full"),
             Self::NotFound => f.write_str("not found"),
             Self::ReadOnly => f.write_str("storage is read-only"),
             Self::Invalid(e) => write!(f, "invalid clip: {e}"),
@@ -43,6 +47,9 @@ impl std::error::Error for StorageError {}
 
 impl From<std::io::Error> for StorageError {
     fn from(e: std::io::Error) -> Self {
+        if e.kind() == std::io::ErrorKind::StorageFull {
+            return Self::StorageFull;
+        }
         Self::Io(e.kind())
     }
 }
@@ -60,6 +67,9 @@ impl From<rusqlite::Error> for StorageError {
     fn from(e: rusqlite::Error) -> Self {
         use rusqlite::Error as E;
         let code = match e {
+            E::SqliteFailure(err, _) if err.code == rusqlite::ErrorCode::DiskFull => {
+                return Self::StorageFull;
+            }
             E::SqliteFailure(err, _message_dropped) => {
                 format!("{:?}/{}", err.code, err.extended_code)
             }
@@ -79,5 +89,26 @@ impl From<rusqlite::Error> for StorageError {
             _ => "Other".to_owned(),
         };
         Self::Sqlite(code)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disk_full_maps_to_storage_full() {
+        let sqlite = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_FULL),
+            None,
+        );
+        assert_eq!(StorageError::from(sqlite), StorageError::StorageFull);
+        let io = std::io::Error::from(std::io::ErrorKind::StorageFull);
+        assert_eq!(StorageError::from(io), StorageError::StorageFull);
+        let other = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            StorageError::from(other),
+            StorageError::Io(std::io::ErrorKind::PermissionDenied)
+        );
     }
 }
