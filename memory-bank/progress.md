@@ -1,6 +1,6 @@
 # Progress and token ledger
 
-Updated: 2026-11-22 (Phase 2 started)
+Updated: 2026-11-23 (Phase 2 complete)
 
 Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers subagents report when they finish. Orchestrator tokens cannot be measured per task.
 
@@ -42,13 +42,21 @@ Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers sub
 | 107 Windows verification | task/107-windows-verification | orchestrator (interactive, D-041) | opus | done | not measured (orchestrator) | 79,051 (reviewer opus ×3: CR (over-claims) → CR (1 cell) → fixed) | 0 | 79,051 |
 | 109 OLE source carry (F-14) | task/109-ole-source-carry | specialist | opus | done | 149,387 | 67,756 (security-reviewer opus ×2: CR (1 blocking: dequeue-time chain gate) → APPROVED) | 29,589 | 246,732 |
 | 108 Phase review | main | specialist | opus | done: CHANGES REQUIRED (1 blocking: unbounded copy-back PNG decode; 4 should-fix) → Task 110 | | 225,146 | | 225,146 |
-| 110 Phase 2 review fixes | task/110-phase2-fixes | specialist | opus | in progress | | | | |
+| 110 Phase 2 review fixes | task/110-phase2-fixes | specialist | opus | done | 265,048 | 91,107 (security-reviewer opus ×2: APPROVED with 1 should-fix → fixed, APPROVED) | 9,452 | 365,607 |
+
+Phase 2 complete 2026-11-23 (Bitwarden/1Password rows n/a on the test machine; see activeContext).
+
+## Phase 3: Desktop shell (Slint)
+
+| Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
+|---|---|---|---|---|---|---|---|---|
+| 200 Split capture.rs | task/200-split-capture | specialist | opus | next | | | | |
 
 ## Totals by model
 
 | Model | Tokens |
 |---|---|
-| opus | 5,195,668 |
+| opus | 5,561,275 |
 | sonnet | 2,112,098 |
 | haiku | 0 |
-| **Total** | **7,307,766** (subagents only; orchestrator not measured) |
+| **Total** | **7,673,373** (subagents only; orchestrator not measured) |
