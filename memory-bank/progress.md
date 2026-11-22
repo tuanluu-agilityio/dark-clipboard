@@ -59,13 +59,14 @@ Phase 2 complete 2026-11-23 (Bitwarden/1Password rows n/a on the test machine; s
 | 206 Previews | task/206-previews | builder | sonnet | done | 230,796 | 124,502 (security-reviewer opus ×2: APPROVED with should-fix → fixed, APPROVED) | 40,923 | 396,221 |
 | 211 History window | task/211-history-window | builder | sonnet | done | 267,633 | 120,811 (reviewer opus: APPROVED, fixes applied) | 9,697 | 398,141 |
 | 207 Settings window | task/207-settings | builder | sonnet | done | 228,434 | 121,072 (security-reviewer opus ×2: APPROVED with should-fix → fixed, APPROVED) | 36,293 | 385,799 |
-| 208 Autostart + welcome | task/208-autostart-welcome | builder | sonnet | in progress | | | | |
+| 208 Autostart + welcome | task/208-autostart-welcome | builder | sonnet | done | 184,991 | 138,156 (security-reviewer opus ×2: CR (blocking: read-only defaults enabled capture) → APPROVED) | 48,074 | 371,221 |
+| 209 ADR-0001 revisit | task/209-adr0001-revisit | platform-verifier | sonnet | next | | | | |
 
 ## Totals by model
 
 | Model | Tokens |
 |---|---|
-| opus | 7,232,948 |
-| sonnet | 3,375,848 |
+| opus | 7,371,104 |
+| sonnet | 3,608,913 |
 | haiku | 0 |
-| **Total** | **10,608,796** (subagents only; orchestrator not measured) |
+| **Total** | **10,980,017** (subagents only; orchestrator not measured) |

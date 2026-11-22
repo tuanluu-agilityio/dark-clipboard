@@ -165,6 +165,7 @@ Use a throwaway data folder for the welcome rows: `dark-clipboard.exe --data-dir
 | `--headless` on a fresh `--data-dir` | The console says capture is off until Start is pressed in the app; the log has `capture_off`; copies are not stored | **untested** |
 | Welcome opened again from About while capture is on | No "Nothing is captured until you press Start" line; Esc or X changes nothing | **untested** |
 | Screen reader (Narrator) on the welcome | Texts, the check box and both buttons are read | **untested** |
+| Task Manager → Startup → disable Dark Clipboard, then open Settings | The login toggle shows Off with the "differs from the saved setting" note (StartupApproved odd-byte rule is an observed convention, not a documented contract) | **untested** |
 
 The registry round trip also exists as an ignored test: `cargo test -p darkclip-windows -- --ignored autostart` (uses the value name `DarkClipboardTest`, removed at the end).
 
