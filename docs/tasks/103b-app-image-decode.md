@@ -15,6 +15,8 @@ Create `crates/darkclip-app/src/image.rs`; modify `crates/darkclip-app/src/{capt
 3. Capture: for an `image/png` rep, decode → pass `Some((&rgba, w, h))` to `canonical_hash`, set `thumbnail_png`, and set `width`/`height` on the rep if missing. A decode failure keeps today's behaviour (fallback hash tag) and the clip is still stored; record a skip only if the policy says so (it does not). Decode happens after the policy decision and after sensitive handling, on the actor thread; the RGBA buffer is dropped right after hashing.
 4. Dedupe: the same picture copied as DIB (PNG produced by the adapter) and as a registered `PNG` (different encoder, same pixels) gives one clip.
 
+**From the Task 103 review:** the adapter's `width`/`height` for registered `PNG` come from IHDR unchecked, so the decoded-size cap here is the only guard against decompression bombs. The DIB→PNG output may carry spare capacity (memory only).
+
 ## Tests
 - `decode_rejects_over_pixel_cap_without_allocating` (header claims 100k × 100k).
 - `decode_palette_grey_16bit_to_rgba8` (synthetic PNGs encoded in-test).
