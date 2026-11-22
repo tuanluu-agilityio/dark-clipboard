@@ -18,6 +18,8 @@ pub enum Key {
     Escape,
     Delete,
     Tab,
+    /// The context-menu key (history window).
+    Menu,
     Char(char),
     Other,
 }
@@ -79,6 +81,8 @@ pub enum Action {
     OpenDetail,
     /// Left arrow: hide the detail pane.
     CloseDetail,
+    /// Ctrl+H: open the history window (Task 211).
+    OpenHistory,
 }
 
 /// Which filter chip has the keyboard focus, from per-chip gained/lost reports. The reports of
@@ -129,6 +133,7 @@ pub fn key_from_text(s: &str) -> Key {
         (SlintKey::Escape, Key::Escape),
         (SlintKey::Delete, Key::Delete),
         (SlintKey::Tab, Key::Tab),
+        (SlintKey::Menu, Key::Menu),
     ];
     if let Some(&(_, k)) = named.iter().find(|(sk, _)| char::from(*sk) == c) {
         return k;
@@ -139,7 +144,7 @@ pub fn key_from_text(s: &str) -> Key {
     // Other control characters and Slint's private-use codes (arrows, F-keys, ...).
     if c.is_control() || ('\u{F700}'..='\u{F8FF}').contains(&c) {
         // Ctrl+letter may arrive as its control code (Ctrl+P = U+0010, Ctrl+Z = U+001A).
-        if matches!(c, '\u{10}' | '\u{1a}') {
+        if matches!(c, '\u{8}' | '\u{10}' | '\u{1a}') {
             return Key::Char(c);
         }
         return Key::Other;
@@ -173,6 +178,12 @@ pub fn map_key(k: Key, m: Mods, ctx: KeyCtx) -> Option<Action> {
         Key::Escape => Some(Action::Close),
         Key::Delete if plain && !m.shift && list_keys => Some(Action::Delete),
         Key::Char('p' | 'P' | '\u{10}') if m.ctrl && !m.alt => Some(Action::TogglePin),
+        // Ctrl+H may arrive as Backspace's control code; Ctrl+Backspace edits a non-empty
+        // search box, so that code opens the history only when the list owns the keys.
+        Key::Char('h' | 'H') if m.ctrl && !m.alt && !m.shift => Some(Action::OpenHistory),
+        Key::Char('\u{8}') if m.ctrl && !m.alt && !m.shift && list_keys => {
+            Some(Action::OpenHistory)
+        }
         Key::Char('z' | 'Z' | '\u{1a}') if m.ctrl && !m.alt && ctx.undo_available => {
             Some(Action::Undo)
         }
@@ -443,5 +454,29 @@ mod tests {
             assert_eq!(map_key(Key::Char('ệ'), SHIFT, ctx), None);
             assert_eq!(map_key(Key::Other, NONE, ctx), None);
         }
+    }
+
+    #[test]
+    fn ctrl_h_opens_the_history_window() {
+        assert_eq!(
+            map_key(Key::Char('h'), CTRL, TYPING),
+            Some(Action::OpenHistory)
+        );
+        assert_eq!(
+            map_key(Key::Char('H'), CTRL, FRESH),
+            Some(Action::OpenHistory)
+        );
+        // Plain h is text.
+        assert_eq!(map_key(Key::Char('h'), NONE, FRESH), None);
+        // As Backspace's control code it only counts when the list owns the keys, so
+        // Ctrl+Backspace still deletes a word in a non-empty search box.
+        assert_eq!(map_key(Key::Char('\u{8}'), CTRL, TYPING), None);
+        assert_eq!(
+            map_key(Key::Char('\u{8}'), CTRL, FRESH),
+            Some(Action::OpenHistory)
+        );
+        assert_eq!(map_key(Key::Char('\u{8}'), NONE, FRESH), None);
+        // The context-menu key is mapped to its own key (the history window uses it).
+        assert_eq!(key_from_text(&text(SlintKey::Menu)), Key::Menu);
     }
 }

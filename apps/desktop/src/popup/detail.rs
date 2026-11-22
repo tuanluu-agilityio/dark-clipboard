@@ -10,6 +10,8 @@
 //! - File paths are shown (the user copied them) and never logged; `Debug` prints none.
 
 use super::list::Item;
+use super::row::{fill, kind_msg};
+use darkclip_core::i18n::{t, Lang, Msg};
 use darkclip_core::{ClipId, ClipType};
 
 /// Text shown in the detail pane is cut at this many bytes (keep equal to the app's
@@ -566,6 +568,84 @@ impl<P: Clone> DetailModel<P> {
     }
 }
 
+/// What the detail pane's properties say, derived from the model's view (Task 211: shared by
+/// the popup and the history window so both panes behave the same). Pure.
+pub struct DetailProps<P> {
+    /// 0 text, 1 image, 2 files, 3 masked.
+    pub kind: i32,
+    pub title: String,
+    pub text: String,
+    pub note: String,
+    pub status: String,
+    pub can_load_text: bool,
+    pub can_load_image: bool,
+    pub mono: bool,
+    pub picture: Option<P>,
+    pub picture_info: String,
+    pub files: Vec<FileEntry>,
+    pub files_more: String,
+}
+
+/// The pane's properties for the open pane of `item`. A masked clip yields only the note: no
+/// text, picture or file names.
+pub fn props<P>(item: &Item, v: DetailView<P>, lang: Lang) -> DetailProps<P> {
+    let kind_name = t(lang, kind_msg(item.kind));
+    let mut title = format!("{} \u{b7} {kind_name}", t(lang, Msg::UiDetailLabel));
+    let (kind, mut text, mut note) = if v.masked {
+        (3, String::new(), t(lang, Msg::UiMaskedDetail).to_string())
+    } else {
+        match item.kind {
+            ClipType::Image => (1, String::new(), t(lang, Msg::UiNoImagePreview).to_string()),
+            ClipType::Files => (2, String::new(), String::new()),
+            _ => (0, item.preview.clone(), String::new()),
+        }
+    };
+    if kind == 0 {
+        if let Some(full) = &v.text {
+            text.clone_from(full);
+        }
+    }
+    if kind == 2 && v.file_total > 0 {
+        title.push_str(" \u{b7} ");
+        title.push_str(&fill(t(lang, Msg::UiFilesCount), v.file_total as u64));
+    }
+    if kind == 1 && v.loading && v.image.is_none() {
+        note = t(lang, Msg::UiLoading).to_string();
+    }
+    let status = if v.failed {
+        t(lang, Msg::UiActionFailed).to_string()
+    } else if v.loading {
+        t(lang, Msg::UiLoading).to_string()
+    } else if kind == 0 && v.text_cut {
+        fill(t(lang, Msg::UiTextCut), (TEXT_DISPLAY_CAP / 1024) as u64)
+    } else {
+        String::new()
+    };
+    let picture_info = match v.dims {
+        Some((pw, ph)) => format!("{pw} \u{d7} {ph} px"),
+        None => String::new(),
+    };
+    let files_more = if v.files_more > 0 {
+        fill(t(lang, Msg::UiFilesMore), v.files_more as u64)
+    } else {
+        String::new()
+    };
+    DetailProps {
+        kind,
+        title,
+        text,
+        note,
+        status,
+        can_load_text: v.can_load_text,
+        can_load_image: v.can_load_image,
+        mono: item.kind == ClipType::Code,
+        picture: v.image,
+        picture_info,
+        files: v.files,
+        files_more,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1021,5 +1101,68 @@ mod tests {
             path: "/home/me/secret.txt".into(),
         };
         assert!(!format!("{e:?}").contains("secret"));
+    }
+
+    fn blank_view<P>() -> DetailView<P> {
+        DetailView {
+            masked: false,
+            text: None,
+            text_cut: false,
+            image: None,
+            image_is_full: false,
+            dims: None,
+            files: Vec::new(),
+            files_more: 0,
+            file_total: 0,
+            loading: false,
+            failed: false,
+            can_load_text: false,
+            can_load_image: false,
+        }
+    }
+
+    #[test]
+    fn props_for_a_masked_clip_carry_only_the_note() {
+        let it = item(ClipType::Text, true);
+        let mut v: DetailView<u8> = blank_view();
+        v.masked = true;
+        let p = props(&it, v, Lang::En);
+        assert_eq!(p.kind, 3);
+        assert!(p.text.is_empty() && p.files.is_empty() && p.picture.is_none());
+        assert_eq!(p.note, t(Lang::En, Msg::UiMaskedDetail));
+    }
+
+    #[test]
+    fn props_show_the_full_text_the_status_and_the_mono_flag() {
+        let it = item(ClipType::Code, false);
+        let mut v: DetailView<u8> = blank_view();
+        v.text = Some("full".into());
+        v.text_cut = true;
+        let p = props(&it, v, Lang::En);
+        assert_eq!((p.kind, p.text.as_str(), p.mono), (0, "full", true));
+        assert!(p.status.contains("32"));
+        // Without the full text the stored preview shows.
+        let p = props(&it, blank_view::<u8>(), Lang::En);
+        assert_eq!(p.text, "preview");
+    }
+
+    #[test]
+    fn props_for_files_and_images() {
+        let f = item(ClipType::Files, false);
+        let mut v: DetailView<u8> = blank_view();
+        v.file_total = 5;
+        v.files_more = 3;
+        let p = props(&f, v, Lang::En);
+        assert_eq!(p.kind, 2);
+        assert!(p.title.ends_with("5 files"));
+        assert_eq!(p.files_more, "and 3 more");
+        let i = item(ClipType::Image, false);
+        let mut v: DetailView<u8> = blank_view();
+        v.loading = true;
+        v.dims = Some((640, 480));
+        let p = props(&i, v, Lang::En);
+        assert_eq!(p.kind, 1);
+        assert_eq!(p.note, t(Lang::En, Msg::UiLoading));
+        assert_eq!(p.picture_info, "640 \u{d7} 480 px");
     }
 }

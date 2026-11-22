@@ -167,6 +167,36 @@ messages! {
     UiNoImagePreview => ("No preview image stored", "Không có ảnh xem trước"),
     UiFilesCount => ("{n} files", "{n} tệp"),
     UiFilesMore => ("and {n} more", "và {n} tệp khác"),
+    // History window (Task 211)
+    UiHistoryTitle => ("Dark Clipboard - History", "Dark Clipboard - Lịch sử"),
+    UiFilterAll => ("All", "Tất cả"),
+    UiFilter30Days => ("30 days", "30 ngày"),
+    UiGroupType => ("Type", "Loại"),
+    UiGroupDate => ("Date", "Ngày"),
+    UiGroupSource => ("Source app", "Ứng dụng nguồn"),
+    UiSelectedCount => ("{n} selected", "Đã chọn {n}"),
+    UiSelectAll => ("Select all", "Chọn tất cả"),
+    UiClearSelection => ("Clear selection", "Bỏ chọn"),
+    UiCancel => ("Cancel", "Hủy"),
+    UiConfirmDeleteOne => (
+        "Delete this clip? This cannot be undone.",
+        "Xóa mục này? Không thể hoàn tác."
+    ),
+    UiConfirmDeleteMany => (
+        "Delete {n} clips? This cannot be undone.",
+        "Xóa {n} mục? Không thể hoàn tác."
+    ),
+    UiDeletedMany => ("{n} clips deleted", "Đã xóa {n} mục"),
+    UiKeyHintsHistory => (
+        "Enter copy · Shift+Enter plain · Ctrl+P pin · Del delete · Ctrl+A select all · Esc close",
+        "Enter sao chép · Shift+Enter văn bản thuần · Ctrl+P ghim · Del xóa · Ctrl+A chọn tất cả · Esc đóng"
+    ),
+    UiCopied => ("Copied to the clipboard", "Đã sao chép vào bảng nhớ tạm"),
+    UiKeyHintsConfirm => ("Enter delete · Esc cancel", "Enter xóa · Esc hủy"),
+    UiHistoryHint => (
+        "Select one clip to see its details.",
+        "Chọn một mục để xem chi tiết."
+    ),
     CliSeedRefused => (
         "--seed-demo-clips needs --data-dir with a folder other than the default data folder.",
         "--seed-demo-clips cần --data-dir với một thư mục khác thư mục dữ liệu mặc định."
@@ -174,6 +204,7 @@ messages! {
     CliSeedDone => ("Demo clips written:", "Đã ghi các mục mẫu:"),
     // Tray icon and menu (Task 202)
     TrayOpen => ("Open", "Mở"),
+    TrayHistory => ("History...", "Lịch sử..."),
     TrayPause => ("Pause capture", "Tạm dừng ghi nhớ"),
     TrayPause5Min => ("5 minutes", "5 phút"),
     TrayPause1Hour => ("1 hour", "1 giờ"),

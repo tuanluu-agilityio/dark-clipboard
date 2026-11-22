@@ -114,6 +114,31 @@ All rows **untested** until the owner runs them (agents never send input, GC-19)
 | Hint line (default settings) | Shows "Ctrl+Enter paste" | **untested** |
 | Owner-only test: open an empty Notepad, run `cargo test -p darkclip-windows --lib real_paste_into_focused_window -- --ignored --nocapture`, click into Notepad within 3 s | The current clipboard is pasted once into Notepad; the test passes | **untested** |
 
+## Windows: history window (Task 211)
+
+Setup: `--seed-demo-clips 10000 --data-dir <temp>` then run with the same `--data-dir` (see `demo-popup.md`). Open the window from the tray ("History...") or with Ctrl+H in the popup. Visual and input checks only the owner can do (GC-19).
+
+| Check | Expected | Result |
+|---|---|---|
+| Tray menu entry "History..." (and Vietnamese: "Lich su...") | Opens the window; opening it again brings it to the front, no second window | **untested** |
+| Ctrl+H in the popup (search box empty, then with text) | The popup closes and the history window opens. Report if Ctrl+H does nothing: Slint may deliver it as Backspace's control code, and then it only works with an empty search box | **untested** |
+| Look | Dark title bar and dark body, no white flash; left filters, centre list, right details; readable at 100/150/200 % scale | **untested** |
+| Resize, then close and reopen | Same size and position. With two monitors: move it to the other monitor, resize, close; open it with the cursor on each monitor: each shows its own last rectangle | **untested** |
+| Old settings file (no `history_windows`) | The app starts, the window opens centred at 980 x 640 | **untested** |
+| Filters: All, Pinned, each kind, Today, 7 days, 30 days, a source app | The list narrows; All clears every filter but keeps the search text; the filter keeps the keyboard focus when toggled with Space/Enter | **untested** |
+| Click a row | The details show on the right (text, image, files); a masked row shows only the "hidden" note | **untested** |
+| Ctrl+click, Shift+click, Shift+Up/Down, Space, Ctrl+A | Rows are tinted; the footer says "N selected"; the right pane says the same and shows no detail; Esc clears the marks | **untested** |
+| Enter, Shift+Enter, the Copy buttons | The clip is on the clipboard (check by pasting in Notepad); the footer says "Copied"; with several rows selected the copy buttons are hidden | **untested** |
+| Ctrl+P, Pin/Unpin with several rows | All unpinned rows get pinned; when all are pinned they are unpinned | **untested** |
+| Delete key or button on one row, then on several | A dialog asks first ("Delete N clips?"); Esc or Cancel deletes nothing; Enter or Delete confirms; the rows go and the footer says how many; other keys do nothing while the dialog is open | **untested** |
+| Right click on an unselected row, on a selected row of a multi-selection, and the Menu key | Menu with Copy, Copy as plain text, Pin/Unpin, Delete (opens the dialog), Select all; acts on the row, or on all marked rows | **untested** |
+| Context menu with the keyboard | Known limit: the Menu key opens the menu, but its entries are not keyboard-focusable (mouse only; Esc or a click outside closes it). Every action has a key (Enter, Shift+Enter, Ctrl+P, Delete, Ctrl+A); note whether the menu is still reachable enough | **untested** |
+| Ctrl+Up/Down/Home/End, Space, Shift+Home/End | Ctrl+arrows move the cursor and keep the marks; Space marks the row under the cursor (rows 2 and 4 stay marked after Ctrl+Down twice); Shift+Home/End extend the range | **untested** |
+| Scroll to the end of 10,000 clips | More pages load; scrolling stays smooth | **untested** |
+| Close the window with the X, Alt+F4 and Esc | Closes each time; reopening shows an empty search, no selection and no detail from before | **untested** |
+| Vietnamese IME (Telex) in the search box | Diacritics type and search as in the popup | **untested** |
+| Screen reader (Narrator): list, filters, dialog | Rows are read with their text and details; the dialog text is read | **untested** |
+
 ## macOS
 
 All rows **untested** (no hardware, Q-04).

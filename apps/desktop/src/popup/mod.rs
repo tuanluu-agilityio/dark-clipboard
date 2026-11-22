@@ -4,6 +4,7 @@
 // The popup runs on Windows first; other platforms compile it but do not show it yet.
 #![cfg_attr(not(windows), allow(dead_code))]
 
+pub mod chips;
 pub mod detail;
 pub mod highlight;
 pub mod keys;

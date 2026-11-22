@@ -25,12 +25,32 @@ export struct ClipRow {
     masked-badge: string,
     mono: bool,
     pinned: bool,
+    // Marked for a multi-selection (history window, Task 211); false in the popup.
+    marked: bool,
 }
 
 // One file of a file clip.
 export struct FileRow {
     name: string,
     path: string,
+}
+
+// What the detail pane shows (Task 206; one struct so the popup and the history window set it
+// the same way). `kind`: 0 text, 1 image, 2 files, 3 masked. `note`: the masked note, or "no
+// preview image". `status`: loading or failure message, or the cut-text note. The text is a separate pane property.
+export struct DetailState {
+    kind: int,
+    title: string,
+    note: string,
+    status: string,
+    can-load-text: bool,
+    picture: image,
+    has-picture: bool,
+    picture-info: string,
+    can-load-image: bool,
+    files: [FileRow],
+    files-more: string,
+    mono: bool,
 }
 
 // A filter chip. `id` is opaque to the markup (Rust decides what it means).
@@ -153,15 +173,21 @@ export component RowView inherits Rectangle {
     in property <int> index;
     callback clicked();
     callback activated();
+    // History window (Task 211): a left click with its modifiers, and a right click (window
+    // coordinates of the pointer).
+    callback pressed(bool, bool);
+    callback context(length, length);
 
     height: RowMetrics.height;
     border-radius: 6px;
-    background: selected ? Theme.surface : (touch.has-hover ? Theme.surface.with-alpha(0.5) : transparent);
+    background: data.marked ? Theme.accent.with-alpha(selected ? 0.34 : 0.22)
+        : selected ? Theme.surface
+        : (touch.has-hover ? Theme.surface.with-alpha(0.5) : transparent);
     accessible-role: list-item;
     accessible-label: data.label;
     accessible-description: data.description;
     accessible-item-selectable: true;
-    accessible-item-selected: root.selected;
+    accessible-item-selected: root.selected || data.marked;
     accessible-item-index: root.index;
     accessible-action-default => {
         root.activated();
@@ -257,34 +283,32 @@ export component RowView inherits Rectangle {
         double-clicked => {
             root.activated();
         }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.up) {
+                if (e.button == PointerEventButton.left) {
+                    root.pressed(e.modifiers.control, e.modifiers.shift);
+                } else if (e.button == PointerEventButton.right) {
+                    root.context(root.absolute-position.x + self.mouse-x, root.absolute-position.y + self.mouse-y);
+                }
+            }
+        }
     }
 }
 
-// The detail pane under the list (Task 206). `kind`: 0 text, 1 image, 2 files, 3 masked. Every
+// The detail pane (Tasks 206 and 211). `kind`: 0 text, 1 image, 2 files, 3 masked. Every
 // text comes from Rust. A masked clip shows only the note: no content is ever passed here.
 export component DetailPane inherits Rectangle {
-    in property <int> kind;
-    in property <string> title;
+    in property <DetailState> state;
+    // Kept out of `state` so the host can leave it alone when it did not change (a large text
+    // is laid out again whenever it is set).
     in property <string> text;
-    // Masked note, or "no preview image".
-    in property <string> note;
-    // Loading or failure message, or the cut-text note.
-    in property <string> status;
-    in property <bool> can-load-text;
-    in property <image> picture;
-    in property <bool> has-picture;
-    in property <string> picture-info;
-    in property <bool> can-load-image;
-    in property <[FileRow]> files;
-    in property <string> files-more;
-    in property <bool> mono;
     callback load-text();
     callback load-image();
 
     border-radius: 6px;
     background: Theme.surface;
     accessible-role: groupbox;
-    accessible-label: root.title;
+    accessible-label: root.state.title;
 
     VerticalLayout {
         padding: 8px;
@@ -294,7 +318,7 @@ export component DetailPane inherits Rectangle {
             spacing: 8px;
             height: 22px;
             Text {
-                text: root.title;
+                text: root.state.title;
                 color: Theme.text-muted;
                 font-size: 11px;
                 font-weight: 700;
@@ -302,13 +326,13 @@ export component DetailPane inherits Rectangle {
                 horizontal-stretch: 1;
                 overflow: elide;
             }
-            if root.kind == 0 && root.can-load-text: ActionButton {
+            if root.state.kind == 0 && root.state.can-load-text: ActionButton {
                 text: Strings.load-full-text;
                 clicked => {
                     root.load-text();
                 }
             }
-            if root.kind == 1 && root.can-load-image: ActionButton {
+            if root.state.kind == 1 && root.state.can-load-image: ActionButton {
                 text: Strings.load-larger-image;
                 clicked => {
                     root.load-image();
@@ -316,7 +340,7 @@ export component DetailPane inherits Rectangle {
             }
         }
 
-        if root.kind == 0: Flickable {
+        if root.state.kind == 0: Flickable {
             vertical-stretch: 1;
             content-height: body.preferred-height;
             body := Text {
@@ -324,41 +348,41 @@ export component DetailPane inherits Rectangle {
                 text: root.text;
                 color: Theme.text;
                 font-size: 12px;
-                font-family: root.mono ? Theme.mono-font : "";
+                font-family: root.state.mono ? Theme.mono-font : "";
                 wrap: word-wrap;
                 accessible-role: AccessibleRole.text;
             }
         }
 
-        if root.kind == 1: Rectangle {
+        if root.state.kind == 1: Rectangle {
             vertical-stretch: 1;
             clip: true;
-            if root.has-picture: Image {
-                source: root.picture;
+            if root.state.has-picture: Image {
+                source: root.state.picture;
                 image-fit: contain;
                 accessible-role: image;
-                accessible-label: root.picture-info;
+                accessible-label: root.state.picture-info;
             }
-            if !root.has-picture: Text {
-                text: root.note;
+            if !root.state.has-picture: Text {
+                text: root.state.note;
                 color: Theme.text-muted;
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 wrap: word-wrap;
             }
         }
-        if root.kind == 1: Text {
-            text: root.picture-info;
+        if root.state.kind == 1: Text {
+            text: root.state.picture-info;
             color: Theme.text-muted;
             font-size: 11px;
             horizontal-alignment: center;
         }
 
-        if root.kind == 2: ScrollView {
+        if root.state.kind == 2: ScrollView {
             vertical-stretch: 1;
             VerticalLayout {
                 spacing: 6px;
-                for f in root.files: VerticalLayout {
+                for f in root.state.files: VerticalLayout {
                     spacing: 0px;
                     accessible-role: AccessibleRole.text;
                     accessible-label: f.path;
@@ -377,23 +401,23 @@ export component DetailPane inherits Rectangle {
                 }
             }
         }
-        if root.kind == 2 && root.files-more != "": Text {
-            text: root.files-more;
+        if root.state.kind == 2 && root.state.files-more != "": Text {
+            text: root.state.files-more;
             color: Theme.text-muted;
             font-size: 11px;
         }
 
-        if root.kind == 3: Text {
+        if root.state.kind == 3: Text {
             vertical-stretch: 1;
-            text: root.note;
+            text: root.state.note;
             color: Theme.text-muted;
             wrap: word-wrap;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
 
-        if root.status != "": Text {
-            text: root.status;
+        if root.state.status != "": Text {
+            text: root.state.status;
             color: Theme.text-muted;
             font-size: 11px;
             wrap: word-wrap;

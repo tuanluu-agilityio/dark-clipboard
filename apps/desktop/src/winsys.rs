@@ -113,11 +113,26 @@ pub struct MonitorAtCursor {
     pub dpi: u32,
 }
 
-/// Where the cursor is and which monitor it is on; `None` when Windows cannot tell.
-pub fn monitor_at_cursor() -> Option<MonitorAtCursor> {
-    let mut pt = POINT::default();
-    // SAFETY: `pt` is a valid, writable POINT.
-    unsafe { GetCursorPos(&mut pt) }.ok()?;
+/// A monitor: its full rectangle (names it for the history window's memory), its work area and
+/// its effective DPI, in physical pixels.
+pub struct MonitorGeometry {
+    pub full: crate::popup::place::Rect,
+    pub work: crate::popup::place::Rect,
+    pub dpi: u32,
+}
+
+fn rect_of(r: windows::Win32::Foundation::RECT) -> crate::popup::place::Rect {
+    crate::popup::place::Rect {
+        left: r.left,
+        top: r.top,
+        right: r.right,
+        bottom: r.bottom,
+    }
+}
+
+/// The monitor nearest to the physical point `pt`; `None` when Windows cannot tell.
+pub fn monitor_at(x: i32, y: i32) -> Option<MonitorGeometry> {
+    let pt = POINT { x, y };
     // SAFETY: plain value arguments; DEFAULTTONEAREST always returns a monitor handle, which is
     // not owned by the caller (nothing to release).
     let monitor = unsafe { MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST) };
@@ -135,16 +150,29 @@ pub fn monitor_at_cursor() -> Option<MonitorAtCursor> {
     let (mut dpi_x, mut dpi_y) = (0u32, 0u32);
     // SAFETY: both out pointers are valid, writable u32s; failure leaves them 0 (treated as 96).
     let _ = unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) };
-    let w = info.rcWork;
-    Some(MonitorAtCursor {
-        cursor: (pt.x, pt.y),
-        work: crate::popup::place::Rect {
-            left: w.left,
-            top: w.top,
-            right: w.right,
-            bottom: w.bottom,
-        },
+    Some(MonitorGeometry {
+        full: rect_of(info.rcMonitor),
+        work: rect_of(info.rcWork),
         dpi: dpi_x,
+    })
+}
+
+/// The cursor position in physical pixels.
+pub fn cursor_pos() -> Option<(i32, i32)> {
+    let mut pt = POINT::default();
+    // SAFETY: `pt` is a valid, writable POINT.
+    unsafe { GetCursorPos(&mut pt) }.ok()?;
+    Some((pt.x, pt.y))
+}
+
+/// Where the cursor is and which monitor it is on; `None` when Windows cannot tell.
+pub fn monitor_at_cursor() -> Option<MonitorAtCursor> {
+    let cursor = cursor_pos()?;
+    let m = monitor_at(cursor.0, cursor.1)?;
+    Some(MonitorAtCursor {
+        cursor,
+        work: m.work,
+        dpi: m.dpi,
     })
 }
 
