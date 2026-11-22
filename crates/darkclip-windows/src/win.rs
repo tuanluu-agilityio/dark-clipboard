@@ -2,20 +2,28 @@
 //! here; every block has a `// SAFETY:` line. Every OS handle is owned by an RAII guard and
 //! released on every path, errors included (GC-13).
 //!
-//! Nothing here reads clipboard content or window titles (GC-06).
+//! Nothing here reads clipboard content or window titles (GC-06). The only clipboard data
+//! read outside the test writer is a 4-byte marker DWORD (`ClipboardGuard::dword_value`).
 
 use darkclip_platform::PlatformError;
 use std::cell::RefCell;
 use std::ffi::c_void;
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
+use windows::core::HSTRING;
 use windows::core::PCWSTR;
 use windows::core::PWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{
+    CloseHandle, GetLastError, SetLastError, ERROR_SUCCESS, HANDLE, HGLOBAL, HINSTANCE, HWND,
+    LPARAM, LRESULT, WPARAM,
+};
 use windows::Win32::System::DataExchange::{
-    AddClipboardFormatListener, GetClipboardOwner, GetClipboardSequenceNumber,
-    RemoveClipboardFormatListener,
+    AddClipboardFormatListener, CloseClipboard, EnumClipboardFormats, GetClipboardData,
+    GetClipboardFormatNameW, GetClipboardOwner, GetClipboardSequenceNumber, OpenClipboard,
+    RegisterClipboardFormatW, RemoveClipboardFormatListener,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -49,6 +57,146 @@ fn backend(e: &windows::core::Error) -> PlatformError {
 pub(crate) fn clipboard_sequence() -> u32 {
     // SAFETY: no arguments, no preconditions; reads a per-session counter.
     unsafe { GetClipboardSequenceNumber() }
+}
+
+/// `RegisterClipboardFormatW`: the id of a registered format name, `None` on failure.
+/// Registering an existing name returns its id (atoms compare case-insensitively). Needs no
+/// open clipboard.
+pub(crate) fn register_clipboard_format(name: &str) -> Option<u32> {
+    let wide = HSTRING::from(name);
+    // SAFETY: `wide` is a NUL-terminated UTF-16 string that outlives the call.
+    let id = unsafe { RegisterClipboardFormatW(&wide) };
+    (id != 0).then_some(id)
+}
+
+/// Longest registered format name: atom names are at most 255 characters.
+const MAX_FORMAT_NAME: usize = 256;
+
+/// `GetClipboardFormatNameW`: the registered name of `id`, `None` for standard formats,
+/// unnamed private formats or failures. A format name is not content.
+pub(crate) fn clipboard_format_name(id: u32) -> Option<String> {
+    let mut buf = [0u16; MAX_FORMAT_NAME];
+    // SAFETY: `buf` is a writable buffer; the wrapper passes its length as the maximum count.
+    let n = unsafe { GetClipboardFormatNameW(id, &mut buf) };
+    let n = usize::try_from(n).ok().filter(|&n| n > 0)?;
+    String::from_utf16(buf.get(..n)?).ok()
+}
+
+/// The clipboard, open by this thread; closed on drop. One `OpenClipboard` attempt only
+/// (S-5): failure is `Busy`, retries belong to the capture actor. Not `Send`: the clipboard
+/// is opened per thread and must be closed by the same thread.
+pub(crate) struct ClipboardGuard {
+    _thread_bound: PhantomData<*const ()>,
+}
+
+/// Upper bound on enumerated formats (ids are 16-bit), so a misbehaving enumeration can never
+/// loop forever.
+const MAX_FORMATS: usize = 0x1_0000;
+
+impl ClipboardGuard {
+    /// Opens the clipboard with `owner` as the window that would own it after
+    /// `EmptyClipboard` (`None` for reading).
+    pub(crate) fn open(owner: Option<HWND>) -> Result<Self, PlatformError> {
+        // SAFETY: `owner` is `None` or a live window of this thread.
+        unsafe { OpenClipboard(owner) }.map_err(|_| PlatformError::Busy)?;
+        Ok(Self {
+            _thread_bound: PhantomData,
+        })
+    }
+
+    /// Opens the clipboard for reading (no owner window).
+    pub(crate) fn open_for_read() -> Result<Self, PlatformError> {
+        Self::open(None)
+    }
+
+    /// `EnumClipboardFormats` until the end. A failure (not the end of the list) is an error,
+    /// never a shortened list.
+    pub(crate) fn enum_formats(&self) -> Result<Vec<u32>, PlatformError> {
+        let mut out = Vec::new();
+        let mut prev = 0u32;
+        while out.len() < MAX_FORMATS {
+            // SAFETY: plain call; clears the thread's last-error so the end of the list
+            // (0 with ERROR_SUCCESS) can be told from a failure.
+            unsafe { SetLastError(ERROR_SUCCESS) };
+            // SAFETY: the clipboard is open by this thread (owned by `self`); `prev` is 0 or a
+            // format returned by the previous call.
+            let next = unsafe { EnumClipboardFormats(prev) };
+            if next == 0 {
+                // SAFETY: plain call; reads this thread's last-error value.
+                let err = unsafe { GetLastError() };
+                if err == ERROR_SUCCESS {
+                    return Ok(out);
+                }
+                return Err(PlatformError::Backend {
+                    code: i64::from(err.0),
+                });
+            }
+            out.push(next);
+            prev = next;
+        }
+        Err(PlatformError::Backend { code: -1 })
+    }
+
+    /// The DWORD stored in a marker format: the data handle's `GlobalSize` must be exactly 4
+    /// bytes, else `None`. Only for the two DWORD marker formats; never call it for a content
+    /// format. The handle belongs to the clipboard and is not freed; the lock is released on
+    /// every path. If the owner offered the marker with delayed rendering, `GetClipboardData`
+    /// blocks until the owner renders it, with the clipboard held open; this runs on the
+    /// capture actor's thread, never a UI thread, which absorbs the wait (T-18).
+    pub(crate) fn dword_value(&self, id: u32) -> Option<u32> {
+        // SAFETY: the clipboard is open by this thread (owned by `self`).
+        let handle = unsafe { GetClipboardData(id) }.ok()?;
+        let mem = HGLOBAL(handle.0);
+        // SAFETY: `mem` is the clipboard's data handle of a registered (HGLOBAL) format; an
+        // invalid handle only makes the call return 0.
+        let size = unsafe { GlobalSize(mem) };
+        if size != 4 {
+            return None;
+        }
+        let lock = GlobalLockGuard::lock(mem)?;
+        let mut bytes = [0u8; 4];
+        // SAFETY: `lock.ptr` points to the locked block of exactly 4 readable bytes; `bytes`
+        // is a distinct 4-byte buffer.
+        unsafe { std::ptr::copy_nonoverlapping(lock.ptr.cast::<u8>(), bytes.as_mut_ptr(), 4) };
+        drop(lock);
+        Some(u32::from_le_bytes(bytes))
+    }
+}
+
+impl Drop for ClipboardGuard {
+    fn drop(&mut self) {
+        // SAFETY: this guard opened the clipboard on this thread and closes it exactly once.
+        let _ = unsafe { CloseClipboard() };
+    }
+}
+
+/// A locked global memory block; unlocked on drop.
+struct GlobalLockGuard {
+    mem: HGLOBAL,
+    ptr: *const c_void,
+}
+
+impl GlobalLockGuard {
+    fn lock(mem: HGLOBAL) -> Option<Self> {
+        // SAFETY: `mem` is a global memory handle owned by the clipboard and valid while it
+        // is open; a bad handle makes the call return null.
+        let ptr = unsafe { GlobalLock(mem) };
+        if ptr.is_null() {
+            return None;
+        }
+        Some(Self {
+            mem,
+            ptr: ptr.cast_const(),
+        })
+    }
+}
+
+impl Drop for GlobalLockGuard {
+    fn drop(&mut self) {
+        // SAFETY: balances the successful `GlobalLock` in `lock`. Returns an "error" when the
+        // lock count reaches 0, which is the expected outcome.
+        let _ = unsafe { GlobalUnlock(self.mem) };
+    }
 }
 
 /// A process handle; closed on drop.
@@ -328,34 +476,14 @@ pub(crate) mod test_support {
         n
     }
 
-    use super::{backend, clipboard_sequence, MessageWindow};
+    use super::{
+        backend, clipboard_sequence, register_clipboard_format, ClipboardGuard, MessageWindow,
+    };
+    use crate::formats::{CF_UNICODETEXT, CLOUD, EXCLUDE_MONITOR, HISTORY};
     use darkclip_platform::PlatformError;
     use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
-    use windows::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
-    };
+    use windows::Win32::System::DataExchange::{EmptyClipboard, SetClipboardData};
     use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-
-    /// `CF_UNICODETEXT` (standard clipboard format 13).
-    const CF_UNICODETEXT: u32 = 13;
-
-    /// An open clipboard; closed on drop. One attempt only (S-5).
-    struct ClipboardGuard;
-
-    impl ClipboardGuard {
-        fn open(owner: HWND) -> Result<Self, PlatformError> {
-            // SAFETY: `owner` is a live window of this thread.
-            unsafe { OpenClipboard(Some(owner)) }.map_err(|_| PlatformError::Busy)?;
-            Ok(Self)
-        }
-    }
-
-    impl Drop for ClipboardGuard {
-        fn drop(&mut self) {
-            // SAFETY: this guard opened the clipboard on this thread.
-            let _ = unsafe { CloseClipboard() };
-        }
-    }
 
     /// A global memory block; freed on drop unless ownership passed to the clipboard.
     struct GlobalGuard(Option<HGLOBAL>);
@@ -369,31 +497,73 @@ pub(crate) mod test_support {
         }
     }
 
-    /// Writes `text` as `CF_UNICODETEXT`; returns the sequence number after the write.
-    pub(crate) fn write_text(text: &str) -> Result<u32, PlatformError> {
-        let owner = MessageWindow::create(None)?;
-        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-        let bytes = wide.len() * 2;
+    /// A moveable block holding `bytes`; freed on drop until handed to the clipboard.
+    fn block_with(bytes: &[u8]) -> Result<GlobalGuard, PlatformError> {
         // SAFETY: plain allocation call.
-        let mem = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes) }.map_err(|e| backend(&e))?;
-        let mut block = GlobalGuard(Some(mem));
-        // SAFETY: `mem` is a live moveable block of `bytes` bytes.
-        let ptr = unsafe { GlobalLock(mem) }.cast::<u16>();
+        let mem =
+            unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1)) }.map_err(|e| backend(&e))?;
+        let block = GlobalGuard(Some(mem));
+        // SAFETY: `mem` is a live moveable block of at least `bytes.len()` bytes.
+        let ptr = unsafe { GlobalLock(mem) }.cast::<u8>();
         if ptr.is_null() {
             return Err(backend(&windows::core::Error::from_thread()));
         }
-        // SAFETY: `ptr` points to `bytes` writable bytes (`wide.len()` u16s); no overlap.
-        unsafe { std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len()) };
+        // SAFETY: `ptr` points to at least `bytes.len()` writable bytes; no overlap.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
         // SAFETY: balanced with the lock above. Returns an "error" when the count reaches 0.
         let _ = unsafe { GlobalUnlock(mem) };
-        let _open = ClipboardGuard::open(HWND(owner.raw().0 as *mut _))?;
+        Ok(block)
+    }
+
+    /// Hands `block` to the open clipboard as `format`.
+    fn put(format: u32, mut block: GlobalGuard) -> Result<(), PlatformError> {
+        let Some(mem) = block.0 else {
+            return Err(PlatformError::Backend { code: -1 });
+        };
+        // SAFETY: the clipboard is open and emptied by us; on success the system owns `mem`.
+        unsafe { SetClipboardData(format, Some(HANDLE(mem.0))) }.map_err(|e| backend(&e))?;
+        block.0 = None;
+        Ok(())
+    }
+
+    /// Replaces the clipboard with `formats` (in order); returns the sequence number after.
+    fn write_formats(formats: Vec<(u32, Vec<u8>)>) -> Result<u32, PlatformError> {
+        let owner = MessageWindow::create(None)?;
+        let blocks = formats
+            .into_iter()
+            .map(|(id, bytes)| block_with(&bytes).map(|b| (id, b)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let open = ClipboardGuard::open(Some(HWND(owner.raw().0 as *mut _)))?;
         // SAFETY: the clipboard is open by this thread with a window owner.
         unsafe { EmptyClipboard() }.map_err(|e| backend(&e))?;
-        // SAFETY: the clipboard is open and emptied by us; on success the system owns `mem`.
-        unsafe { SetClipboardData(CF_UNICODETEXT, Some(HANDLE(mem.0))) }
-            .map_err(|e| backend(&e))?;
-        block.0 = None;
-        drop(_open);
+        for (id, block) in blocks {
+            put(id, block)?;
+        }
+        drop(open);
         Ok(clipboard_sequence())
+    }
+
+    fn utf16z(text: &str) -> Vec<u8> {
+        text.encode_utf16()
+            .chain(std::iter::once(0))
+            .flat_map(u16::to_le_bytes)
+            .collect()
+    }
+
+    /// Writes `text` as `CF_UNICODETEXT`; returns the sequence number after the write.
+    pub(crate) fn write_text(text: &str) -> Result<u32, PlatformError> {
+        write_formats(vec![(CF_UNICODETEXT, utf16z(text))])
+    }
+
+    /// Writes `text` plus Darkshot's exclusion set as `darkshot-windows/src/clipboard.rs` does:
+    /// the main format first, then `ExcludeClipboardContentFromMonitorProcessing`,
+    /// `CanIncludeInClipboardHistory`, `CanUploadToCloudClipboard`, each a DWORD 0.
+    pub(crate) fn write_darkshot_text_set(text: &str) -> Result<u32, PlatformError> {
+        let mut formats = vec![(CF_UNICODETEXT, utf16z(text))];
+        for name in [EXCLUDE_MONITOR, HISTORY, CLOUD] {
+            let id = register_clipboard_format(name).ok_or(PlatformError::Backend { code: -1 })?;
+            formats.push((id, 0u32.to_le_bytes().to_vec()));
+        }
+        write_formats(formats)
     }
 }
