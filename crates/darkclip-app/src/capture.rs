@@ -26,7 +26,8 @@ use darkclip_platform::{
     ChangeSignal, ClipboardAccess, ClipboardMeta, ClipboardMonitor, PlatformBundle, PlatformError,
     SourceResolver,
 };
-use darkclip_storage::{NewClip, SearchQuery, Storage, StorageError, UpsertOutcome};
+use darkclip_storage::{NewClip, Storage, StorageError, UpsertOutcome};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
@@ -57,6 +58,14 @@ pub enum ActorCommand {
     },
 }
 
+/// Retention instrumentation: an attempt counter, and (tests only) forced failure.
+#[derive(Default)]
+struct RetentionHooks {
+    attempts: AtomicU32,
+    #[cfg(test)]
+    fail: std::sync::atomic::AtomicBool,
+}
+
 /// What the actor's queue carries.
 enum Msg {
     Cmd(ActorCommand),
@@ -69,6 +78,8 @@ pub struct CaptureHandle {
     tx: Option<Sender<Msg>>,
     join: Option<JoinHandle<()>>,
     counters: Arc<Mutex<SkipCounters>>,
+    #[cfg(test)]
+    hooks: Arc<RetentionHooks>,
 }
 
 impl CaptureHandle {
@@ -109,6 +120,7 @@ impl CaptureHandle {
         let (tx, rx) = mpsc::channel::<Msg>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), ApiError>>();
         let counters = Arc::new(Mutex::new(SkipCounters::default()));
+        let hooks = Arc::new(RetentionHooks::default());
         let PlatformBundle {
             monitor,
             access,
@@ -127,14 +139,19 @@ impl CaptureHandle {
             retention,
             events,
             counters: Arc::clone(&counters),
+            hooks: Arc::clone(&hooks),
             last_processed_seq: None,
             last_self_write_seq: None,
             pending: None,
             carried: None,
             next_retention: Instant::now(),
-            expiries: Vec::new(),
+            next_expiry: None,
+            retention_retry_at: None,
+            retention_backoff: None,
         };
         let fwd_tx = tx.clone();
+        #[cfg(not(test))]
+        drop(hooks);
         let join = std::thread::Builder::new()
             .name("darkclip-capture".into())
             .spawn(move || actor.start(fwd_tx, rx, ready_tx))
@@ -144,6 +161,8 @@ impl CaptureHandle {
                 tx: Some(tx),
                 join: Some(join),
                 counters,
+                #[cfg(test)]
+                hooks,
             }),
             Ok(Err(e)) => {
                 let _ = join.join();
@@ -274,6 +293,17 @@ fn scan_clip(
     out
 }
 
+/// Wait after the first failed retention; doubles per further failure up to the cap.
+const RETENTION_BACKOFF_FIRST: Duration = Duration::from_secs(30);
+const RETENTION_BACKOFF_MAX: Duration = Duration::from_secs(10 * 60);
+
+fn next_backoff(prev: Option<Duration>) -> Duration {
+    match prev {
+        None => RETENTION_BACKOFF_FIRST,
+        Some(d) => d.saturating_mul(2).min(RETENTION_BACKOFF_MAX),
+    }
+}
+
 fn size_caps(r: &RetentionPolicy) -> SizeCaps {
     SizeCaps {
         text_max_bytes: u64::from(r.text_max_kb).saturating_mul(1024),
@@ -337,6 +367,7 @@ struct Actor {
     retention: RetentionPolicy,
     events: Sender<AppEvent>,
     counters: Arc<Mutex<SkipCounters>>,
+    hooks: Arc<RetentionHooks>,
     last_processed_seq: Option<u64>,
     last_self_write_seq: Option<u64>,
     pending: Option<Pending>,
@@ -344,9 +375,13 @@ struct Actor {
     /// later burst with the same sequence number.
     carried: Option<(u64, Option<ClipboardSource>)>,
     next_retention: Instant,
-    /// Expiry times (clock time) of masked clips not yet removed; retention runs at the
-    /// earliest one so a masked clip does not outlive its TTL.
-    expiries: Vec<Timestamp>,
+    /// Earliest `expires_at` in storage (clock time); retention runs when it falls due so a
+    /// masked clip does not outlive its TTL.
+    next_expiry: Option<Timestamp>,
+    /// After a failed retention: no expiry-driven retry before this instant.
+    retention_retry_at: Option<Instant>,
+    /// Current back-off step; `None` after a success.
+    retention_backoff: Option<Duration>,
 }
 
 impl Actor {
@@ -378,7 +413,6 @@ impl Actor {
         }
         let _ = ready.send(Ok(()));
         self.run_retention();
-        self.load_expiries();
         self.run(&rx);
     }
 
@@ -417,54 +451,28 @@ impl Actor {
         }
     }
 
-    fn expiry_due(&self) -> bool {
-        let now = self.clock.now();
-        self.expiries.iter().any(|t| *t <= now)
+    fn in_backoff(&self) -> bool {
+        self.retention_retry_at.is_some_and(|t| Instant::now() < t)
     }
 
-    /// Real-time estimate of the earliest expiry (the clock may be a test clock: the loop
-    /// also re-checks `expiry_due` after every message).
+    fn expiry_due(&self) -> bool {
+        !self.in_backoff() && self.next_expiry.is_some_and(|t| t <= self.clock.now())
+    }
+
+    /// Real-time estimate of the next expiry (the clock may be a test clock: the loop also
+    /// re-checks `expiry_due` after every message), never before the back-off ends.
     fn expiry_wake(&self) -> Instant {
-        let now = Instant::now();
-        let Some(next) = self.expiries.iter().min() else {
+        let Some(next) = self.next_expiry else {
             return self.next_retention;
         };
+        let now = Instant::now();
         let ms = u64::try_from(next.0.saturating_sub(self.clock.now().0)).unwrap_or(0);
-        now.checked_add(Duration::from_millis(ms))
-            .unwrap_or(self.next_retention)
-    }
-
-    /// Masked clips stored by an earlier run: their expiry times, for `expiries`.
-    fn load_expiries(&mut self) {
-        let mut cursor = None;
-        // Bounded: masked clips live minutes; 50 pages of 200 is far beyond normal.
-        for _ in 0..50 {
-            let q = SearchQuery {
-                text: None,
-                kinds: Vec::new(),
-                pinned_only: false,
-                since: None,
-                include_masked: true,
-                limit: 200,
-                cursor,
-            };
-            let Ok((rows, next)) = self.storage.search(&q) else {
-                return;
-            };
-            for r in rows
-                .iter()
-                .filter(|r| r.sensitivity == SensitivityLevel::Masked)
-            {
-                if let Ok(Some(clip)) = self.storage.get_clip(&r.id) {
-                    if let Some(t) = clip.expires_at {
-                        self.expiries.push(t);
-                    }
-                }
-            }
-            match next {
-                Some(c) => cursor = Some(c),
-                None => return,
-            }
+        let at = now
+            .checked_add(Duration::from_millis(ms))
+            .unwrap_or(self.next_retention);
+        match self.retention_retry_at {
+            Some(retry) => at.max(retry),
+            None => at,
         }
     }
 
@@ -766,13 +774,14 @@ impl Actor {
         });
         if outcome.is_ok() {
             if let Some(t) = expires_at {
-                self.expiries.push(t);
+                self.next_expiry = Some(self.next_expiry.map_or(t, |n| n.min(t)));
             }
         }
         match outcome {
             Ok(UpsertOutcome::Inserted(id)) => {
-                self.emit(AppEvent::ClipAdded(id));
+                // Limits first, so a listener never sees the store over its limits.
                 self.retention_if_over_limit();
+                self.emit(AppEvent::ClipAdded(id));
             }
             Ok(UpsertOutcome::Bumped(id)) => self.emit(AppEvent::ClipBumped(id)),
             Err(_) => self.emit(AppEvent::Unavailable("storage write failed")),
@@ -800,16 +809,35 @@ impl Actor {
         let over_items = r.max_items > 0 && st.clips > u64::from(r.max_items);
         let limit = u64::from(r.max_storage_mb).saturating_mul(1024 * 1024);
         let over_size = r.max_storage_mb > 0 && st.db_bytes.saturating_add(st.blob_bytes) > limit;
-        if over_items || over_size {
+        if (over_items || over_size) && !self.in_backoff() {
             self.run_retention();
         }
     }
 
     fn run_retention(&mut self) {
-        if self.storage.apply_retention(&self.retention).is_ok() {
-            let now = self.clock.now();
-            self.expiries.retain(|t| *t > now);
+        self.hooks.attempts.fetch_add(1, Ordering::Relaxed);
+        #[cfg(test)]
+        let forced = self.hooks.fail.load(Ordering::SeqCst);
+        #[cfg(not(test))]
+        let forced = false;
+        let result = if forced {
+            Err(StorageError::ReadOnly)
         } else {
+            self.storage.apply_retention(&self.retention).map(|_| ())
+        };
+        if result.is_ok() {
+            self.retention_backoff = None;
+            self.retention_retry_at = None;
+            if let Ok(next) = self.storage.next_expiry() {
+                self.next_expiry = next;
+            }
+        } else {
+            // One attempt, hence at most one event, per back-off step (no busy loop on a
+            // past expiry).
+            let step = next_backoff(self.retention_backoff);
+            self.retention_backoff = Some(step);
+            let now = Instant::now();
+            self.retention_retry_at = Some(now.checked_add(step).unwrap_or(now));
             self.emit(AppEvent::Unavailable("retention failed"));
         }
         let now = Instant::now();
@@ -1492,49 +1520,74 @@ mod tests {
         c
     }
 
+    /// Runs a scenario whose steps must land in one debounce window. Under heavy load the
+    /// window can close between two steps (detected by the attempt, which returns false);
+    /// the attempt is then repeated with a fresh actor. Every attempt that lands in one
+    /// window runs all its assertions.
+    fn in_one_window(mut attempt: impl FnMut() -> bool) {
+        for _ in 0..5 {
+            if attempt() {
+                return;
+            }
+        }
+        panic!("the steps never landed in one debounce window");
+    }
+
     #[test]
     fn excluded_app_after_other_copy_in_window_is_skipped() {
-        let h = start_with(
-            PrivacyPolicy::default(),
-            RetentionPolicy::default(),
-            slow_cfg(),
-            |_| {},
-        );
-        let mut c = text_copy("notepad text");
-        c.source = Some(src("notepad.exe"));
-        h.fake.copy(c);
-        // The actor has taken the first signal and resolved notepad.exe; the window is open.
-        wait_resolved(&h, 1);
-        h.fake.copy(excluded_copy("vault entry"));
-        let seen = h.wait_skip(SkipReason::ExcludedApp);
-        assert!(no_store_events(&seen), "{seen:?}");
-        assert_eq!(h.fake.read_calls(), 0);
-        assert_eq!(h.clip_count(), 0);
+        in_one_window(|| {
+            let h = start_with(
+                PrivacyPolicy::default(),
+                RetentionPolicy::default(),
+                slow_cfg(),
+                |_| {},
+            );
+            let mut c = text_copy("notepad text");
+            c.source = Some(src("notepad.exe"));
+            h.fake.copy(c);
+            // The actor has taken the first signal and resolved notepad.exe; the window is open.
+            wait_resolved(&h, 1);
+            h.fake.copy(excluded_copy("vault entry"));
+            let seen = h.wait_skip(SkipReason::ExcludedApp);
+            if h.fake.snapshot_meta_calls() > 1 {
+                return false; // Window closed between the copies: notepad's was inspected alone.
+            }
+            assert!(no_store_events(&seen), "{seen:?}");
+            assert_eq!(h.fake.read_calls(), 0);
+            assert_eq!(h.clip_count(), 0);
+            true
+        });
     }
 
     #[test]
     fn other_copy_after_excluded_app_in_window_is_not_mistagged() {
-        let h = start_with(
-            PrivacyPolicy::default(),
-            RetentionPolicy::default(),
-            slow_cfg(),
-            |_| {},
-        );
-        h.fake.copy(excluded_copy("vault entry"));
-        wait_resolved(&h, 1);
-        let mut c = text_copy("notepad text");
-        c.source = Some(src("notepad.exe"));
-        h.fake.copy(c);
-        let (id, before) = h.wait_added();
-        // One window: the excluded change was superseded, never inspected on its own.
-        assert!(before.is_empty(), "{before:?}");
-        assert_eq!(h.fake.snapshot_meta_calls(), 1);
-        let clip = h.ro().get_clip(&id).unwrap().unwrap();
-        assert_eq!(clip.preview, "notepad text");
-        assert_eq!(
-            clip.source.as_ref().map(|s| s.app_id.as_str()),
-            Some("notepad.exe")
-        );
+        in_one_window(|| {
+            let h = start_with(
+                PrivacyPolicy::default(),
+                RetentionPolicy::default(),
+                slow_cfg(),
+                |_| {},
+            );
+            h.fake.copy(excluded_copy("vault entry"));
+            wait_resolved(&h, 1);
+            let mut c = text_copy("notepad text");
+            c.source = Some(src("notepad.exe"));
+            h.fake.copy(c);
+            let (id, before) = h.wait_added();
+            // Never mis-tagged, whether or not the window held.
+            let clip = h.ro().get_clip(&id).unwrap().unwrap();
+            assert_eq!(clip.preview, "notepad text");
+            assert_eq!(
+                clip.source.as_ref().map(|s| s.app_id.as_str()),
+                Some("notepad.exe")
+            );
+            if h.fake.snapshot_meta_calls() > 1 {
+                return false; // Window closed: the excluded change was inspected alone.
+            }
+            // One window: the excluded change was superseded, never inspected on its own.
+            assert!(before.is_empty(), "{before:?}");
+            true
+        });
     }
 
     #[test]
@@ -1662,6 +1715,79 @@ mod tests {
         assert_eq!(h.clip_count(), 1);
     }
 
+    fn seed_masked(expires_at: i64) -> impl FnOnce(&mut Storage) {
+        move |s: &mut Storage| {
+            let reps = vec![RawRepresentation {
+                mime: Mime::TextPlain,
+                platform_format: "CF_UNICODETEXT".into(),
+                bytes: b"masked seed".to_vec(),
+                width: None,
+                height: None,
+                truncated: false,
+            }];
+            let classified = classify(&reps);
+            let hash = canonical_hash(classified.kind, &reps, None);
+            s.upsert_clip(NewClip {
+                classified,
+                hash,
+                reps,
+                source: None,
+                sensitivity: Sensitivity {
+                    level: SensitivityLevel::Masked,
+                    categories: vec![SensitiveCategory::ApiKey],
+                },
+                expires_at: Some(Timestamp(expires_at)),
+                thumbnail_png: None,
+            })
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn failed_retention_backs_off() {
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            test_cfg(),
+            seed_masked(T0 + 1_000),
+        );
+        h.sentinel();
+        let hooks = &h.cap().hooks;
+        hooks.fail.store(true, Ordering::SeqCst);
+        let before = hooks.attempts.load(Ordering::SeqCst);
+        // Past expiry, and every retention attempt fails.
+        h.clock.set(T0 + 2_000);
+        h.fake.signal_again(1);
+        std::thread::sleep(Duration::from_millis(200));
+        let attempts = hooks.attempts.load(Ordering::SeqCst) - before;
+        let failures = h
+            .events
+            .try_iter()
+            .filter(|e| *e == AppEvent::Unavailable("retention failed"))
+            .count();
+        assert!((1..=2).contains(&attempts), "attempts {attempts}");
+        assert!((1..=2).contains(&failures), "Unavailable events {failures}");
+        // Nothing was deleted while failing.
+        assert_eq!(h.clip_count(), 2);
+    }
+
+    #[test]
+    fn retention_backoff_doubles_to_ten_minutes() {
+        assert_eq!(next_backoff(None), Duration::from_secs(30));
+        assert_eq!(
+            next_backoff(Some(Duration::from_secs(30))),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            next_backoff(Some(Duration::from_secs(480))),
+            Duration::from_secs(600)
+        );
+        assert_eq!(
+            next_backoff(Some(Duration::from_secs(600))),
+            Duration::from_secs(600)
+        );
+    }
+
     #[test]
     fn masked_clip_from_earlier_session_removed_at_expiry() {
         let seed = |s: &mut Storage| {
@@ -1767,44 +1893,49 @@ mod tests {
 
     #[test]
     fn ole_three_phases_in_one_window() {
-        let h = start_with(
-            PrivacyPolicy::default(),
-            RetentionPolicy::default(),
-            slow_cfg(),
-            |_| {},
-        );
-        h.fake.copy(FakeCopy {
-            formats: vec![
+        in_one_window(|| {
+            let h = start_with(
+                PrivacyPolicy::default(),
+                RetentionPolicy::default(),
+                slow_cfg(),
+                |_| {},
+            );
+            h.fake.copy(FakeCopy {
+                formats: vec![
+                    (pf("DataObject", None, 8), Vec::new()),
+                    (pf("Ole Private Data", None, 8), Vec::new()),
+                ],
+                markers: Vec::new(),
+                source: Some(src("winword.exe")),
+            });
+            // The actor has taken the first signal (and resolved the owner); the window is open.
+            wait_resolved(&h, 1);
+            h.fake.render(vec![
                 (pf("DataObject", None, 8), Vec::new()),
-                (pf("Ole Private Data", None, 8), Vec::new()),
-            ],
-            markers: Vec::new(),
-            source: Some(src("winword.exe")),
+                (
+                    pf("CF_UNICODETEXT", Some(Mime::TextPlain), 8),
+                    b"ole text".to_vec(),
+                ),
+            ]);
+            h.fake.clear_source();
+            h.fake.signal_again(1);
+            let (id, before) = h.wait_added();
+            if h.fake.snapshot_meta_calls() > 1 {
+                return false; // Window closed: phase 1 was inspected alone.
+            }
+            // One window: phase 1 was never inspected on its own.
+            assert!(before.is_empty(), "{before:?}");
+            let clip = h.ro().get_clip(&id).unwrap().unwrap();
+            assert_eq!(clip.preview, "ole text");
+            assert_eq!(
+                clip.source.as_ref().map(|s| s.app_id.as_str()),
+                Some("winword.exe")
+            );
+            let between = h.sentinel();
+            assert!(no_store_events(&between), "{between:?}");
+            assert_eq!(h.clip_count(), 2);
+            true
         });
-        // The actor has taken the first signal (and resolved the owner); the window is open.
-        wait_resolved(&h, 1);
-        h.fake.render(vec![
-            (pf("DataObject", None, 8), Vec::new()),
-            (
-                pf("CF_UNICODETEXT", Some(Mime::TextPlain), 8),
-                b"ole text".to_vec(),
-            ),
-        ]);
-        h.fake.clear_source();
-        h.fake.signal_again(1);
-        let (id, before) = h.wait_added();
-        // One window: phase 1 was never inspected on its own.
-        assert!(before.is_empty(), "{before:?}");
-        assert_eq!(h.fake.snapshot_meta_calls(), 1);
-        let clip = h.ro().get_clip(&id).unwrap().unwrap();
-        assert_eq!(clip.preview, "ole text");
-        assert_eq!(
-            clip.source.as_ref().map(|s| s.app_id.as_str()),
-            Some("winword.exe")
-        );
-        let between = h.sentinel();
-        assert!(no_store_events(&between), "{between:?}");
-        assert_eq!(h.clip_count(), 2);
     }
 
     #[test]
