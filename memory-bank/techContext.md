@@ -26,7 +26,7 @@ Updated: 2026-11-22
 | `serde`, `serde_json`, `thiserror` | core and up | models, JSON, errors |
 | `uuid` (v7) | core | sortable ids |
 | `sha2` | core | content hashing |
-| `rusqlite` (bundled) | storage | SQLite + FTS5 |
+| `rusqlite` 0.43 (bundled SQLite 3.54.1) | storage | SQLite + FTS5 |
 | `png` | storage/app | thumbnails, DIB→PNG |
 | `windows` 0.62 | darkclip-windows | Win32 clipboard (spike-proven) |
 | `objc2-app-kit` | darkclip-macos | NSPasteboard (Phase 4) |

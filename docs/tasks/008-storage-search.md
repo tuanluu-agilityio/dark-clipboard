@@ -32,3 +32,9 @@ Ranking: pinned first (pin_order), then bm25 for text queries, then `last_copied
 
 ## Not doing
 Notes/tags columns content (P1; columns exist, stay empty).
+
+## Interface additions from Task 007 (D-024)
+- `darkclip_core::CoreError::Invalid { field: &'static str }`; `Clip::validate` returns it (fields `representations`, `copy_count`, `blob_sha256`, `expires_at`, `tags`, `collections`, `source.app_id`), and length violations use `CoreError::TooLong { field, max }`.
+- `darkclip_storage::StorageError::Invalid(CoreError)` from `upsert_clip`.
+- The `clip_rowid_ad` trigger deletes the FTS row whenever a clip is deleted (cascade), so deletion code only deletes from `clips`.
+- Crate-internal `blobs::sweep(&mut Connection, &Path) -> blobs::Cleanup { removed, failed }`: best-effort, under `BEGIN IMMEDIATE`, never fails `open`. `read_representation` can return a transient `Io(NotFound)` if a writer unlinks the blob concurrently.
