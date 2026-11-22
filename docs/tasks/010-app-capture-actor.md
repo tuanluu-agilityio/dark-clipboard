@@ -36,6 +36,8 @@ Algorithm: one thread selects over the monitor's signal channel and the command 
 - `sensitive_drop_default` (API-key text → not stored, `Skipped(SkipReason::Sensitive)`), `sensitive_store_masked_sets_expiry_and_masked_preview`.
 - `busy_retries_then_drops` (`set_busy(11)` → dropped, counter incremented, actor alive).
 - `shutdown_within_deadline`.
+- `kind_disabled_after_classification_dropped` (D-021): `capture_kinds = [Url]`, copy prose → classified `Text` → not stored, `Skipped(KindDisabled)`.
+- `paused_passes_no_formats_to_policy` (D-021): while paused/private, the actor calls `decide_pre_read` with empty `markers`/`available` and never calls `snapshot_meta` (assert via the fake's call counters).
 - `no_logging_macros_in_capture_rs` is enforced by check.ps1, not a test.
 
 ## Not doing

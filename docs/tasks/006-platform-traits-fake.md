@@ -39,6 +39,11 @@ pub struct FakeCopy { pub formats: Vec<(PlatformFormat, Vec<u8>)>, pub markers: 
 ```
 `FakeHandle::read_calls` is how Task 010 proves that excluded content is never read.
 
+### Added after Task 003 security review (D-021)
+1. **Read caps are part of the contract.** Add `pub image_max_bytes: u64` to `darkclip_core::policy::ReadPlan` (set from `caps.image_max_bytes` in `decide_pre_read`; update the 003 tests that build a `ReadPlan`). Document on `ClipboardAccess::read`: every non-image format (plain, HTML, RTF, uri-list) is capped at `plan.truncate_text_at` bytes, and every image at `plan.image_max_bytes`. Over-cap images return `PlatformError::TooLarge`; over-cap text is truncated on a UTF-8 boundary and flagged. `FakePlatform::read` enforces exactly this. Tests: `fake_read_truncates_html_and_uri_list`, `fake_read_rejects_oversize_image_even_without_size_hint`.
+2. **KDE hint compare is case-insensitive** (fail-closed): in `markers.rs`, `secret` matches with `eq_ignore_ascii_case`. Test `linux_kde_secret_any_case` (`b"Secret"`, `b"SECRET"`).
+Files added for these: `crates/darkclip-core/src/policy.rs`, `crates/darkclip-core/src/markers.rs` (only these changes).
+
 ## Tests
 - `fake_copy_emits_signal_with_new_seq`.
 - `signal_again_keeps_seq`.
