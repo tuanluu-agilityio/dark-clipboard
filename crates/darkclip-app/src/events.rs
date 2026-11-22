@@ -15,10 +15,18 @@ pub enum AppEvent {
     ModeChanged(CaptureMode),
     /// A platform or storage facility failed; static text only, never content.
     Unavailable(&'static str),
+    /// A retention run succeeded after one had failed (clears the "retention failed" status).
+    RetentionOk,
 }
 
-/// Application error. Task 011 owns the full API surface and adds `code()`; the variant set
-/// already matches the Task 011 interface. No variant carries content (GC-06).
+/// `AppEvent::Unavailable` texts that have a recovery of their own (all others are permanent
+/// until restart).
+pub const UNAVAILABLE_RETENTION: &str = "retention failed";
+pub const UNAVAILABLE_STORAGE_WRITE: &str = "storage write failed";
+pub const UNAVAILABLE_READ: &str = "clipboard read failed";
+
+/// Application error. The variant set matches the Task 011 interface. No variant carries
+/// content (GC-06).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiError {
     NotFound,
@@ -30,6 +38,23 @@ pub enum ApiError {
     AppNotRunning,
     SchemaTooNew,
     Internal,
+}
+
+impl ApiError {
+    /// The envelope `error.code`: exactly the `api-envelope.schema.json` enum.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NotFound => "NOT_FOUND",
+            Self::InvalidArgument(_) => "INVALID_ARGUMENT",
+            Self::PermissionDenied(_) => "PERMISSION_DENIED",
+            Self::UnsupportedPlatform => "UNSUPPORTED_PLATFORM",
+            Self::ClipboardBusy => "CLIPBOARD_BUSY",
+            Self::Storage => "STORAGE_ERROR",
+            Self::AppNotRunning => "APP_NOT_RUNNING",
+            Self::SchemaTooNew => "SCHEMA_TOO_NEW",
+            Self::Internal => "INTERNAL",
+        }
+    }
 }
 
 impl std::fmt::Display for ApiError {

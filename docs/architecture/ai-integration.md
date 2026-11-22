@@ -37,6 +37,8 @@ pub struct SearchQuery {
 }
 ```
 
+P1/P2 methods that are not implemented yet return `InvalidArgument("not available until P1")`.
+
 `PermissionGuard` runs first in every method: `Caller::Ui` is fully trusted. `Caller::Cli` is trusted for the user's own reads, and destructive actions need `--yes`. `Caller::Mcp` is checked against the `AiPermission` grant (scopes, collection filter, max age). Masked/sensitive clips are filtered out of every MCP result **in the SQL query**, not after.
 
 ## 2. MCP tool catalog (draft, P2)
