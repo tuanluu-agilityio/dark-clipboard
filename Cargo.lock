@@ -171,6 +171,7 @@ dependencies = [
  "darkclip-core",
  "darkclip-platform",
  "png",
+ "sha2",
  "windows",
  "zeroize",
 ]

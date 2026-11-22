@@ -8,10 +8,12 @@
 //! Both go through the small `ClipboardOs` seam so tests can count OS calls. `snapshot_meta`
 //! never fetches the data of a content format: the only data it reads are the DWORDs of the
 //! `CanIncludeInClipboardHistory` / `CanUploadToCloudClipboard` markers (privacy-design §2).
-//! `read` fetches only the formats in the plan, checks `GlobalSize` before any copy (the only
-//! image cap on Windows, since `size_hint` is `None`: an oversize image is `TooLarge`), and
-//! wipes every intermediate buffer. An invalid PNG or an unsupported/malformed DIB skips that
-//! representation only.
+//! `read` fetches only the formats in the plan, checks `GlobalSize` before any copy (the image
+//! caps on Windows, since `size_hint` is `None`), and wipes every intermediate buffer. Image
+//! caps (D-043): the registered `PNG` block against `image_max_bytes`; a DIB block against
+//! the decode bound, its header against the decode caps (64 MP / 256 MiB of RGBA) before any
+//! pixel buffer, and its encoded PNG against `image_max_bytes`. Over a cap the read is
+//! `TooLarge`. An invalid PNG or an unsupported/malformed DIB skips that representation only.
 
 use crate::formats::{self, MarkerId, OfferedFormat, CF_DIB, CF_DIBV5, CF_HDROP, CF_UNICODETEXT};
 use crate::source::WinSourceResolver;
@@ -23,6 +25,7 @@ use darkclip_core::{ClipboardSource, Mime, RawRepresentation};
 use darkclip_platform::{
     ClipboardAccess, ClipboardMeta, PlatformError, PlatformFormat, SourceResolver,
 };
+use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 /// The OS calls `snapshot_meta` needs. The real implementation is `WinOs`; tests use a fake.
@@ -216,7 +219,8 @@ fn saturating_usize(v: u64) -> usize {
 }
 
 /// `read` over the seam: one `OpenClipboard` attempt (`Busy` otherwise), only the planned
-/// formats, `GlobalSize` checked before any copy, every buffer bounded by the plan's caps.
+/// formats, `GlobalSize` checked before any copy, every buffer bounded by the plan's caps
+/// (DIB input by the decode caps, its encoded PNG by the plan's image cap, D-043).
 /// The clipboard is closed before conversion (UTF-16, DIB → PNG) so it is held briefly.
 pub(crate) fn read_plan<O: ClipboardOs>(
     os: &mut O,
@@ -257,8 +261,15 @@ pub(crate) fn read_plan<O: ClipboardOs>(
             let limit = match kind {
                 ReadKind::Text => text::utf16_raw_limit(text_cap),
                 ReadKind::Html | ReadKind::Rtf => text::utf8_raw_limit(text_cap),
+                // D-043: the registered PNG is the stored image (capped by the plan); a DIB is
+                // decoder input, bounded by the decode caps (its PNG is capped after encoding).
                 ReadKind::Png | ReadKind::Dib => {
-                    if size > image_cap {
+                    let block_cap = if kind == ReadKind::Png {
+                        image_cap
+                    } else {
+                        dib::MAX_DIB_BLOCK
+                    };
+                    if size > block_cap {
                         // `open` closes the clipboard; buffers already fetched are wiped.
                         return Err(PlatformError::TooLarge {
                             format: name.to_owned(),
@@ -442,8 +453,8 @@ struct Planned {
 }
 
 /// The formats a set of representations becomes, in order: plain text → `CF_UNICODETEXT`;
-/// HTML → `HTML Format`; RTF → `Rich Text Format`; PNG → `PNG`, `CF_DIBV5`, `CF_DIB`;
-/// `file://` URI lists → `CF_HDROP`. Only the first convertible representation of each MIME
+/// HTML → `HTML Format`; RTF → `Rich Text Format`; PNG → `PNG`, `CF_DIBV5`, `CF_DIB` (`PNG`
+/// alone when its header is over the decode caps, D-043); `file://` URI lists → `CF_HDROP`. Only the first convertible representation of each MIME
 /// is used. A representation that cannot be converted (an undecodable PNG, a URI list with
 /// any URI that is not a drive or UNC `file:` URI) is skipped. D-012: the only formats this
 /// function can produce are those above; no exclusion, history or cloud marker is written.
@@ -467,22 +478,29 @@ fn plan_write(reps: &[RawRepresentation]) -> Vec<Planned> {
                 target: Target::Registered(formats::RTF_FORMAT),
                 bytes: nul_terminated(&rep.bytes),
             }]),
-            Mime::ImagePng => dib::png_to_dibs(&rep.bytes).ok().map(|pair| {
-                vec![
-                    Planned {
-                        target: Target::Registered(formats::PNG),
-                        bytes: Zeroizing::new(rep.bytes.clone()),
-                    },
-                    Planned {
-                        target: Target::Standard(CF_DIBV5),
-                        bytes: pair.v5,
-                    },
-                    Planned {
-                        target: Target::Standard(CF_DIB),
-                        bytes: pair.dib,
-                    },
-                ]
-            }),
+            Mime::ImagePng => {
+                let png = || Planned {
+                    target: Target::Registered(formats::PNG),
+                    bytes: Zeroizing::new(rep.bytes.clone()),
+                };
+                match dib::png_to_dibs(&rep.bytes) {
+                    Ok(pair) => Some(vec![
+                        png(),
+                        Planned {
+                            target: Target::Standard(CF_DIBV5),
+                            bytes: pair.v5,
+                        },
+                        Planned {
+                            target: Target::Standard(CF_DIB),
+                            bytes: pair.dib,
+                        },
+                    ]),
+                    // Over the decode caps (D-043): no DIB renderings, the PNG alone; it was
+                    // refused from its header, before any pixel buffer existed.
+                    Err(dib::DibError::TooLarge { .. }) => Some(vec![png()]),
+                    Err(dib::DibError::Unsupported(_) | dib::DibError::Malformed(_)) => None,
+                }
+            }
             Mime::UriList => uri_list_to_dropfiles(&rep.bytes).map(|block| {
                 vec![Planned {
                     target: Target::Standard(CF_HDROP),
@@ -629,23 +647,26 @@ fn percent_decode(s: &str) -> Option<Zeroizing<String>> {
     Some(Zeroizing::new(text.to_owned()))
 }
 
-/// `write` over the seam (Task 104). Converts and allocates every block before opening the
-/// clipboard, so it is held briefly. Then: a fresh owner window, one `OpenClipboard` attempt
-/// (`Busy` otherwise), `EmptyClipboard`, `SetClipboardData` per format, `CloseClipboard`,
-/// the sequence number, the owner check, and the window is destroyed (D-038). Any failure
-/// after the open closes the clipboard and returns `Backend`. On every path the clipboard is
-/// closed before the window is destroyed, and every block not handed to the system is freed
-/// (drop order: blocks and writer, then the window).
-///
-/// The window lives only for this call because the capture actor's thread never pumps
-/// messages: a long-lived owner would receive `WM_DESTROYCLIPBOARD` (sent when another app
-/// empties the clipboard) and could stall that app. Destroying the owner leaves the data on
-/// the clipboard (nothing is delayed-rendered). Any thread may call this; each call's window
-/// is created and destroyed on that thread.
+/// `write` over the seam (Task 104) with nothing kept between calls: `write_cached` with a
+/// cache that is dropped on return, so on `Busy` every prepared block is freed. Tests only;
+/// `WinAccess::write` keeps the blocks for the actor's retry.
+#[cfg(test)]
 pub(crate) fn write_reps<O: ClipboardWriteOs>(
     os: &mut O,
     reps: &[RawRepresentation],
 ) -> Result<u64, PlatformError> {
+    let mut kept = None;
+    write_cached(os, &mut kept, reps)
+    // Blocks kept for a retry are freed here.
+}
+
+/// Converts `reps` (`plan_write`: PNG decode, UTF-16, DROPFILES) and allocates one global
+/// block per format, before the clipboard is opened, so it is held briefly. Every buffer is
+/// wiped; a block is freed (and wiped) when dropped.
+fn prepare_write<O: ClipboardWriteOs>(
+    os: &mut O,
+    reps: &[RawRepresentation],
+) -> Result<Vec<(u32, O::Block)>, PlatformError> {
     let planned = plan_write(reps);
     if planned.is_empty() {
         return Err(NOTHING_TO_WRITE);
@@ -661,22 +682,103 @@ pub(crate) fn write_reps<O: ClipboardWriteOs>(
         blocks.push((id, os.alloc(&p.bytes)?));
         // `p.bytes` is wiped here.
     }
+    Ok(blocks)
+}
 
+/// Writes prepared blocks: a fresh owner window, one `OpenClipboard` attempt (`Busy`
+/// otherwise, with `blocks` left untouched for a retry), `EmptyClipboard`,
+/// `SetClipboardData` per format, `CloseClipboard`, the sequence number, the owner check, and
+/// the window is destroyed (D-038). Any failure after the open closes the clipboard and
+/// returns `Backend`. Once the clipboard is open, `blocks` is always emptied: each block is
+/// handed to the system or freed. On every path the clipboard is closed before the window is
+/// destroyed (drop order: blocks and writer, then the window).
+///
+/// The window lives only for this call because the capture actor's thread never pumps
+/// messages: a long-lived owner would receive `WM_DESTROYCLIPBOARD` (sent when another app
+/// empties the clipboard) and could stall that app. Destroying the owner leaves the data on
+/// the clipboard (nothing is delayed-rendered). Any thread may call this; each call's window
+/// is created and destroyed on that thread.
+fn write_blocks<O: ClipboardWriteOs>(
+    os: &mut O,
+    blocks: &mut Vec<(u32, O::Block)>,
+) -> Result<u64, PlatformError> {
     // Declared before the writer, so on an early return the clipboard closes first.
     let owner = os.create_owner()?;
     let before_close = {
         let mut open = os.open_for_write(&owner)?;
+        // From here on every block leaves `blocks`. On an early return the blocks left in the
+        // drain are dropped, which frees them.
+        let mut pending = blocks.drain(..);
         open.empty().map_err(|e| after_open(&e))?;
-        // On an early return the blocks left in the iterator are dropped, which frees them.
-        for (id, block) in blocks {
+        for (id, block) in pending.by_ref() {
             open.set(id, block).map_err(|e| after_open(&e))?;
         }
+        drop(pending);
         open.sequence_while_open()
         // `open` closes the clipboard here.
     };
     let seq = seq_after_close(os, &owner, before_close);
     drop(owner); // DestroyWindow, UnregisterClassW
     Ok(seq)
+}
+
+/// Blocks prepared for one copy-back, kept across `Busy` retries of the same content
+/// (requirement 7 of Task 110). `key` identifies the content without holding it.
+pub(crate) struct PreparedWrite<B> {
+    key: [u8; 32],
+    blocks: Vec<(u32, B)>,
+}
+
+/// SHA-256 over what `plan_write` uses (each representation's MIME and bytes, in order), so
+/// a retry of the same copy-back can reuse its blocks. Only a digest is kept, never content.
+fn write_key(reps: &[RawRepresentation]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"darkclip-write:");
+    for r in reps {
+        let tag: u8 = match r.mime {
+            Mime::TextPlain => 1,
+            Mime::TextHtml => 2,
+            Mime::TextRtf => 3,
+            Mime::ImagePng => 4,
+            Mime::UriList => 5,
+        };
+        h.update([tag]);
+        h.update(
+            u64::try_from(r.bytes.len())
+                .unwrap_or(u64::MAX)
+                .to_le_bytes(),
+        );
+        h.update(&r.bytes);
+    }
+    h.finalize().into()
+}
+
+/// `write` for the capture actor: the converted blocks are prepared once per copy-back and
+/// reused while the actor retries a `Busy` clipboard with the same representations, so a
+/// retry repeats only owner/open/empty/set/close. On `Busy` the blocks stay in `prepared`;
+/// on any other outcome nothing is kept. Blocks kept for different content are freed (and
+/// wiped) before new ones are prepared.
+pub(crate) fn write_cached<O: ClipboardWriteOs>(
+    os: &mut O,
+    prepared: &mut Option<PreparedWrite<O::Block>>,
+    reps: &[RawRepresentation],
+) -> Result<u64, PlatformError> {
+    let key = write_key(reps);
+    let mut current = match prepared.take() {
+        Some(p) if p.key == key && !p.blocks.is_empty() => p,
+        stale => {
+            drop(stale); // frees the blocks of another content first
+            PreparedWrite {
+                key,
+                blocks: prepare_write(os, reps)?,
+            }
+        }
+    };
+    let result = write_blocks(os, &mut current.blocks);
+    if result == Err(PlatformError::Busy) && !current.blocks.is_empty() {
+        *prepared = Some(current);
+    }
+    result
 }
 
 /// The sequence number the capture actor must ignore for our write (D-038, capture rule 5).
@@ -802,6 +904,11 @@ impl OpenClipboardView for win::ClipboardGuard {
 pub struct WinAccess {
     os: WinOs,
     markers: MarkerCache,
+    /// The blocks of a copy-back that found the clipboard `Busy`, for the actor's retry of
+    /// the same content (`write_cached`). Dropped (wiped and freed) by the next `write` of
+    /// other content and by any `snapshot_meta` or `read`, so they do not outlive the retry
+    /// loop by more than the next clipboard event.
+    prepared: Option<PreparedWrite<win::GlobalBlock>>,
 }
 
 impl WinAccess {
@@ -818,19 +925,22 @@ impl ClipboardAccess for WinAccess {
 
     /// One `OpenClipboard` attempt (`Busy` otherwise), formats, markers, sequence, source.
     fn snapshot_meta(&mut self) -> Result<ClipboardMeta, PlatformError> {
+        self.prepared = None;
         snapshot(&mut self.os, &mut self.markers)
     }
 
     /// One `OpenClipboard` attempt (`Busy` otherwise); only the planned formats, capped.
     fn read(&mut self, plan: &ReadPlan) -> Result<Vec<RawRepresentation>, PlatformError> {
+        self.prepared = None;
         read_plan(&mut self.os, plan)
     }
 
     /// Replaces the clipboard with `reps` (copy-back) and returns the sequence number of that
     /// change, read after `CloseClipboard` while we are still the owner (D-038). Never
-    /// writes marker formats (D-012).
+    /// writes marker formats (D-012). The converted blocks are prepared once per copy-back:
+    /// a `Busy` retry of the same `reps` reuses them (`write_cached`).
     fn write(&mut self, reps: &[RawRepresentation]) -> Result<u64, PlatformError> {
-        write_reps(&mut self.os, reps)
+        write_cached(&mut self.os, &mut self.prepared, reps)
     }
 }
 
@@ -1479,6 +1589,85 @@ mod tests {
         );
     }
 
+    /// A packed top-down 32-bit `BI_RGB` DIB (40-byte header) of `w` x `h`; with `pixels`,
+    /// a compressible gradient, else the header only.
+    fn dib_32(w: u32, h: u32, pixels: bool) -> Vec<u8> {
+        let mut d = Vec::new();
+        d.extend_from_slice(&40u32.to_le_bytes());
+        d.extend_from_slice(&w.to_le_bytes());
+        d.extend_from_slice(&(-i32::try_from(h).unwrap()).to_le_bytes());
+        d.extend_from_slice(&1u16.to_le_bytes());
+        d.extend_from_slice(&32u16.to_le_bytes());
+        d.extend_from_slice(&[0u8; 24]);
+        if pixels {
+            d.reserve(w as usize * h as usize * 4);
+            for y in 0..h {
+                for x in 0..w {
+                    d.extend_from_slice(&[(x / 16) as u8, (y / 16) as u8, 0x40, 0]);
+                }
+            }
+        }
+        d
+    }
+
+    #[test]
+    fn dib_4k_screenshot_under_decode_cap_is_read() {
+        // D-043: `image_max_bytes` caps the stored (encoded PNG) image. A 4K screenshot's DIB
+        // (3840 x 2160 x 4 = 31.6 MiB) is above the default 20 MiB cap, but its PNG is not.
+        let cap = 20 * 1024 * 1024;
+        let mut os = FakeOs::new();
+        os.std_data(CF_DIB, dib_32(3840, 2160, true));
+        assert!(os.content_of(CF_DIB).unwrap().len() as u64 > cap);
+        let reps = read_with(&mut os, &plan(&[(Mime::ImagePng, "CF_DIB")], 1000, cap)).unwrap();
+        assert_eq!(reps.len(), 1);
+        assert_eq!(reps[0].mime, Mime::ImagePng);
+        assert_eq!((reps[0].width, reps[0].height), (Some(3840), Some(2160)));
+        assert!(reps[0].bytes.starts_with(&PNG_SIGNATURE));
+        assert!(reps[0].bytes.len() as u64 <= cap);
+        assert_eq!(os.opens.get(), os.closes.get());
+    }
+
+    #[test]
+    fn dib_over_decode_cap_too_large() {
+        // Over the decode caps (64 MP / 256 MiB RGBA) from the header alone, whatever the
+        // stored-image cap: TooLarge, not a skipped (malformed) representation. No pixel
+        // data is even present.
+        for (w, h) in [(8193, 8192), (16_384, 16_384), (32_768, 2049)] {
+            let mut os = FakeOs::new();
+            os.std_data(CF_DIB, dib_32(w, h, false));
+            let p = plan(&[(Mime::ImagePng, "CF_DIB")], 1000, u64::MAX);
+            assert_eq!(
+                read_with(&mut os, &p).unwrap_err(),
+                PlatformError::TooLarge {
+                    format: "CF_DIB".to_owned(),
+                    bytes: u64::from(w) * u64::from(h) * 4
+                },
+                "{w}x{h}"
+            );
+            assert_eq!(os.opens.get(), os.closes.get());
+        }
+        // Exactly at the pixel cap the header is accepted (here malformed: no pixel data).
+        let mut os = FakeOs::new();
+        os.std_data(CF_DIB, dib_32(8192, 8192, false));
+        let p = plan(&[(Mime::ImagePng, "CF_DIB")], 1000, u64::MAX);
+        assert!(read_with(&mut os, &p).unwrap().is_empty());
+        // A block larger than any DIB within the decode caps is refused from `GlobalSize`,
+        // before any copy, whatever the stored-image cap.
+        let mut os = FakeOs::new();
+        os.std_data(CF_DIBV5, dib_2x1());
+        os.sizes.push((CF_DIBV5, 1 << 30));
+        let p = plan(&[(Mime::ImagePng, "CF_DIBV5")], 1000, u64::MAX);
+        assert_eq!(
+            read_with(&mut os, &p).unwrap_err(),
+            PlatformError::TooLarge {
+                format: "CF_DIBV5".to_owned(),
+                bytes: 1 << 30
+            }
+        );
+        assert!(os.copy_calls.borrow().is_empty());
+        assert_eq!(os.opens.get(), os.closes.get());
+    }
+
     #[test]
     fn hdrop_to_uri_list() {
         let mut os = full_clipboard();
@@ -2057,6 +2246,105 @@ mod tests {
             // Each block handed over exactly once; none freed by us.
             assert_eq!(os.allocs.get(), 3);
             assert_eq!(os.freed(), 0);
+        }
+
+        fn crc32(data: &[u8]) -> u32 {
+            let mut c = 0xFFFF_FFFFu32;
+            for &b in data {
+                c ^= u32::from(b);
+                for _ in 0..8 {
+                    c = if c & 1 != 0 {
+                        (c >> 1) ^ 0xEDB8_8320
+                    } else {
+                        c >> 1
+                    };
+                }
+            }
+            !c
+        }
+
+        /// A PNG signature and IHDR chunk only (RGBA8, `w` x `h`): no pixel data at all.
+        fn header_only_png(w: u32, h: u32) -> Vec<u8> {
+            let mut ihdr = b"IHDR".to_vec();
+            ihdr.extend_from_slice(&w.to_be_bytes());
+            ihdr.extend_from_slice(&h.to_be_bytes());
+            ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+            let mut file = PNG_SIGNATURE.to_vec();
+            file.extend_from_slice(&13u32.to_be_bytes());
+            file.extend_from_slice(&ihdr);
+            file.extend_from_slice(&crc32(&ihdr).to_be_bytes());
+            file
+        }
+
+        #[test]
+        fn copy_back_png_over_decode_cap_writes_png_only() {
+            // 32 767 x 32 767 (within the side limit, far over 64 MP / 256 MiB): refused from
+            // the header before any pixel buffer exists; the PNG alone is still written.
+            let png = header_only_png(32_767, 32_767);
+            assert_eq!(
+                dib::png_to_dibs(&png).err(),
+                Some(dib::DibError::TooLarge {
+                    bytes: 32_767 * 32_767 * 4
+                })
+            );
+            let reps = [raw(Mime::ImagePng, "PNG", png.clone())];
+            let planned = plan_write(&reps);
+            let targets: Vec<Target> = planned.iter().map(|p| p.target).collect();
+            assert_eq!(targets, vec![Target::Registered(formats::PNG)]);
+            assert_eq!(planned[0].bytes[..], png[..]);
+            // Through `write`: one block, the registered PNG format only.
+            let mut os = FakeOs::new();
+            write_with(&mut os, &reps).unwrap();
+            assert_eq!(os.sets(), vec![os.atom("PNG")]);
+            assert_eq!(os.written.borrow()[0].1, png);
+            assert_eq!(os.allocs.get(), 1);
+            // Just over the pixel cap, same result.
+            let planned = plan_write(&[raw(Mime::ImagePng, "PNG", header_only_png(8193, 8192))]);
+            assert_eq!(planned.len(), 1);
+            assert_eq!(planned[0].target, Target::Registered(formats::PNG));
+        }
+
+        #[test]
+        fn busy_retry_converts_once() {
+            // Requirement 7: a Busy-then-success copy-back converts and allocates once; the
+            // retry repeats only open/empty/set/close.
+            let mut os = FakeOs::new();
+            let mut prepared = None;
+            let reps = [raw(Mime::ImagePng, "PNG", png_1x1())];
+            os.busy = true;
+            assert_eq!(
+                write_cached(&mut os, &mut prepared, &reps).unwrap_err(),
+                PlatformError::Busy
+            );
+            assert_eq!(os.allocs.get(), 3);
+            assert_eq!(os.freed(), 0, "kept for the retry");
+            assert!(prepared.is_some());
+            os.busy = false;
+            write_cached(&mut os, &mut prepared, &reps).unwrap();
+            assert_eq!(os.allocs.get(), 3, "converted and allocated once");
+            assert_eq!(os.freed(), 0);
+            assert_eq!(os.sets(), vec![os.atom("PNG"), CF_DIBV5, CF_DIB]);
+            assert!(prepared.is_none());
+            assert_eq!(os.count(Ev::CreateOwner), os.count(Ev::DestroyOwner));
+
+            // Busy, then other content: the kept blocks are freed and the new ones prepared.
+            let mut os = FakeOs::new();
+            let mut prepared = None;
+            os.busy = true;
+            let _ = write_cached(&mut os, &mut prepared, &reps);
+            os.busy = false;
+            let text = [raw(Mime::TextPlain, "CF_UNICODETEXT", b"x".to_vec())];
+            write_cached(&mut os, &mut prepared, &text).unwrap();
+            assert_eq!(os.allocs.get(), 4);
+            assert_eq!(os.freed(), 3);
+            assert_eq!(os.sets(), vec![CF_UNICODETEXT]);
+            // Any other failure keeps nothing.
+            let mut os = FakeOs::new();
+            let mut prepared = None;
+            os.empty_fails = true;
+            assert!(write_cached(&mut os, &mut prepared, &reps).is_err());
+            assert!(prepared.is_none());
+            assert_eq!(os.freed(), os.allocs.get());
         }
 
         #[test]

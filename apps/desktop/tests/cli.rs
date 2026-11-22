@@ -30,6 +30,7 @@ const KNOWN_EVENTS: &[&str] = &[
     "unavailable",
     "stop_requested",
     "stop",
+    "skips",
     "stop_failed",
     "start_failed",
 ];
@@ -64,4 +65,15 @@ fn headless_with_data_dir_starts_and_stops() {
     }
     assert!(lines.iter().any(|l| l.contains(" start")));
     assert!(lines.iter().any(|l| l.contains(" stop")));
+    // One content-free line of per-reason skip counts on stop (Task 110).
+    let skips: Vec<&&str> = lines.iter().filter(|l| l.contains(" skips")).collect();
+    assert_eq!(skips.len(), 1, "{text}");
+    for kv in skips[0].split(' ').skip(2) {
+        let (k, v) = kv.split_once('=').unwrap();
+        assert!(
+            k.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+            "{kv}"
+        );
+        assert!(v.chars().all(|c| c.is_ascii_digit()), "{kv}");
+    }
 }

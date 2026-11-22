@@ -10,6 +10,7 @@ pub mod error;
 pub mod hash;
 pub mod i18n;
 pub mod ids;
+pub mod limits;
 pub mod markers;
 pub mod model;
 pub mod policy;

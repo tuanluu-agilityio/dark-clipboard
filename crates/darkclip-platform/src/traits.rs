@@ -58,7 +58,10 @@ pub trait ClipboardAccess: Send {
 
     /// Reads only the formats in the plan (never a format absent from it), enforcing caps:
     /// every non-image format (plain, HTML, RTF, uri-list) is capped at
-    /// `plan.truncate_text_at` bytes and every image at `plan.image_max_bytes`.
+    /// `plan.truncate_text_at` bytes and every image at `plan.image_max_bytes`. The image cap
+    /// applies to the PNG that is returned (D-043): an adapter that converts another image
+    /// format bounds that input by the decode caps (`darkclip_core::limits`, checked from its
+    /// header and size before allocating) and the PNG it produces by `image_max_bytes`.
     ///
     /// Over-cap text is truncated on a UTF-8 boundary and the adapter must set
     /// `RawRepresentation::truncated`. An over-cap image returns `PlatformError::TooLarge`,

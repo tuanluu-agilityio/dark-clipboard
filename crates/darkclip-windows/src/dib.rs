@@ -7,16 +7,26 @@
 //! opaque; an alpha channel that is zero everywhere is treated as absent (writers that set the
 //! mask but never fill it). Everything else is `Unsupported`.
 //!
-//! Every size is checked before allocating: the RGBA size against the cap (`TooLarge`), and
-//! the pixel data the header claims against the bytes actually present (`Malformed`). Never
-//! panics on a malformed header (GC-10). Errors carry no pixel data (GC-06).
+//! Every size is checked before allocating: the decoded size against the shared decode caps
+//! (`darkclip_core::limits`: 64 MP, 256 MiB of RGBA, `TooLarge`), and the pixel data the
+//! header claims against the bytes actually present (`Malformed`). The stored-image cap
+//! applies to the encoded PNG only (D-043). Never panics on a malformed header (GC-10).
+//! Errors carry no pixel data (GC-06).
 
 #![cfg_attr(not(windows), allow(dead_code))]
 
+use darkclip_core::limits::{within_decode_caps, MAX_RGBA_BYTES, MAX_SIDE};
+use std::io::Write;
 use zeroize::Zeroizing;
 
 /// Largest accepted width or height.
-pub(crate) const MAX_DIMENSION: u32 = 32_768;
+pub(crate) const MAX_DIMENSION: u32 = MAX_SIDE;
+
+/// Largest data block a DIB within the decode caps can need: the pixels (a 32-bit image at
+/// the RGBA cap; a 24-bit one with row padding is never larger), plus the biggest header,
+/// repeated masks, a colour table and the slack `GlobalSize` may add. A larger block is
+/// refused from its size before anything is copied.
+pub(crate) const MAX_DIB_BLOCK: u64 = MAX_RGBA_BYTES + 64 * 1024;
 
 const BI_RGB: u32 = 0;
 const BI_BITFIELDS: u32 = 3;
@@ -91,8 +101,9 @@ impl Channel {
     }
 }
 
-/// Converts a packed DIB to PNG. `max_bytes` caps both the RGBA size (`width × height × 4`,
-/// checked before allocating) and the encoded PNG.
+/// Converts a packed DIB to PNG. The decoded size is bounded by the shared decode caps,
+/// checked from the header before allocating; `max_bytes` caps the encoded PNG (the stored
+/// image, D-043), whose buffer never grows past it.
 pub(crate) fn dib_to_png(dib: &[u8], max_bytes: u64) -> Result<DibImage, DibError> {
     let header_size = u32_at(dib, 0).ok_or(SHORT)?;
     let header_len = match header_size {
@@ -121,9 +132,9 @@ pub(crate) fn dib_to_png(dib: &[u8], max_bytes: u64) -> Result<DibImage, DibErro
         _ => return Err(DibError::Unsupported("DIB bit depth")),
     }
 
-    // Cap before any allocation.
+    // Decode caps before any allocation.
     let rgba_len = u64::from(w) * u64::from(h) * 4;
-    if rgba_len > max_bytes {
+    if !within_decode_caps(w, h) {
         return Err(DibError::TooLarge { bytes: rgba_len });
     }
 
@@ -236,11 +247,7 @@ pub(crate) fn dib_to_png(dib: &[u8], max_bytes: u64) -> Result<DibImage, DibErro
     }
 
     // Wiped on drop, so an over-cap encoding leaves no copy behind.
-    let mut png = encode_png(&rgba, w, h)?;
-    let png_len = u64::try_from(png.len()).unwrap_or(u64::MAX);
-    if png_len > max_bytes {
-        return Err(DibError::TooLarge { bytes: png_len });
-    }
+    let mut png = encode_png(&rgba, w, h, max_bytes)?;
     Ok(DibImage {
         png: std::mem::take(&mut *png),
         width: w,
@@ -248,29 +255,74 @@ pub(crate) fn dib_to_png(dib: &[u8], max_bytes: u64) -> Result<DibImage, DibErro
     })
 }
 
-/// Encodes RGBA as PNG into a buffer wiped on drop. The buffer is reserved for the worst
-/// case (stored deflate blocks) so it does not reallocate and leave copies in freed memory.
-/// The encoder's own internal buffers are outside this crate's control.
-fn encode_png(rgba: &[u8], w: u32, h: u32) -> Result<Zeroizing<Vec<u8>>, DibError> {
+/// A writer into a buffer reserved up front that never grows past its capacity: a write that
+/// would not fit fails and sets `over`, so the buffer never reallocates (no copy of the image
+/// left in freed memory) and never exceeds the cap.
+struct Bounded<'a> {
+    out: &'a mut Vec<u8>,
+    /// At most the buffer's capacity.
+    limit: usize,
+    over: bool,
+}
+
+impl Write for Bounded<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let room = self.limit.min(self.out.capacity());
+        if buf.len() > room.saturating_sub(self.out.len()) {
+            self.over = true;
+            return Err(std::io::Error::other("image cap"));
+        }
+        self.out.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Encodes RGBA as PNG into a buffer wiped on drop, reserved once for the smaller of the
+/// worst case (stored deflate blocks) and `max_bytes`, and never grown, so it does not
+/// reallocate and leave copies in freed memory. A PNG that would exceed `max_bytes` is
+/// `TooLarge` with `bytes` = `max_bytes + 1` (at least that many were needed). The encoder's
+/// own internal buffers are outside this crate's control.
+fn encode_png(rgba: &[u8], w: u32, h: u32, max_bytes: u64) -> Result<Zeroizing<Vec<u8>>, DibError> {
     let rows = usize::try_from(h).unwrap_or(usize::MAX);
     let raw = rgba.len().saturating_add(rows); // one filter byte per row
     let worst = raw
         .saturating_add(raw / 16_000 * 5)
         .saturating_add(raw / 1_000)
         .saturating_add(1024);
-    let mut out = Zeroizing::new(Vec::with_capacity(worst));
-    {
-        let mut enc = png::Encoder::new(&mut *out, w, h);
-        enc.set_color(png::ColorType::Rgba);
-        enc.set_depth(png::BitDepth::Eight);
-        let mut writer = enc
-            .write_header()
-            .map_err(|_| DibError::Malformed("PNG encoder refused the image"))?;
-        writer
-            .write_image_data(rgba)
-            .map_err(|_| DibError::Malformed("PNG encoder refused the image"))?;
+    let limit = worst.min(usize::try_from(max_bytes).unwrap_or(usize::MAX));
+    let mut out = Zeroizing::new(Vec::with_capacity(limit));
+    let mut sink = Bounded {
+        out: &mut out,
+        limit,
+        over: false,
+    };
+    let result = encode_into(&mut sink, rgba, w, h);
+    let over = sink.over;
+    match result {
+        Ok(()) => Ok(out),
+        Err(_) if over => Err(DibError::TooLarge {
+            bytes: max_bytes.saturating_add(1),
+        }),
+        Err(_) => Err(DibError::Malformed("PNG encoder refused the image")),
     }
-    Ok(out)
+}
+
+fn encode_into(
+    sink: &mut Bounded<'_>,
+    rgba: &[u8],
+    w: u32,
+    h: u32,
+) -> Result<(), png::EncodingError> {
+    let mut enc = png::Encoder::new(sink, w, h);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut writer = enc.write_header()?;
+    writer.write_image_data(rgba)?;
+    writer.finish()
 }
 
 /// `CF_DIBV5` and `CF_DIB` renderings of one PNG (Task 104 copy-back), wiped on drop.
@@ -290,8 +342,10 @@ const LCS_SRGB: u32 = 0x7352_4742;
 /// `LCS_GM_IMAGES`.
 const LCS_GM_IMAGES: u32 = 4;
 
-/// Decodes a PNG and renders it as `CF_DIBV5` + `CF_DIB` (copy-back). Not capped here beyond
-/// [`MAX_DIMENSION`] and a DIB that fits a `u32` size: the clip was capped at capture.
+/// Decodes a PNG and renders it as `CF_DIBV5` + `CF_DIB` (copy-back). The header is checked
+/// against [`MAX_DIMENSION`] and the shared decode caps (64 MP, 256 MiB of RGBA) before any
+/// pixel buffer exists; over them it is `TooLarge` (the caller then writes the PNG alone,
+/// D-043): the stored PNG is untrusted input, a small file can claim a huge image.
 /// Metadata chunks (iCCP, text) are ignored. Every pixel buffer is wiped on drop. Never panics
 /// on a malformed PNG (GC-10); errors carry no pixel data (GC-06).
 pub(crate) fn png_to_dibs(png_bytes: &[u8]) -> Result<DibPair, DibError> {
@@ -311,6 +365,10 @@ pub(crate) fn png_to_dibs(png_bytes: &[u8]) -> Result<DibPair, DibError> {
         return Err(DibError::Malformed("dimension out of range"));
     }
     let pixel_bytes = u64::from(w) * u64::from(h) * 4;
+    // Decode caps before any allocation (and before `read_info`, which sizes its buffers).
+    if !within_decode_caps(w, h) {
+        return Err(DibError::TooLarge { bytes: pixel_bytes });
+    }
     // The DIB header stores the image size as a u32.
     let size_image =
         u32::try_from(pixel_bytes).map_err(|_| DibError::TooLarge { bytes: pixel_bytes })?;
@@ -616,8 +674,8 @@ mod tests {
                 bytes: 16_384 * 16_384 * 4
             })
         );
-        // A cap that holds the RGBA (8 bytes) and the encoded PNG is fine; a cap below the
-        // RGBA size is refused with that size.
+        // The cap applies to the encoded PNG (D-043): a cap that holds it is fine; a cap below
+        // it is refused with `cap + 1` (here 8), the least that would have been needed.
         let d = dib(40, 2, 1, 32, BI_RGB, None, &[0; 8]);
         assert!(dib_to_png(&d, 8 + 200).is_ok());
         assert!(matches!(

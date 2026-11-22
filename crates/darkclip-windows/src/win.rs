@@ -508,6 +508,12 @@ impl GlobalBlock {
     }
 }
 
+// SAFETY: a `GlobalAlloc` handle is a process-wide heap handle, not bound to the thread that
+// allocated it; `GlobalBlock` owns it exclusively (no aliasing), so moving it to another
+// thread is sound. Needed because `WinAccess` (which is `Send`) may keep blocks between the
+// `Busy` retries of one copy-back.
+unsafe impl Send for GlobalBlock {}
+
 impl Drop for GlobalBlock {
     fn drop(&mut self) {
         let Some(mem) = self.mem.take() else {
@@ -617,6 +623,15 @@ impl RawWindow {
         // SAFETY: the caller guarantees the window is alive; posting to a window of another
         // thread is allowed and does not block.
         unsafe { PostMessageW(Some(hwnd), WM_DARKCLIP_STOP, WPARAM(0), LPARAM(0)) }.is_ok()
+    }
+
+    /// `IsWindow`: the handle still names an existing window (teardown tests). A destroyed
+    /// window's handle value may in theory be reused later by another window.
+    #[cfg(test)]
+    pub(crate) fn is_window(self) -> bool {
+        let hwnd = HWND(self.0 as *mut c_void);
+        // SAFETY: `IsWindow` accepts any handle value, valid or not, and only reads it.
+        unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(hwnd)) }.as_bool()
     }
 }
 

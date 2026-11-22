@@ -12,6 +12,7 @@ workspace = true
 darkclip-core = { path = "../darkclip-core" }
 darkclip-platform = { path = "../darkclip-platform" }
 png = "0.18"
+sha2 = "0.11.1"
 zeroize = "1.9.2"
 
 [target."cfg(windows)".dependencies]

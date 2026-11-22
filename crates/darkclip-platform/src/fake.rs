@@ -171,6 +171,23 @@ impl FakeHandle {
         st.seq
     }
 
+    /// `first` is copied and signalled; then, atomically, `second` replaces it with a new seq
+    /// whose signal is not delivered (yet): the actor's snapshot for `first`'s signal sees
+    /// `second`, with a newer seq and `second`'s owner. Returns the seq of `second`.
+    pub fn copy_then_replace_silently(&self, first: FakeCopy, second: FakeCopy) -> u64 {
+        let mut st = lock(&self.state);
+        st.seq += 1;
+        st.formats = first.formats;
+        st.markers = first.markers;
+        st.source = first.source;
+        emit(&st);
+        st.seq += 1;
+        st.formats = second.formats;
+        st.markers = second.markers;
+        st.source = second.source;
+        st.seq
+    }
+
     /// Several copies applied atomically, one new seq and one signal each (signal time now):
     /// e.g. an OLE writer's copy with an owner, then its ownerless flush. The actor can never
     /// inspect the clipboard between them; it sees the last copy. Returns the last seq.

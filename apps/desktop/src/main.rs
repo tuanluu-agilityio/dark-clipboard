@@ -12,6 +12,7 @@ mod log;
 use darkclip_app::events::{UNAVAILABLE_READ, UNAVAILABLE_RETENTION, UNAVAILABLE_STORAGE_WRITE};
 use darkclip_app::{App, AppEvent, CaptureConfig};
 use darkclip_core::i18n::{t, Lang, Msg};
+use darkclip_core::policy::SkipReason;
 use darkclip_core::{Clock, Timestamp};
 use darkclip_platform::{Capabilities, ShortcutSupport, SourceSupport, Support};
 use log::{Log, Val};
@@ -109,6 +110,32 @@ fn unavailable_name(what: &'static str) -> &'static str {
         UNAVAILABLE_STORAGE_WRITE => "storage_write",
         UNAVAILABLE_READ => "clipboard_read",
         _ => "platform",
+    }
+}
+
+/// Skips per reason, in first-seen order. Logged once on stop as `<name>=<count>` with the
+/// reason's static `snake_case` name (`SkipReason::name`): numbers and names only, no
+/// content (GC-06).
+#[derive(Default)]
+struct SkipTally(Vec<(SkipReason, u64)>);
+
+impl SkipTally {
+    fn add(&mut self, reason: SkipReason) {
+        match self.0.iter_mut().find(|(r, _)| *r == reason) {
+            Some((_, n)) => *n = n.saturating_add(1),
+            None => self.0.push((reason, 1)),
+        }
+    }
+
+    fn total(&self) -> u64 {
+        self.0.iter().fold(0u64, |a, (_, n)| a.saturating_add(*n))
+    }
+
+    fn fields(&self) -> Vec<(&'static str, Val)> {
+        self.0
+            .iter()
+            .map(|(r, n)| (r.name(), Val::Num(*n)))
+            .collect()
     }
 }
 
@@ -240,12 +267,12 @@ fn run_headless(cli: &Cli, lang: Lang) -> ExitCode {
     let events = std::thread::Builder::new()
         .name("darkclip-cli-events".into())
         .spawn(move || {
-            let (mut added, mut bumped, mut skipped) = (0u64, 0u64, 0u64);
+            let (mut added, mut bumped, mut skips) = (0u64, 0u64, SkipTally::default());
             for e in ev_rx {
                 match e {
                     AppEvent::ClipAdded(_) => added = added.saturating_add(1),
                     AppEvent::ClipBumped(_) => bumped = bumped.saturating_add(1),
-                    AppEvent::Skipped(_) => skipped = skipped.saturating_add(1),
+                    AppEvent::Skipped(r) => skips.add(r),
                     AppEvent::Unavailable(what) => ev_log.event(
                         "unavailable",
                         &[("what", Val::Name(unavailable_name(what)))],
@@ -253,7 +280,7 @@ fn run_headless(cli: &Cli, lang: Lang) -> ExitCode {
                     AppEvent::ModeChanged(_) | AppEvent::RetentionOk => {}
                 }
             }
-            (added, bumped, skipped)
+            (added, bumped, skips)
         });
 
     println!("{}", t(app.lang(), Msg::CliRunning));
@@ -275,15 +302,20 @@ fn run_headless(cli: &Cli, lang: Lang) -> ExitCode {
     match result {
         Ok(()) => {
             // A clean shutdown joins the event pump, so the counting thread ends.
-            let (added, bumped, skipped) =
-                events.ok().and_then(|h| h.join().ok()).unwrap_or((0, 0, 0));
+            let (added, bumped, skips) =
+                events
+                    .ok()
+                    .and_then(|h| h.join().ok())
+                    .unwrap_or((0, 0, SkipTally::default()));
+            // Which skip path each skip took (static reason names and counts only).
+            log.event("skips", &skips.fields());
             log.event(
                 "stop",
                 &[
                     ("ms", Val::Num(ms)),
                     ("added", Val::Num(added)),
                     ("bumped", Val::Num(bumped)),
-                    ("skipped", Val::Num(skipped)),
+                    ("skipped", Val::Num(skips.total())),
                 ],
             );
             ExitCode::SUCCESS
@@ -323,5 +355,31 @@ mod tests {
         assert!(parse_args(&a(&["--data-dir"])).is_err());
         assert!(parse_args(&a(&["--exit-after-ms", "x"])).is_err());
         assert!(parse_args(&a(&["--what"])).is_err());
+    }
+
+    #[test]
+    fn skip_tally_fields_use_static_names() {
+        let mut tally = SkipTally::default();
+        assert!(tally.fields().is_empty());
+        for r in [
+            SkipReason::Busy,
+            SkipReason::DarkshotExcluded,
+            SkipReason::Busy,
+            SkipReason::ExcludedApp,
+        ] {
+            tally.add(r);
+        }
+        let got: Vec<(&str, u64)> = tally
+            .fields()
+            .into_iter()
+            .map(|(k, v)| match v {
+                Val::Num(n) => (k, n),
+                Val::Name(_) => panic!("counts are numbers"),
+            })
+            .collect();
+        assert_eq!(
+            got,
+            vec![("busy", 2), ("darkshot_excluded", 1), ("excluded_app", 1)]
+        );
     }
 }

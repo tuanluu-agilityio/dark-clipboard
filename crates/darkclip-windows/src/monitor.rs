@@ -205,8 +205,15 @@ mod tests {
             let (tx, rx) = mpsc::channel();
             m.start(tx).unwrap();
             assert!(m.is_running());
+            let window = (*lock(&m.running.as_ref().unwrap().window)).unwrap();
+            assert!(
+                window.is_window(),
+                "the listener window exists while running"
+            );
             m = stop_within_2s(m);
             assert_thread_gone(&rx);
+            // Teardown: the window handle is no longer valid after `stop`.
+            assert!(!window.is_window(), "window destroyed by stop");
             // Idempotent.
             m.stop();
         }
