@@ -13,7 +13,7 @@
 
 use crate::config::CaptureConfig;
 use crate::events::{
-    ApiError, AppEvent, SkipCounters, UNAVAILABLE_READ, UNAVAILABLE_RETENTION,
+    map_storage, ApiError, AppEvent, SkipCounters, UNAVAILABLE_READ, UNAVAILABLE_RETENTION,
     UNAVAILABLE_STORAGE_WRITE,
 };
 use darkclip_core::policy::{
@@ -352,14 +352,6 @@ fn map_platform(e: &PlatformError) -> ApiError {
         PlatformError::Unsupported(_) => ApiError::UnsupportedPlatform,
         PlatformError::PermissionDenied(what) => ApiError::PermissionDenied(what),
         PlatformError::TooLarge { .. } | PlatformError::Backend { .. } => ApiError::Internal,
-    }
-}
-
-fn map_storage(e: &StorageError) -> ApiError {
-    match e {
-        StorageError::NotFound => ApiError::NotFound,
-        StorageError::SchemaTooNew { .. } => ApiError::SchemaTooNew,
-        _ => ApiError::Storage,
     }
 }
 

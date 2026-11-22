@@ -1,9 +1,16 @@
 //! Full-text search and listing (`docs/architecture/data-model.md` §4).
 //!
 //! Ranking: pinned first (`pin_order`), then bm25 for text queries, then
-//! `last_copied_at DESC`. User text is never interpolated into MATCH syntax: every
-//! token is quoted (`"tok"*`, internal quotes doubled). Query text is never logged and
-//! never appears in an error.
+//! `last_copied_at DESC`. Text queries rank a bounded candidate set: the best
+//! [`FTS_CANDIDATES`] FTS matches by bm25 (FTS5 `ORDER BY rank LIMIT`), which are then
+//! joined to `clips` for filters, pinned-first order and `limit`. A match outside that
+//! set is not returned, even when pinned or when filters remove candidates.
+//!
+//! Clips with `expires_at <= now` (storage clock) are never returned, before any
+//! retention run deletes them.
+//!
+//! User text is never interpolated into MATCH syntax: every token is quoted (`"tok"*`,
+//! internal quotes doubled). Query text is never logged and never appears in an error.
 //!
 //! Pagination: the recent list (empty text) is one keyset over pinned rows (by
 //! `pin_order`) then unpinned rows (`last_copied_at DESC, id DESC`); pinned rows count
@@ -27,6 +34,10 @@ const DEFAULT_LIMIT: usize = 50;
 const MAX_LIMIT: usize = 200;
 /// Recent rows scanned by the substring fallback.
 const FALLBACK_WINDOW: i64 = 2000;
+/// FTS matches ranked by bm25 before the join to `clips`.
+const FTS_CANDIDATES: usize = 500;
+/// Column weights (preview, body, note, tags) for FTS5's `rank`. SQL literals only.
+const RANK_FN: &str = "bm25(4.0, 1.0, 1.0, 1.0)";
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -248,7 +259,7 @@ impl Storage {
             0 => DEFAULT_LIMIT,
             n => n.min(MAX_LIMIT),
         };
-        let cleaned = q.text.as_deref().map(|t| t.replace(' ', " "));
+        let cleaned = q.text.as_deref().map(|t| t.replace('\0', " "));
         let text = cleaned.as_deref().map(str::trim).filter(|t| !t.is_empty());
 
         // Shared filters; every value is a bound parameter.
@@ -272,6 +283,8 @@ impl Storage {
         if !q.include_masked {
             filt.push_str(" AND c.sensitivity_level <> 'masked'");
         }
+        args.push(Value::Integer(self.clock.now().0));
+        filt.push_str(" AND (c.expires_at IS NULL OR c.expires_at > ?)");
 
         let Some(text) = text else {
             return self.recent(&filt, args, limit, q);
@@ -281,12 +294,14 @@ impl Storage {
             // The MATCH placeholder comes first in the statement, so its value does too.
             args.insert(0, Value::Text(expr));
             let sql = format!(
-                "SELECT {COLS} FROM clips_fts f \
-                 JOIN clip_rowid r ON r.rowid = f.rowid \
+                "SELECT {COLS} FROM (SELECT rowid AS frow, rank AS score FROM clips_fts \
+                 WHERE clips_fts MATCH ? AND rank MATCH '{RANK_FN}' \
+                 ORDER BY rank LIMIT {FTS_CANDIDATES}) f \
+                 JOIN clip_rowid r ON r.rowid = f.frow \
                  JOIN clips c ON c.id = r.clip_id \
-                 WHERE clips_fts MATCH ? {filt} \
-                 ORDER BY c.pinned DESC, c.pin_order ASC, \
-                 bm25(clips_fts, 4.0, 1.0, 1.0, 1.0), c.last_copied_at DESC, c.id DESC \
+                 WHERE 1 = 1 {filt} \
+                 ORDER BY c.pinned DESC, c.pin_order ASC, f.score ASC, \
+                 c.last_copied_at DESC, c.id DESC \
                  LIMIT {limit}"
             );
             self.collect(&sql, args)?
@@ -757,9 +772,62 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
         s.upsert_clip(text_clip("abc def")).unwrap();
-        assert!(s.search(&q("abc def")).is_ok());
-        assert!(s.search(&q("a ")).is_ok());
-        assert_eq!(s.search(&q("abc def")).unwrap().0.len(), 1);
+        assert!(s.search(&q("abc\0def")).is_ok());
+        assert!(s.search(&q("a\0")).is_ok());
+        assert_eq!(s.search(&q("abc\0def")).unwrap().0.len(), 1);
+    }
+
+    #[test]
+    fn text_results_pinned_then_bm25_then_recency() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path());
+        let older = id_of(s.upsert_clip(text_clip("needle needle alpha")).unwrap());
+        let weak = format!("needle {}", "filler ".repeat(40));
+        let weak = id_of(s.upsert_clip(text_clip(&weak)).unwrap());
+        let newer = id_of(s.upsert_clip(text_clip("needle needle bravo")).unwrap());
+        let ids = |r: (Vec<ClipSummary>, Option<Cursor>)| -> Vec<ClipId> {
+            r.0.iter().map(|c| c.id).collect()
+        };
+        // Better bm25 first; equal scores by recency.
+        assert_eq!(
+            ids(s.search(&q("needle")).unwrap()),
+            vec![newer, older, weak]
+        );
+        // A pinned match outranks every better-scoring one.
+        s.set_pinned(&weak, true).unwrap();
+        assert_eq!(
+            ids(s.search(&q("needle")).unwrap()),
+            vec![weak, newer, older]
+        );
+    }
+
+    #[test]
+    fn expired_clips_not_returned() {
+        use crate::retention::test_support::{clock, set, T0};
+        let tmp = tempfile::tempdir().unwrap();
+        let c = clock();
+        let mut s = Storage::open(tmp.path(), OpenMode::ReadWrite, c.clone()).unwrap();
+        let mut soon = text_clip("kubectl expiring row");
+        soon.expires_at = Some(Timestamp(T0 + 1000));
+        s.upsert_clip(soon).unwrap();
+        s.upsert_clip(text_clip("kubectl lasting row")).unwrap();
+        let mut list = q("");
+        list.text = None;
+        let paths = [q("kubectl"), q("ku"), list];
+        // Not yet expired: every search path returns both rows.
+        set(&c, T0 + 999);
+        for query in &paths {
+            assert_eq!(s.search(query).unwrap().0.len(), 2);
+        }
+        // `expires_at <= now`: gone from the FTS, fallback and recent paths alike,
+        // before any retention run deletes it.
+        set(&c, T0 + 1000);
+        for query in &paths {
+            assert_eq!(
+                previews(&s.search(query).unwrap()),
+                vec!["kubectl lasting row"]
+            );
+        }
     }
 
     #[test]
@@ -810,6 +878,96 @@ mod tests {
         let p50 = times[100];
         let p95 = times[189];
         println!("bench_search: p50={p50:?} p95={p95:?}");
+        assert!(p95 <= std::time::Duration::from_millis(30), "p95 {p95:?}");
+    }
+
+    /// Same shape as `bench_search` (10,000 clips of 50–2,000 bytes, 200 queries in the
+    /// same three forms), but with a 2,000-word synthetic vocabulary drawn with a Zipf
+    /// (s = 1) distribution, so a query matches a realistic share of the history instead of
+    /// nearly every clip.
+    #[test]
+    #[ignore = "benchmark; run in release with --ignored --nocapture"]
+    fn bench_search_realistic() {
+        const VOCAB: usize = 2000;
+        let rng = std::cell::Cell::new(0x9E37_79B9_7F4A_7C15u64);
+        let next = || {
+            let mut x = rng.get();
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            rng.set(x);
+            x
+        };
+        let onsets = [
+            "b", "c", "d", "f", "g", "h", "k", "l", "m", "n", "p", "r", "s", "t", "v", "z", "br",
+            "st", "tr", "pl",
+        ];
+        let vowels = ["a", "e", "i", "o", "u", "ai", "ou"];
+        let mut seen = std::collections::HashSet::new();
+        let mut words: Vec<String> = Vec::with_capacity(VOCAB);
+        while words.len() < VOCAB {
+            let syllables = 2 + next() % 3;
+            let mut w = String::new();
+            for _ in 0..syllables {
+                w.push_str(onsets[usize::try_from(next() % 20).unwrap()]);
+                w.push_str(vowels[usize::try_from(next() % 7).unwrap()]);
+            }
+            if seen.insert(w.clone()) {
+                words.push(w);
+            }
+        }
+        // Zipf: P(rank r) ~ 1 / (r + 1), sampled through the cumulative sum.
+        let mut cum = Vec::with_capacity(VOCAB);
+        let mut total = 0f64;
+        for r in 0..VOCAB {
+            total += 1.0 / (r as f64 + 1.0);
+            cum.push(total);
+        }
+        let zipf = || {
+            let u = (next() % 1_000_000) as f64 / 1_000_000.0 * total;
+            cum.partition_point(|c| *c < u).min(VOCAB - 1)
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path());
+        let mut lens = 0usize;
+        for i in 0..10_000u64 {
+            let target = 50 + usize::try_from(next() % 1951).unwrap();
+            let mut text = format!("clip{i} ");
+            while text.len() < target {
+                text.push_str(&words[zipf()]);
+                text.push(' ');
+            }
+            lens += text.len();
+            s.upsert_clip(text_clip(&text)).unwrap();
+        }
+        let mut times = Vec::new();
+        let mut empty = 0;
+        for n in 0..200usize {
+            let w = &words[zipf()];
+            let text = match n % 3 {
+                0 => w[..4].to_string(),
+                1 => format!("{} {}", &w[..w.len().min(5)], words[zipf()]),
+                _ => w.clone(),
+            };
+            let query = SearchQuery {
+                limit: 50,
+                ..q(&text)
+            };
+            let t = std::time::Instant::now();
+            let r = s.search(&query).unwrap();
+            times.push(t.elapsed());
+            if r.0.is_empty() {
+                empty += 1;
+            }
+        }
+        times.sort();
+        let p50 = times[100];
+        let p95 = times[189];
+        println!(
+            "bench_search_realistic: p50={p50:?} p95={p95:?} (avg clip {} bytes, {empty} of 200 queries empty)",
+            lens / 10_000
+        );
+        assert!(empty < 100, "corpus too sparse: {empty} empty queries");
         assert!(p95 <= std::time::Duration::from_millis(30), "p95 {p95:?}");
     }
 }

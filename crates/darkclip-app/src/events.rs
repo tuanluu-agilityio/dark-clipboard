@@ -4,6 +4,7 @@
 
 use darkclip_core::policy::SkipReason;
 use darkclip_core::{CaptureMode, ClipId};
+use darkclip_storage::StorageError;
 use std::collections::HashMap;
 
 /// Published by the capture actor. Ids, reasons and static text only.
@@ -75,6 +76,15 @@ impl std::fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
+/// The one `StorageError` -> `ApiError` mapping, shared by the API and the capture actor.
+pub(crate) fn map_storage(e: &StorageError) -> ApiError {
+    match e {
+        StorageError::NotFound => ApiError::NotFound,
+        StorageError::SchemaTooNew { .. } => ApiError::SchemaTooNew,
+        _ => ApiError::Storage,
+    }
+}
+
 /// How many changes were skipped, per reason. In memory only; never persisted or logged.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SkipCounters {
@@ -139,5 +149,24 @@ mod tests {
             "invalid argument: clip has no plain text"
         );
         assert_eq!(ApiError::ClipboardBusy.to_string(), "clipboard busy");
+    }
+
+    #[test]
+    fn storage_errors_map_to_api_errors() {
+        assert_eq!(map_storage(&StorageError::NotFound), ApiError::NotFound);
+        assert_eq!(
+            map_storage(&StorageError::SchemaTooNew {
+                found: 9,
+                supported: 1
+            }),
+            ApiError::SchemaTooNew
+        );
+        for e in [
+            StorageError::Sqlite("SQLITE_BUSY".into()),
+            StorageError::Io(std::io::ErrorKind::PermissionDenied),
+            StorageError::ReadOnly,
+        ] {
+            assert_eq!(map_storage(&e), ApiError::Storage);
+        }
     }
 }

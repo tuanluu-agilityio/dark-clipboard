@@ -12,7 +12,8 @@ use crate::capture::{ActorCommand, CaptureHandle};
 use crate::config::CaptureConfig;
 use crate::envelope::Page;
 use crate::events::{
-    ApiError, AppEvent, UNAVAILABLE_READ, UNAVAILABLE_RETENTION, UNAVAILABLE_STORAGE_WRITE,
+    map_storage, ApiError, AppEvent, UNAVAILABLE_READ, UNAVAILABLE_RETENTION,
+    UNAVAILABLE_STORAGE_WRITE,
 };
 use crate::permission::{Operation, PermissionGuard};
 use crate::settings::{LoadOutcome, Settings};
@@ -21,7 +22,7 @@ use darkclip_core::{
     Timestamp,
 };
 use darkclip_platform::PlatformBundle;
-use darkclip_storage::{ClipSummary, OpenMode, SearchQuery, Storage, StorageError};
+use darkclip_storage::{ClipSummary, OpenMode, SearchQuery, Storage};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -215,14 +216,6 @@ const MAX_LIMIT: u16 = 200;
 const MAX_LIMIT_MCP: u16 = 50;
 const CONTENT_MAX_BYTES: usize = 100 * 1024;
 const ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(10);
-
-fn map_storage(e: &StorageError) -> ApiError {
-    match e {
-        StorageError::NotFound => ApiError::NotFound,
-        StorageError::SchemaTooNew { .. } => ApiError::SchemaTooNew,
-        _ => ApiError::Storage,
-    }
-}
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
@@ -615,7 +608,7 @@ impl ClipApi for App {
             .cap
             .skip_counters()
             .iter()
-            .map(|(r, n)| (format!("{r:?}"), n))
+            .map(|(r, n)| (r.name().to_string(), n))
             .collect();
         Ok(StorageStatsView {
             clips: st.clips,
@@ -1344,6 +1337,45 @@ mod tests {
             .content
             .unwrap();
         assert!(!small.truncated);
+    }
+
+    #[test]
+    fn stats_skipped_keys_are_fixed_snake_case_names() {
+        use darkclip_core::policy::SkipReason;
+        const NAMES: [&str; 13] = [
+            "disabled",
+            "paused",
+            "private",
+            "self_write",
+            "os_concealed",
+            "darkshot_excluded",
+            "transient",
+            "excluded_app",
+            "kind_disabled",
+            "too_large",
+            "nothing_readable",
+            "sensitive",
+            "busy",
+        ];
+        let h = start(&[], None);
+        let a = h.app();
+        a.set_capture_mode(&Caller::Ui, CaptureMode::Private)
+            .unwrap();
+        h.fake.copy(text_copy("skipped while private"));
+        let deadline = Instant::now() + WAIT;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match h.events.recv_timeout(left) {
+                Ok(AppEvent::Skipped(SkipReason::Private)) => break,
+                Ok(_) => {}
+                Err(_) => panic!("timed out waiting for Skipped(Private)"),
+            }
+        }
+        let skipped = a.get_storage_stats(&Caller::Ui).unwrap().skipped;
+        let keys: Vec<&str> = skipped.keys().map(String::as_str).collect();
+        assert_eq!(keys, vec!["private"]);
+        assert_eq!(skipped.get("private"), Some(&1));
+        assert!(keys.iter().all(|k| NAMES.contains(k)));
     }
 
     #[test]
