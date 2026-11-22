@@ -2,9 +2,13 @@
 //! here; every block has a `// SAFETY:` line. Every OS handle is owned by an RAII guard and
 //! released on every path, errors included (GC-13).
 //!
-//! Nothing here reads clipboard content or window titles (GC-06). The only clipboard data
-//! read outside the test writer is a 4-byte marker DWORD (`ClipboardGuard::dword_value`).
+//! Nothing here reads window titles (GC-06). Clipboard data is read only by
+//! `ClipboardGuard::dword_value` (a 4-byte marker DWORD, `snapshot_meta`) and by `data_size` /
+//! `copy_data` / `drop_files`, which `access::read_plan` calls only for planned formats after
+//! the policy decision (GC-03). Content buffers are wiped on drop and never logged.
 
+use crate::access::DropFiles;
+use crate::formats::CF_HDROP;
 use darkclip_platform::PlatformError;
 use std::cell::RefCell;
 use std::ffi::c_void;
@@ -27,11 +31,13 @@ use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
+use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
     GetWindowThreadProcessId, PostMessageW, PostQuitMessage, RegisterClassExW, UnregisterClassW,
     HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLIPBOARDUPDATE, WNDCLASSEXW,
 };
+use zeroize::Zeroizing;
 
 /// Private message that ends the message loop (posted by `RawWindow::post_stop`).
 const WM_DARKCLIP_STOP: u32 = WM_APP + 0x0D1;
@@ -161,7 +167,88 @@ impl ClipboardGuard {
         drop(lock);
         Some(u32::from_le_bytes(bytes))
     }
+
+    /// The data handle of a format as a global memory handle, or `None` when the format has
+    /// no data. If the owner uses delayed rendering, this blocks until it renders (capture
+    /// actor thread only, see `dword_value`).
+    fn data_handle(&self, id: u32) -> Option<HGLOBAL> {
+        // SAFETY: the clipboard is open by this thread (owned by `self`). The handle stays
+        // owned by the clipboard and is never freed here.
+        let handle = unsafe { GetClipboardData(id) }.ok()?;
+        (!handle.0.is_null()).then_some(HGLOBAL(handle.0))
+    }
+
+    /// `GlobalSize` of a format's data block; `None` when there is no data or the size is 0.
+    /// Reads no bytes. Only for HGLOBAL formats (text, registered formats, DIBs, `CF_HDROP`).
+    pub(crate) fn data_size(&self, id: u32) -> Option<u64> {
+        let mem = self.data_handle(id)?;
+        // SAFETY: `mem` is the clipboard's data handle of an HGLOBAL format; an invalid
+        // handle only makes the call return 0.
+        let size = unsafe { GlobalSize(mem) };
+        u64::try_from(size).ok().filter(|&s| s > 0)
+    }
+
+    /// The first `min(GlobalSize, max)` bytes of a format's data, in a buffer wiped on drop.
+    /// The size is checked before locking, the buffer is never larger than `max`, and the
+    /// lock is released on every path.
+    pub(crate) fn copy_data(&self, id: u32, max: usize) -> Option<Zeroizing<Vec<u8>>> {
+        let mem = self.data_handle(id)?;
+        // SAFETY: as in `data_size`.
+        let size = unsafe { GlobalSize(mem) };
+        let n = size.min(max);
+        if n == 0 {
+            return None;
+        }
+        let lock = GlobalLockGuard::lock(mem)?;
+        let mut out = Zeroizing::new(vec![0u8; n]);
+        // SAFETY: `lock.ptr` points to the locked block of `size >= n` readable bytes; `out`
+        // is a distinct buffer of exactly `n` bytes.
+        unsafe { std::ptr::copy_nonoverlapping(lock.ptr.cast::<u8>(), out.as_mut_ptr(), n) };
+        drop(lock);
+        Some(out)
+    }
+
+    /// `CF_HDROP` file names via `DragQueryFileW`, stopping before the name that would take
+    /// the total past `max_units` UTF-16 units (or after `MAX_DROP_FILES` names). The HDROP
+    /// belongs to the clipboard: no `DragFinish`.
+    pub(crate) fn drop_files(&self, max_units: usize) -> Option<DropFiles> {
+        let mem = self.data_handle(CF_HDROP)?;
+        let hdrop = HDROP(mem.0);
+        // SAFETY: `hdrop` is the clipboard's CF_HDROP handle (a DROPFILES block); index
+        // 0xFFFFFFFF with no buffer returns the file count.
+        let count = unsafe { DragQueryFileW(hdrop, u32::MAX, None) };
+        let mut names = Vec::new();
+        let mut total = 0usize;
+        for i in 0..count {
+            if names.len() >= MAX_DROP_FILES {
+                return Some(DropFiles { names, more: true });
+            }
+            // SAFETY: as above; no buffer returns the name length without the NUL.
+            let len = unsafe { DragQueryFileW(hdrop, i, None) };
+            let len = usize::try_from(len).unwrap_or(usize::MAX);
+            if len == 0 {
+                continue;
+            }
+            if len > MAX_PATH_UNITS || total.saturating_add(len) > max_units {
+                return Some(DropFiles { names, more: true });
+            }
+            let mut buf = Zeroizing::new(vec![0u16; len + 1]);
+            // SAFETY: as above; `buf` holds `len + 1` writable units and the wrapper passes
+            // its length as the maximum count.
+            let got = unsafe { DragQueryFileW(hdrop, i, Some(buf.as_mut_slice())) };
+            let got = usize::try_from(got).unwrap_or(0).min(len);
+            buf.truncate(got);
+            total += got;
+            names.push(buf);
+        }
+        Some(DropFiles { names, more: false })
+    }
 }
+
+/// Most `CF_HDROP` names read.
+const MAX_DROP_FILES: usize = 65_536;
+/// Longest accepted file name (extended-length paths are at most 32 767 units).
+const MAX_PATH_UNITS: usize = 32_767;
 
 impl Drop for ClipboardGuard {
     fn drop(&mut self) {
@@ -553,6 +640,15 @@ pub(crate) mod test_support {
     /// Writes `text` as `CF_UNICODETEXT`; returns the sequence number after the write.
     pub(crate) fn write_text(text: &str) -> Result<u32, PlatformError> {
         write_formats(vec![(CF_UNICODETEXT, utf16z(text))])
+    }
+
+    /// Writes `html` (a full CF_HTML payload, UTF-8) as `HTML Format`, NUL-terminated.
+    pub(crate) fn write_html(html: &str) -> Result<u32, PlatformError> {
+        let id = register_clipboard_format(crate::formats::HTML_FORMAT)
+            .ok_or(PlatformError::Backend { code: -1 })?;
+        let mut bytes = html.as_bytes().to_vec();
+        bytes.push(0);
+        write_formats(vec![(id, bytes)])
     }
 
     /// Writes `text` plus Darkshot's exclusion set as `darkshot-windows/src/clipboard.rs` does:

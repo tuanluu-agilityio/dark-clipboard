@@ -10,12 +10,15 @@
 
 #[cfg(windows)]
 mod access;
-// Pure format/marker mapping: compiled on every OS so its tests run everywhere.
+// Pure format/marker mapping and read conversions: compiled on every OS so their tests run
+// everywhere.
+mod dib;
 mod formats;
 #[cfg(windows)]
 mod monitor;
 #[cfg(windows)]
 mod source;
+mod text;
 #[cfg(windows)]
 mod win;
 
