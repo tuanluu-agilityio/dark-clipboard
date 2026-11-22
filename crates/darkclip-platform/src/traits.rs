@@ -52,10 +52,13 @@ pub trait ClipboardAccess: Send {
 
     /// Reads only the formats in the plan (never a format absent from it), enforcing caps:
     /// every non-image format (plain, HTML, RTF, uri-list) is capped at
-    /// `plan.truncate_text_at` bytes and every image at `plan.image_max_bytes`. An over-cap
-    /// image returns `PlatformError::TooLarge`, with or without a size hint. Over-cap text is
-    /// truncated on a UTF-8 boundary. `RawRepresentation` has no truncation flag, so the
-    /// actor derives it from the format's `size_hint` or a returned length at the cap.
+    /// `plan.truncate_text_at` bytes and every image at `plan.image_max_bytes`.
+    ///
+    /// Over-cap text is truncated on a UTF-8 boundary and the adapter must set
+    /// `RawRepresentation::truncated`. An over-cap image returns `PlatformError::TooLarge`,
+    /// with or without a size hint; that fails the whole read, so the text formats of the same
+    /// clip are lost. For UTF-16 sources the cap applies to the UTF-8 output, but the raw read
+    /// must still be bounded (never allocate an unbounded source buffer).
     fn read(&mut self, plan: &ReadPlan) -> Result<Vec<RawRepresentation>, PlatformError>;
 
     /// Writes representations; returns the sequence number after the write (self-write suppression).

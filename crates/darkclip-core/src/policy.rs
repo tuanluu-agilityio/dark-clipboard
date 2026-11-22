@@ -308,6 +308,19 @@ mod tests {
     }
 
     #[test]
+    fn plan_carries_both_caps() {
+        let mut c = Case::new();
+        c.caps = SizeCaps {
+            text_max_bytes: 5,
+            image_max_bytes: 7,
+        };
+        let d = c.decide();
+        let plan = assert_reads(&d);
+        assert_eq!(plan.truncate_text_at, 5);
+        assert_eq!(plan.image_max_bytes, 7);
+    }
+
+    #[test]
     fn darkshot_set_is_excluded() {
         let mut c = Case::new();
         c.markers = windows_markers(&[

@@ -41,6 +41,4 @@ pub struct Capabilities {
     pub autostart: Support,
     /// "win32", "appkit", "x11-xfixes", "ext-data-control-v1", "fake", ...
     pub backend: &'static str,
-    /// Largest image the adapter will return from `read` (feeds `SizeCaps`).
-    pub image_max_bytes: u64,
 }

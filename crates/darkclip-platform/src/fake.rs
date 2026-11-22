@@ -32,6 +32,7 @@ struct State {
     source: Option<ClipboardSource>,
     busy: u32,
     read_calls: u32,
+    snapshot_meta_calls: u32,
     tx: Option<Sender<ChangeSignal>>,
 }
 
@@ -122,7 +123,6 @@ impl FakePlatform {
                 tray: Support::Native,
                 autostart: Support::Native,
                 backend: "fake",
-                image_max_bytes: 20 * 1024 * 1024,
             },
         }
     }
@@ -182,9 +182,15 @@ impl FakeHandle {
                     bytes: bytes.clone(),
                     width: None,
                     height: None,
+                    truncated: false,
                 })
             })
             .collect()
+    }
+
+    /// How many times `snapshot_meta` was invoked (counted even when it returns `Busy`).
+    pub fn snapshot_meta_calls(&self) -> u32 {
+        lock(&self.state).snapshot_meta_calls
     }
 
     /// How many times `read` was invoked (privacy tests: excluded content is never read).
@@ -229,6 +235,7 @@ impl ClipboardAccess for FakeAccess {
 
     fn snapshot_meta(&mut self) -> Result<ClipboardMeta, PlatformError> {
         let mut st = lock(&self.state);
+        st.snapshot_meta_calls += 1;
         st.take_busy()?;
         Ok(ClipboardMeta {
             seq: st.seq,
@@ -251,16 +258,18 @@ impl ClipboardAccess for FakeAccess {
             else {
                 continue;
             };
-            let bytes = if want.mime == Mime::ImagePng {
+            let (bytes, truncated) = if want.mime == Mime::ImagePng {
                 if len_u64(bytes.len()) > plan.image_max_bytes {
                     return Err(PlatformError::TooLarge {
                         format: want.platform_format.clone(),
                         bytes: len_u64(bytes.len()),
                     });
                 }
-                bytes.clone()
+                (bytes.clone(), false)
             } else {
-                truncate_utf8(bytes, plan.truncate_text_at)
+                let cut = truncate_utf8(bytes, plan.truncate_text_at);
+                let was_cut = cut.len() < bytes.len();
+                (cut, was_cut)
             };
             out.push(RawRepresentation {
                 mime: want.mime,
@@ -268,6 +277,7 @@ impl ClipboardAccess for FakeAccess {
                 bytes,
                 width: None,
                 height: None,
+                truncated,
             });
         }
         Ok(out)
@@ -395,6 +405,7 @@ mod tests {
             bytes: b"new".to_vec(),
             width: None,
             height: None,
+            truncated: false,
         };
         let new_seq = b.access.write(&[rep]).unwrap();
         assert!(new_seq > seq);
@@ -499,6 +510,32 @@ mod tests {
         let reps = b.access.read(&p).unwrap();
         assert_eq!(reps[0].bytes, b"ab");
         assert_eq!(reps[1].bytes, b"fil");
+        assert!(reps[0].truncated && reps[1].truncated);
+    }
+
+    #[test]
+    fn fake_read_under_cap_is_not_truncated() {
+        let (mut b, h, _rx) = started();
+        h.copy(text_copy("abc"));
+        let p = plan(&[("CF_UNICODETEXT", Mime::TextPlain)], 3, 1);
+        let reps = b.access.read(&p).unwrap();
+        assert_eq!(reps[0].bytes, b"abc");
+        assert!(!reps[0].truncated);
+        assert!(h.current().iter().all(|r| !r.truncated));
+    }
+
+    #[test]
+    fn snapshot_meta_calls_counts_meta_not_read() {
+        let (mut b, h, _rx) = started();
+        h.copy(text_copy("x"));
+        assert_eq!(h.snapshot_meta_calls(), 0);
+        b.access.snapshot_meta().unwrap();
+        assert_eq!(h.snapshot_meta_calls(), 1);
+        assert_eq!(h.read_calls(), 0);
+        let p = plan(&[("CF_UNICODETEXT", Mime::TextPlain)], 10, 10);
+        b.access.read(&p).unwrap();
+        assert_eq!(h.snapshot_meta_calls(), 1);
+        assert_eq!(h.read_calls(), 1);
     }
 
     #[test]
@@ -537,7 +574,6 @@ mod tests {
             tray: Support::Native,
             autostart: Support::Native,
             backend: "fake",
-            image_max_bytes: 20 * 1024 * 1024,
         };
         assert!(format!("{caps:?}").contains("Polling"));
         let v = serde_json::to_value(caps).unwrap();
