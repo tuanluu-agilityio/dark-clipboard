@@ -37,10 +37,18 @@ pub struct ClipboardMeta {
     pub source: Option<ClipboardSource>,
 }
 
-/// Where to paste. Opaque to the core; `None` means the currently focused window.
+/// Where to paste. Opaque to the core. Recorded by the UI when the popup shows (Task 205).
+///
+/// `window` and `pid` identify the window that had the focus then (Windows: the `HWND` value
+/// and its process id). An injector must refuse a target it cannot identify: it never pastes
+/// into "whatever is focused now" (never paste blind, D-044). No title is ever kept (SR-11).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PasteTarget {
     pub app_id: Option<String>,
+    /// Native window handle value; opaque outside the adapter.
+    pub window: Option<u64>,
+    /// Process id that owned `window` when it was recorded.
+    pub pid: Option<u32>,
 }
 
 pub trait ClipboardMonitor: Send {
@@ -80,8 +88,22 @@ pub trait ClipboardAccess: Send {
     fn discard_prepared(&mut self) {}
 }
 
+/// Focus return and auto-paste (Task 205). Called off the UI thread; may wait briefly (bounded)
+/// for the target to take the focus.
+///
+/// Errors: `PermissionDenied` when the target runs with higher privileges than the app (UIPI;
+/// the clip stays copied), `Unsupported` when the target cannot be identified safely or did not
+/// take the focus, `Backend` when the OS did not accept the keystrokes. Reasons are static text.
 pub trait PasteInjector: Send {
+    /// Returns the focus to `target`, then sends the paste shortcut, only after every safety
+    /// check passed.
     fn paste(&mut self, target: &PasteTarget) -> Result<(), PlatformError>;
+
+    /// Returns the focus to `target` without sending any input. Default: not supported.
+    fn focus(&mut self, target: &PasteTarget) -> Result<(), PlatformError> {
+        let _ = target;
+        Err(PlatformError::Unsupported("focus return"))
+    }
 }
 
 pub trait SourceResolver: Send {

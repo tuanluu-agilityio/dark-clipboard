@@ -10,7 +10,7 @@ $d = "$env:TEMP\dc-demo"; New-Item -ItemType Directory -Force $d | Out-Null
 .\target\release\dark-clipboard.exe --data-dir $d
 ```
 
-Press `Ctrl+Shift+V`. Type to search (`viet` finds `Việt`), arrows to move, Enter copies the selected clip to the clipboard, Shift+Enter copies as plain text, Alt+1…9 copies the n-th result, Ctrl+P pins, Delete removes (Ctrl+Z or the Undo button within 5 s), Esc closes. Quit from the tray icon. Remove the folder afterwards: `Remove-Item -Recurse $d`.
+Press `Ctrl+Shift+V`. Type to search (`viet` finds `Việt`), arrows to move, Enter copies the selected clip to the clipboard and returns the focus to the app you were in, Ctrl+Enter also pastes it there, Shift+Enter copies as plain text, Alt+1…9 copies the n-th result, Ctrl+P pins, Delete removes (Ctrl+Z or the Undo button within 5 s), Esc closes. Quit from the tray icon. Remove the folder afterwards: `Remove-Item -Recurse $d`.
 
 Note: with `--data-dir`, the app captures your real clipboard into that folder while it runs (capture is on until the first-run welcome of Task 208 exists).
 
@@ -27,4 +27,6 @@ Note: with `--data-dir`, the app captures your real clipboard into that folder w
 5. Real-shortcut timing: 50 presses, then `powershell -File scripts/measure-popup.ps1 -LogPath <data dir>\logs\dark-clipboard.log -Source hotkey`.
 6. Tray menu: pause 5 min, until resumed, private mode, quit.
 
-Not yet available: paste into the previous app (Task 205), image thumbnails and detail pane (206), settings window (207), first-run welcome (208), history window (211).
+7. Paste into the previous app (Task 205): rows in section "Windows: copy back and paste (Task 205)".
+
+Not yet available: image thumbnails and detail pane (206), settings window (207), first-run welcome (208), history window (211).

@@ -186,4 +186,4 @@ P0 relies on OS account protection and full-disk encryption (BitLocker, FileVaul
 
 ## 10. Settings file
 
-`settings.json`, `settings_version: 1`, containing `privacy` (PrivacyPolicy), `retention` (RetentionPolicy), `shortcuts`, `ui` (`language`, `popup_position`: `cursor` | `center`), `startup` (`launch_at_login`). Written atomically (temp file + rename). Corrupt file → defaults, original renamed `settings.json.corrupt-<ts>` (Darkshot pattern).
+`settings.json`, `settings_version: 1`, containing `privacy` (PrivacyPolicy), `retention` (RetentionPolicy), `shortcuts`, `ui` (`language`, `popup_position`: `cursor` | `center`, `enter_pastes`: bool, default false, optional), `startup` (`launch_at_login`). Written atomically (temp file + rename). Corrupt file → defaults, original renamed `settings.json.corrupt-<ts>` (Darkshot pattern). (Changed by Task 205, 2026-11-23: `ui.enter_pastes` added, "Enter also pastes", D-044.)

@@ -149,8 +149,10 @@ pub fn monitor_at_cursor() -> Option<MonitorAtCursor> {
 }
 
 /// The foreground window when it belongs to another process (the window to return focus to,
-/// Task 205), as a raw handle value. Only the handle is kept: no title, no class name (SR-11).
-pub fn foreground_window_of_other_process() -> Option<isize> {
+/// Task 205), as its handle value and process id. Only these are kept: no title, no class name
+/// (SR-11). Whether it is a window that may receive a paste is decided later by the platform
+/// injector (`darkclip-windows`), which checks the handle and the process id again.
+pub fn foreground_window_of_other_process() -> Option<(u64, u32)> {
     // SAFETY: no arguments; returns a handle that is not owned by the caller.
     let hwnd = unsafe { GetForegroundWindow() };
     if hwnd.0.is_null() {
@@ -162,5 +164,6 @@ pub fn foreground_window_of_other_process() -> Option<isize> {
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
     // SAFETY: no arguments.
     let own = unsafe { GetCurrentProcessId() };
-    (pid != 0 && pid != own).then_some(hwnd.0 as isize)
+    let value = u64::try_from(hwnd.0 as usize).ok()?;
+    (pid != 0 && pid != own).then_some((value, pid))
 }

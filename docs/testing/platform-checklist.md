@@ -88,6 +88,30 @@ All rows **untested** until the owner runs them. Use a scratch history: `dark-cl
 | Narrator on the popup | Search box, chips (checkbox, checked state) and rows (list items) are announced | **untested** |
 | Real-shortcut NFR-01 timing: 50 presses, then `scripts/measure-popup.ps1 -LogPath <log> -Source hotkey` | p95 ≤ 100 ms (record the numbers in `docs/testing/perf-windows.md`) | **untested** |
 
+## Windows: copy back and paste (Task 205)
+
+All rows **untested** until the owner runs them (agents never send input, GC-19). Use a scratch history as above and the shortcut `Ctrl+Shift+V` unless a row says otherwise. Before each row put the caret in an empty document of the target app. The log `<data dir>\logs\dark-clipboard.log` gets one `paste` line per Ctrl+Enter (`result=ok|refused|elevated|failed`).
+
+| Row | Expected | Result |
+|---|---|---|
+| Notepad: Enter on a clip | Popup closes, Notepad has the focus again (caret blinking), nothing typed; Ctrl+V pastes the clip | **untested** |
+| Notepad: Esc in the popup | Popup closes, Notepad has the focus again, nothing typed | **untested** |
+| Notepad: Ctrl+Enter on a clip | Popup closes, the clip is pasted once at the caret; `paste result=ok` | **untested** |
+| Notepad: Ctrl+Enter, keep Ctrl held a moment, release | Pasted once; no stray characters; Ctrl not stuck afterwards (type a letter: no shortcut fires) | **untested** |
+| Notepad: Ctrl+Shift+Enter, keep Shift held over 1 s | Not pasted; popup stays with "Copied — paste manually"; `result=refused`; Ctrl+V pastes the clip | **untested** |
+| VS Code (editor focused): Ctrl+Enter | Pasted once into the editor | **untested** |
+| Edge (address bar, then a page text field): Ctrl+Enter | Pasted once into the field that had the focus | **untested** |
+| Word (if available): Ctrl+Enter on a rich-text clip; Shift+Enter then Ctrl+V | Formatted text pasted; Shift+Enter gives plain text after manual Ctrl+V | **untested** |
+| Elevated Notepad (Run as administrator), app not elevated: Ctrl+Enter | Nothing typed into Notepad; popup stays with the "runs as administrator" toast; `result=elevated`; Ctrl+V in Notepad pastes the clip | **untested** |
+| Elevated Notepad: Enter | Popup closes, focus returns to the elevated Notepad (no input sent) | **untested** |
+| Popup opened from the tray icon: Ctrl+Enter | Never pastes into the taskbar; popup stays with "Copied — paste manually"; `result=refused` | **untested** |
+| Popup opened from the tray icon: Enter | Popup closes; nothing is typed anywhere | **untested** |
+| Close the target app while the popup is open, then Ctrl+Enter | "Copied — paste manually"; nothing typed anywhere | **untested** |
+| Target on another virtual desktop (Win+Ctrl+Left/Right after opening the popup), Ctrl+Enter | No paste into a hidden window; toast or popup closes with the clip copied | **untested** |
+| Set `"enter_pastes": true` under `ui` in `<data dir>\settings.json`, restart, Enter in Notepad | Hint line reads "Enter paste ..."; Enter pastes like Ctrl+Enter; the Copy button and Alt+1..9 still only copy | **untested** |
+| Hint line (default settings) | Shows "Ctrl+Enter paste" | **untested** |
+| Owner-only test: open an empty Notepad, run `cargo test -p darkclip-windows --lib real_paste_into_focused_window -- --ignored --nocapture`, click into Notepad within 3 s | The current clipboard is pasted once into Notepad; the test passes | **untested** |
+
 ## macOS
 
 All rows **untested** (no hardware, Q-04).

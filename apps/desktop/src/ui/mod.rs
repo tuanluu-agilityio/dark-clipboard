@@ -237,6 +237,7 @@ fn push_status(
         now,
     );
     let wanted = settings.shortcuts.toggle_popup;
+    let enter_pastes = settings.ui.enter_pastes;
     let (ui, log) = (ui.clone(), Arc::clone(log));
     // The registration lives on the main thread; it changes only when the setting changed.
     let _ = slint::invoke_from_event_loop(move || {
@@ -251,6 +252,7 @@ fn push_status(
             utc_offset_min: tray_host::local_utc_offset_minutes(),
             warning: sc.warning(),
         });
+        popup_host::set_enter_pastes(enter_pastes);
         if let Some(w) = ui.upgrade() {
             set_strings(&w, lang, Some(status), sc);
         }
@@ -259,6 +261,21 @@ fn push_status(
         popup_host::app_changed();
     });
     wake_after(state, now)
+}
+
+/// The bundle's paste injector, only where the platform reports native auto-paste (otherwise
+/// the popup never offers or attempts a paste).
+fn take_injector(bundle: &mut darkclip_platform::PlatformBundle) -> Option<popup_host::Injector> {
+    usable_injector(bundle.paste.take(), bundle.caps.auto_paste)
+}
+
+fn usable_injector(
+    paste: Option<Box<dyn darkclip_platform::PasteInjector>>,
+    auto_paste: darkclip_platform::Support,
+) -> Option<popup_host::Injector> {
+    let injector = paste?;
+    matches!(auto_paste, darkclip_platform::Support::Native)
+        .then(|| Arc::new(std::sync::Mutex::new(injector)))
 }
 
 /// Joins the event forwarder only after a clean shutdown (same rule as `App::shutdown`: after a
@@ -286,11 +303,18 @@ impl Worker {
         let handle = std::thread::Builder::new()
             .name("darkclip-worker".into())
             .spawn(move || {
-                let Ok(bundle) = crate::platform() else {
+                let Ok(mut bundle) = crate::platform() else {
                     log.event("start_failed", &[("stage", Val::Name("platform"))]);
                     worker_failed.store(true, Ordering::SeqCst);
                     return quit_soon();
                 };
+                // The paste injector belongs to the UI side (Task 205): focus return and
+                // Ctrl+V run on paste threads, never on the actor or this worker.
+                if let Some(injector) = take_injector(&mut bundle) {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        popup_host::set_injector(injector);
+                    });
+                }
                 let (ev_tx, ev_rx) = mpsc::channel::<AppEvent>();
                 let started = App::start(
                     bundle,
@@ -610,6 +634,22 @@ mod tests {
         assert!(!swallow_reopen(Trigger::Hotkey, false, just));
         assert!(!swallow_reopen(Trigger::Ipc, false, just));
         assert!(!swallow_reopen(Trigger::Tray, true, just));
+    }
+
+    #[test]
+    fn an_injector_is_used_only_where_auto_paste_is_native() {
+        use darkclip_platform::{PasteInjector, PasteTarget, PlatformError, Support};
+        struct Never;
+        impl PasteInjector for Never {
+            fn paste(&mut self, _: &PasteTarget) -> Result<(), PlatformError> {
+                panic!("tests never paste")
+            }
+        }
+        let boxed = || Some(Box::new(Never) as Box<dyn PasteInjector>);
+        assert!(usable_injector(boxed(), Support::Native).is_some());
+        assert!(usable_injector(boxed(), Support::Unsupported { reason: "x" }).is_none());
+        assert!(usable_injector(boxed(), Support::Polling { interval_ms: 5 }).is_none());
+        assert!(usable_injector(None, Support::Native).is_none());
     }
 
     #[test]

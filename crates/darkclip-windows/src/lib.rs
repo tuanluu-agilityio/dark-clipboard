@@ -1,4 +1,5 @@
-//! Windows platform adapter (ADR-0002, ADR-0004): Win32 clipboard monitor and access.
+//! Windows platform adapter (ADR-0002, ADR-0004): Win32 clipboard monitor and access, and the
+//! paste injector (focus return + `SendInput` Ctrl+V, Task 205).
 //!
 //! On other operating systems this crate compiles to an empty library, so the workspace
 //! builds on all three OSes. All `unsafe` lives in `win.rs`. No logging, no window titles,
@@ -16,6 +17,8 @@ mod dib;
 mod formats;
 #[cfg(windows)]
 mod monitor;
+// Pure focus/paste decisions; compiled everywhere so the fake-seam tests run on every OS.
+mod paste;
 #[cfg(windows)]
 mod source;
 mod text;
@@ -26,6 +29,8 @@ mod win;
 pub use access::WinAccess;
 #[cfg(windows)]
 pub use monitor::{SignalSourceFn, WinMonitor};
+#[cfg(windows)]
+pub use paste::WinPasteInjector;
 #[cfg(windows)]
 pub use source::WinSourceResolver;
 
@@ -39,8 +44,9 @@ use darkclip_platform::{
 const NOT_YET: Support = Support::Unsupported { reason: "not yet" };
 
 /// What exists in this build: monitor, read, write and marker detection (Tasks 101-105; the
-/// real-clipboard tests ran in Task 107, `docs/testing/platform-checklist.md`). The rest is
-/// reported as not available.
+/// real-clipboard tests ran in Task 107, `docs/testing/platform-checklist.md`) and auto-paste
+/// with focus return (Task 205; the real paste is an owner manual row). The rest is reported as
+/// not available.
 #[cfg(windows)]
 fn capabilities() -> Capabilities {
     Capabilities {
@@ -51,7 +57,7 @@ fn capabilities() -> Capabilities {
         source_app: SourceSupport::Owner,
         // No hotkey is registered by this adapter yet; `UserBound` claims nothing native.
         global_shortcut: ShortcutSupport::UserBound,
-        auto_paste: NOT_YET,
+        auto_paste: Support::Native,
         tray: NOT_YET,
         autostart: NOT_YET,
         backend: "win32",
@@ -65,7 +71,7 @@ pub fn create() -> Result<PlatformBundle, PlatformError> {
         monitor: Box::new(WinMonitor::new(Box::new(|| WinSourceResolver.resolve()))),
         access: Box::new(WinAccess::new()),
         source: Box::new(WinSourceResolver),
-        paste: None,
+        paste: Some(Box::new(WinPasteInjector)),
         caps: capabilities(),
     })
 }
@@ -83,10 +89,10 @@ mod tests {
         assert_eq!(b.caps.read_without_focus, Support::Native);
         assert_eq!(b.caps.write, Support::Native);
         assert_eq!(b.caps.concealed_markers, Support::Native);
-        assert!(matches!(b.caps.auto_paste, Support::Unsupported { .. }));
+        assert_eq!(b.caps.auto_paste, Support::Native);
         // Read-only: whatever owns the clipboard now is `None` or a bare file name.
         assert!(b.source.resolve().is_none_or(|s| !s.app_id.contains('\\')));
-        assert!(b.paste.is_none());
+        assert!(b.paste.is_some());
         assert!(b.access.sequence().is_ok());
     }
 }

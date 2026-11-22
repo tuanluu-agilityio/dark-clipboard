@@ -7,6 +7,7 @@
 pub mod highlight;
 pub mod keys;
 pub mod list;
+pub mod paste;
 pub mod place;
 
 /// How to bring a model from `old` to `new` without replacing rows needlessly (a replaced

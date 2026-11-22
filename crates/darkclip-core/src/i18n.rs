@@ -133,6 +133,20 @@ messages! {
         "Enter copy · Shift+Enter plain · Ctrl+P pin · Del delete · Esc close",
         "Enter sao chép · Shift+Enter văn bản thuần · Ctrl+P ghim · Del xóa · Esc đóng"
     ),
+    // Copy back and paste (Task 205)
+    UiKeyHintsPaste => (
+        "Enter copy · Ctrl+Enter paste · Shift+Enter plain · Ctrl+P pin · Del delete · Esc close",
+        "Enter sao chép · Ctrl+Enter dán · Shift+Enter văn bản thuần · Ctrl+P ghim · Del xóa · Esc đóng"
+    ),
+    UiKeyHintsEnterPastes => (
+        "Enter paste · Shift+Enter plain · Ctrl+P pin · Del delete · Esc close",
+        "Enter dán · Shift+Enter văn bản thuần · Ctrl+P ghim · Del xóa · Esc đóng"
+    ),
+    UiPasteManual => ("Copied — paste manually", "Đã sao chép — hãy tự dán"),
+    UiPasteElevated => (
+        "Copied — that app runs as administrator, so Dark Clipboard cannot paste into it. Paste manually.",
+        "Đã sao chép — ứng dụng đó chạy với quyền quản trị nên Dark Clipboard không thể dán vào. Hãy tự dán."
+    ),
     CliSeedRefused => (
         "--seed-demo-clips needs --data-dir with a folder other than the default data folder.",
         "--seed-demo-clips cần --data-dir với một thư mục khác thư mục dữ liệu mặc định."
