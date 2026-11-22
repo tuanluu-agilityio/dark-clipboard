@@ -13,29 +13,22 @@ mod access;
 #[cfg(windows)]
 mod monitor;
 #[cfg(windows)]
+mod source;
+#[cfg(windows)]
 mod win;
 
 #[cfg(windows)]
 pub use access::WinAccess;
 #[cfg(windows)]
 pub use monitor::{SignalSourceFn, WinMonitor};
+#[cfg(windows)]
+pub use source::WinSourceResolver;
 
 #[cfg(windows)]
 use darkclip_platform::{
     Capabilities, PlatformBundle, PlatformError, ShortcutSupport, SourceResolver, SourceSupport,
     Support,
 };
-
-/// Source resolver placeholder until Task 105: always `None`.
-#[cfg(windows)]
-struct NoSource;
-
-#[cfg(windows)]
-impl SourceResolver for NoSource {
-    fn resolve(&self) -> Option<darkclip_core::ClipboardSource> {
-        None
-    }
-}
 
 #[cfg(windows)]
 const NOT_YET: Support = Support::Unsupported { reason: "not yet" };
@@ -48,7 +41,7 @@ fn capabilities() -> Capabilities {
         read_without_focus: NOT_YET,
         write: NOT_YET,
         concealed_markers: NOT_YET,
-        source_app: SourceSupport::None,
+        source_app: SourceSupport::Owner,
         // No hotkey is registered by this adapter yet; `UserBound` claims nothing native.
         global_shortcut: ShortcutSupport::UserBound,
         auto_paste: NOT_YET,
@@ -62,9 +55,9 @@ fn capabilities() -> Capabilities {
 #[cfg(windows)]
 pub fn create() -> Result<PlatformBundle, PlatformError> {
     Ok(PlatformBundle {
-        monitor: Box::new(WinMonitor::new(Box::new(|| None))),
+        monitor: Box::new(WinMonitor::new(Box::new(|| WinSourceResolver.resolve()))),
         access: Box::new(WinAccess::new()),
-        source: Box::new(NoSource),
+        source: Box::new(WinSourceResolver),
         paste: None,
         caps: capabilities(),
     })
@@ -79,9 +72,10 @@ mod tests {
         let b = create().unwrap();
         assert_eq!(b.caps.backend, "win32");
         assert_eq!(b.caps.monitor, Support::Native);
-        assert_eq!(b.caps.source_app, SourceSupport::None);
+        assert_eq!(b.caps.source_app, SourceSupport::Owner);
         assert!(matches!(b.caps.write, Support::Unsupported { .. }));
-        assert!(b.source.resolve().is_none());
+        // Read-only: whatever owns the clipboard now is `None` or a bare file name.
+        assert!(b.source.resolve().is_none_or(|s| !s.app_id.contains('\\')));
         assert!(b.paste.is_none());
         assert!(b.access.sequence().is_ok());
     }

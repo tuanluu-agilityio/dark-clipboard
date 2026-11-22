@@ -39,7 +39,7 @@ hits="$(rs_files | grep -vE '^(crates/darkclip-app/src/capture\.rs|crates/darkcl
 [ -z "$hits" ] || { echo "CHECK FAILED: ClipboardAccess used outside capture actor:"; echo "$hits"; exit 1; }
 
 echo "== no window-title capture (SR-11)"
-hits="$(rs_files | xargs -r grep -nE '\bGetWindowText(W|A|Length[A-Za-z]*)?\b|_NET_WM_NAME|\bkCGWindowName\b' || true)"
+hits="$(rs_files | xargs -r grep -nE '\b(GetWindowText(W|A|Length[A-Za-z]*)?|InternalGetWindowText)\b|\bWM_GETTEXT(LENGTH)?\b|_NET_WM_NAME|\bkCGWindowName\b' || true)"
 [ -z "$hits" ] || { echo "CHECK FAILED: window title API:"; echo "$hits"; exit 1; }
 
 echo "== mandatory markers present (GC-07)"

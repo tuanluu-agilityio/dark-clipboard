@@ -9,15 +9,20 @@ use std::cell::RefCell;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU64, Ordering};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::core::PWSTR;
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::DataExchange::{
-    AddClipboardFormatListener, GetClipboardSequenceNumber, RemoveClipboardFormatListener,
+    AddClipboardFormatListener, GetClipboardOwner, GetClipboardSequenceNumber,
+    RemoveClipboardFormatListener,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Threading::{
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, PostMessageW,
-    PostQuitMessage, RegisterClassExW, UnregisterClassW, HWND_MESSAGE, MSG, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_APP, WM_CLIPBOARDUPDATE, WNDCLASSEXW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
+    GetWindowThreadProcessId, PostMessageW, PostQuitMessage, RegisterClassExW, UnregisterClassW,
+    HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLIPBOARDUPDATE, WNDCLASSEXW,
 };
 
 /// Private message that ends the message loop (posted by `RawWindow::post_stop`).
@@ -44,6 +49,55 @@ fn backend(e: &windows::core::Error) -> PlatformError {
 pub(crate) fn clipboard_sequence() -> u32 {
     // SAFETY: no arguments, no preconditions; reads a per-session counter.
     unsafe { GetClipboardSequenceNumber() }
+}
+
+/// A process handle; closed on drop.
+struct ProcessHandle(HANDLE);
+
+impl Drop for ProcessHandle {
+    fn drop(&mut self) {
+        // SAFETY: the handle was returned by `OpenProcess` and is closed exactly once, here.
+        let _ = unsafe { CloseHandle(self.0) };
+    }
+}
+
+/// Longest path `QueryFullProcessImageNameW` can return (32 767 characters plus NUL).
+const MAX_IMAGE_PATH: usize = 32_768;
+
+/// Full image path (UTF-16, no NUL) of the process that owns the clipboard, or `None` when
+/// there is no owner window or the process cannot be opened or queried. Elevated owners
+/// usually still resolve with `PROCESS_QUERY_LIMITED_INFORMATION`; protected processes are
+/// the denial case.
+/// Only `source.rs` calls this and it keeps the file name only; the path never leaves the
+/// crate. Does not open the clipboard and never reads a window title.
+pub(crate) fn clipboard_owner_image_path() -> Option<Vec<u16>> {
+    // SAFETY: no arguments; returns a window handle or null, and does not open the clipboard.
+    let owner = unsafe { GetClipboardOwner() }.ok()?;
+    let mut pid = 0u32;
+    // SAFETY: `owner` is a handle value (it may be stale, which only makes the call fail);
+    // `pid` is a valid out-pointer.
+    let thread = unsafe { GetWindowThreadProcessId(owner, Some(&raw mut pid)) };
+    if thread == 0 || pid == 0 {
+        return None;
+    }
+    // SAFETY: plain call; the right requested is the least that allows the image name query.
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let process = ProcessHandle(process);
+    let mut buf = vec![0u16; MAX_IMAGE_PATH];
+    let mut len = u32::try_from(buf.len()).unwrap_or(u32::MAX);
+    // SAFETY: the process handle is open (owned by `process`); `buf` holds `len` writable
+    // u16s; `len` is a valid in/out pointer.
+    unsafe {
+        QueryFullProcessImageNameW(
+            process.0,
+            PROCESS_NAME_FORMAT(0),
+            PWSTR(buf.as_mut_ptr()),
+            &raw mut len,
+        )
+    }
+    .ok()?;
+    buf.truncate(usize::try_from(len).unwrap_or(0));
+    Some(buf)
 }
 
 /// Window procedure of the monitor class. Runs only on the thread that owns the window.
@@ -263,6 +317,16 @@ impl RawWindow {
 #[cfg(test)]
 pub(crate) mod test_support {
     //! Test-only clipboard writer for the ignored `real_clipboard_write_*` tests.
+
+    /// Number of handles open in this process (leak tests).
+    pub(crate) fn process_handle_count() -> u32 {
+        use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
+        let mut n = 0u32;
+        // SAFETY: the pseudo-handle of the current process is always valid; `n` is a valid
+        // out-pointer.
+        let _ = unsafe { GetProcessHandleCount(GetCurrentProcess(), &raw mut n) };
+        n
+    }
 
     use super::{backend, clipboard_sequence, MessageWindow};
     use darkclip_platform::PlatformError;
