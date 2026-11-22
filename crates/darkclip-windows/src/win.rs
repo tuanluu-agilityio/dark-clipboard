@@ -120,10 +120,9 @@ impl ClipboardGuard {
 
     /// Opens the clipboard for writing with `owner` as the window that owns it after
     /// `empty` (S-2: `OpenClipboard(NULL)` would make `SetClipboardData` fail). One attempt,
-    /// `Busy` otherwise. Fails with `Backend` when called on another thread than the one
-    /// that created `owner`.
+    /// `Busy` otherwise. `owner` was created on this thread (it is not `Send`).
     pub(crate) fn open_for_write(owner: &OwnerWindow) -> Result<Self, PlatformError> {
-        Self::open(Some(owner.hwnd()?))
+        Self::open(Some(owner.window.0))
     }
 
     /// `EmptyClipboard`: frees the previous data and makes our owner window the owner.
@@ -526,21 +525,16 @@ impl Drop for GlobalBlock {
     }
 }
 
-/// The clipboard owner window for `write` (S-2): a message-only window without a clipboard
-/// listener, created on the thread that writes and usable only there. Destroyed (window,
-/// then class) on drop on that thread; dropped on another thread, both are left to the OS
-/// at process exit, because `DestroyWindow` cannot destroy another thread's window.
+/// The clipboard owner window of one `write` (S-2, D-038): a message-only window without a
+/// clipboard listener, created on the writing thread for that write only. Not `Send`.
+/// Fields drop in declaration order: the window is destroyed, then its class unregistered.
+/// The caller drops it after `CloseClipboard`; the written data stays on the clipboard
+/// because nothing is delayed-rendered, and the clipboard owner becomes NULL, so no
+/// `WM_DESTROYCLIPBOARD` is ever sent to a thread that does not pump messages.
 pub(crate) struct OwnerWindow {
-    window: Option<WindowGuard>,
-    class: Option<ClassGuard>,
-    thread: std::thread::ThreadId,
+    window: WindowGuard,
+    _class: ClassGuard,
 }
-
-// SAFETY: the window and class handles are plain values. They are used (`OpenClipboard`,
-// `DestroyWindow`, `UnregisterClassW`) only on the thread that created them: `hwnd` and
-// `drop` check the thread at run time and never use them elsewhere. Moving the value to
-// another thread is therefore sound.
-unsafe impl Send for OwnerWindow {}
 
 impl OwnerWindow {
     /// Registers a class and creates a message-only window on this thread. On error every
@@ -549,36 +543,16 @@ impl OwnerWindow {
         let class = ClassGuard::register()?;
         let window = WindowGuard::create(&class)?;
         Ok(Self {
-            window: Some(window),
-            class: Some(class),
-            thread: std::thread::current().id(),
+            window,
+            _class: class,
         })
     }
 
-    /// The window handle, only on the creating thread.
-    fn hwnd(&self) -> Result<HWND, PlatformError> {
-        if std::thread::current().id() != self.thread {
-            return Err(PlatformError::Backend { code: -2 });
-        }
-        self.window
-            .as_ref()
-            .map(|w| w.0)
-            .ok_or(PlatformError::Backend { code: -1 })
-    }
-}
-
-impl Drop for OwnerWindow {
-    fn drop(&mut self) {
-        let window = self.window.take();
-        let class = self.class.take();
-        if std::thread::current().id() == self.thread {
-            // Window first, then its class.
-            drop(window);
-            drop(class);
-        } else {
-            std::mem::forget(window);
-            std::mem::forget(class);
-        }
+    /// `GetClipboardOwner()` is this window: nobody has emptied the clipboard since our write.
+    pub(crate) fn owns_clipboard(&self) -> bool {
+        // SAFETY: no arguments; returns a window handle or null, and does not open the
+        // clipboard.
+        unsafe { GetClipboardOwner() }.is_ok_and(|h| h == self.window.0)
     }
 }
 

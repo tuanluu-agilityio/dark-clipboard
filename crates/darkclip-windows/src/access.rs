@@ -388,7 +388,11 @@ pub(crate) trait ClipboardWriteOs: ClipboardOs {
     /// A movable global memory block holding one format's data. Freed (and wiped) on drop
     /// unless `ClipboardWriter::set` handed it to the system.
     type Block;
-    /// The clipboard, open by this thread with our owner window; closed when dropped.
+    /// The clipboard owner window of one write (S-2, D-038): a message-only window created
+    /// on the calling thread for that write only; destroyed (and its class unregistered)
+    /// on drop.
+    type Owner;
+    /// The clipboard, open by this thread with an owner window; closed when dropped.
     type Writer<'a>: ClipboardWriter<Self::Block>
     where
         Self: 'a;
@@ -396,9 +400,17 @@ pub(crate) trait ClipboardWriteOs: ClipboardOs {
     /// `GlobalAlloc(GMEM_MOVEABLE)` holding a copy of `bytes`.
     fn alloc(&mut self, bytes: &[u8]) -> Result<Self::Block, PlatformError>;
 
-    /// One `OpenClipboard(owner)` attempt; `Busy` when another process holds it (S-5). The
-    /// owner is a message-only window created lazily on the calling thread (S-2).
-    fn open_for_write(&mut self) -> Result<Self::Writer<'_>, PlatformError>;
+    /// A new owner window on this thread.
+    fn create_owner(&mut self) -> Result<Self::Owner, PlatformError>;
+
+    /// One `OpenClipboard(owner)` attempt; `Busy` when another process holds it (S-5).
+    fn open_for_write(&mut self, owner: &Self::Owner) -> Result<Self::Writer<'_>, PlatformError>;
+
+    /// `GetClipboardSequenceNumber` (clipboard closed).
+    fn sequence_now(&self) -> u64;
+
+    /// `GetClipboardOwner() == owner`: nobody has emptied the clipboard since our write.
+    fn owns_clipboard(&self, owner: &Self::Owner) -> bool;
 }
 
 /// Calls made while the clipboard is open for writing.
@@ -408,13 +420,11 @@ pub(crate) trait ClipboardWriter<B> {
     /// `SetClipboardData(id, block)`. On success the system owns the block; on failure the
     /// block is dropped here, which frees it.
     fn set(&mut self, id: u32, block: B) -> Result<(), PlatformError>;
-    /// `GetClipboardSequenceNumber`, read while the clipboard is still open.
+    /// `GetClipboardSequenceNumber`, read while the clipboard is still open. Only the
+    /// fallback value: `CloseClipboard` still bumps the number (D-038).
     fn sequence_while_open(&self) -> u64;
 }
 
-/// `write` called from another thread than the first one: the owner window belongs to the
-/// first thread (S-2).
-pub(crate) const WRONG_THREAD: PlatformError = PlatformError::Backend { code: -2 };
 /// Nothing in the clip can be written on Windows (for example only `http:` URIs).
 const NOTHING_TO_WRITE: PlatformError = PlatformError::Unsupported("nothing to write");
 
@@ -619,23 +629,23 @@ fn percent_decode(s: &str) -> Option<Zeroizing<String>> {
     Some(Zeroizing::new(text.to_owned()))
 }
 
-/// `write` over the seam (Task 104). Rejects a call from another thread than the first one
-/// (the owner window lives there, S-2). Converts and allocates every block before opening
-/// the clipboard, so it is held briefly; then one `OpenClipboard` attempt (`Busy`
-/// otherwise), `EmptyClipboard`, `SetClipboardData` per format, and the sequence number read
-/// before `CloseClipboard`. Any failure after the open closes the clipboard and returns
-/// `Backend`; every block not handed to the system is freed on every path (drop).
+/// `write` over the seam (Task 104). Converts and allocates every block before opening the
+/// clipboard, so it is held briefly. Then: a fresh owner window, one `OpenClipboard` attempt
+/// (`Busy` otherwise), `EmptyClipboard`, `SetClipboardData` per format, `CloseClipboard`,
+/// the sequence number, the owner check, and the window is destroyed (D-038). Any failure
+/// after the open closes the clipboard and returns `Backend`. On every path the clipboard is
+/// closed before the window is destroyed, and every block not handed to the system is freed
+/// (drop order: blocks and writer, then the window).
+///
+/// The window lives only for this call because the capture actor's thread never pumps
+/// messages: a long-lived owner would receive `WM_DESTROYCLIPBOARD` (sent when another app
+/// empties the clipboard) and could stall that app. Destroying the owner leaves the data on
+/// the clipboard (nothing is delayed-rendered). Any thread may call this; each call's window
+/// is created and destroyed on that thread.
 pub(crate) fn write_reps<O: ClipboardWriteOs>(
     os: &mut O,
-    owner_thread: &mut Option<std::thread::ThreadId>,
     reps: &[RawRepresentation],
 ) -> Result<u64, PlatformError> {
-    let me = std::thread::current().id();
-    match *owner_thread {
-        Some(t) if t != me => return Err(WRONG_THREAD),
-        Some(_) => {}
-        None => *owner_thread = Some(me),
-    }
     let planned = plan_write(reps);
     if planned.is_empty() {
         return Err(NOTHING_TO_WRITE);
@@ -652,19 +662,39 @@ pub(crate) fn write_reps<O: ClipboardWriteOs>(
         // `p.bytes` is wiped here.
     }
 
-    let mut open = os.open_for_write()?;
-    open.empty().map_err(|e| after_open(&e))?;
-    // On an early return the blocks left in the iterator are dropped, which frees them.
-    for (id, block) in blocks {
-        open.set(id, block).map_err(|e| after_open(&e))?;
-    }
-    // Self-write suppression (spike answer 8, capture rule 5): the actor ignores exactly this
-    // sequence number. It is read while we still hold the clipboard, so no other process can
-    // have changed it in between; read after `CloseClipboard`, another writer could already
-    // have replaced our data, and the actor would then drop their change as ours.
-    let seq = open.sequence_while_open();
-    drop(open); // CloseClipboard
+    // Declared before the writer, so on an early return the clipboard closes first.
+    let owner = os.create_owner()?;
+    let before_close = {
+        let mut open = os.open_for_write(&owner)?;
+        open.empty().map_err(|e| after_open(&e))?;
+        // On an early return the blocks left in the iterator are dropped, which frees them.
+        for (id, block) in blocks {
+            open.set(id, block).map_err(|e| after_open(&e))?;
+        }
+        open.sequence_while_open()
+        // `open` closes the clipboard here.
+    };
+    let seq = seq_after_close(os, &owner, before_close);
+    drop(owner); // DestroyWindow, UnregisterClassW
     Ok(seq)
+}
+
+/// The sequence number the capture actor must ignore for our write (D-038, capture rule 5).
+///
+/// `CloseClipboard` bumps the number (the system adds synthesized formats at close), and the
+/// monitor's `WM_CLIPBOARDUPDATE` carries the post-close value (spike answer 8), so it is
+/// read after the close. It is ours only if our window still owns the clipboard *after* the
+/// read: any writer that got in between our close and the read must have emptied the
+/// clipboard, which changes the owner. Otherwise the pre-close value is returned: no signal
+/// carries it, so another app's copy is never suppressed (at worst our own copy-back is seen
+/// once more and deduplicated).
+fn seq_after_close<O: ClipboardWriteOs>(os: &O, owner: &O::Owner, before_close: u64) -> u64 {
+    let after = os.sequence_now();
+    if os.owns_clipboard(owner) {
+        after
+    } else {
+        before_close
+    }
 }
 
 /// A failure while the clipboard is open is always `Backend`, never `Busy`: a retry would
@@ -679,8 +709,7 @@ fn after_open(e: &PlatformError) -> PlatformError {
 /// The real seam over `win.rs`.
 #[derive(Default)]
 pub(crate) struct WinOs {
-    /// The clipboard owner window for `write`, created on the first write (S-2).
-    owner: Option<win::OwnerWindow>,
+    _private: (),
 }
 
 impl ClipboardOs for WinOs {
@@ -697,18 +726,30 @@ impl ClipboardOs for WinOs {
 
 impl ClipboardWriteOs for WinOs {
     type Block = win::GlobalBlock;
+    type Owner = win::OwnerWindow;
     type Writer<'a> = win::ClipboardGuard;
 
     fn alloc(&mut self, bytes: &[u8]) -> Result<win::GlobalBlock, PlatformError> {
         win::GlobalBlock::with_bytes(bytes)
     }
 
-    fn open_for_write(&mut self) -> Result<win::ClipboardGuard, PlatformError> {
-        let owner = match &mut self.owner {
-            Some(w) => w,
-            slot @ None => slot.insert(win::OwnerWindow::create()?),
-        };
+    fn create_owner(&mut self) -> Result<win::OwnerWindow, PlatformError> {
+        win::OwnerWindow::create()
+    }
+
+    fn open_for_write(
+        &mut self,
+        owner: &win::OwnerWindow,
+    ) -> Result<win::ClipboardGuard, PlatformError> {
         win::ClipboardGuard::open_for_write(owner)
+    }
+
+    fn sequence_now(&self) -> u64 {
+        u64::from(win::clipboard_sequence())
+    }
+
+    fn owns_clipboard(&self, owner: &win::OwnerWindow) -> bool {
+        owner.owns_clipboard()
     }
 }
 
@@ -761,8 +802,6 @@ impl OpenClipboardView for win::ClipboardGuard {
 pub struct WinAccess {
     os: WinOs,
     markers: MarkerCache,
-    /// The thread of the first `write`: the owner window belongs to it (S-2).
-    write_thread: Option<std::thread::ThreadId>,
 }
 
 impl WinAccess {
@@ -788,9 +827,10 @@ impl ClipboardAccess for WinAccess {
     }
 
     /// Replaces the clipboard with `reps` (copy-back) and returns the sequence number of that
-    /// change, read before `CloseClipboard`. Never writes marker formats (D-012).
+    /// change, read after `CloseClipboard` while we are still the owner (D-038). Never
+    /// writes marker formats (D-012).
     fn write(&mut self, reps: &[RawRepresentation]) -> Result<u64, PlatformError> {
-        write_reps(&mut self.os, &mut self.write_thread, reps)
+        write_reps(&mut self.os, reps)
     }
 }
 
@@ -806,7 +846,7 @@ mod tests {
     use darkclip_core::{Mime, Platform, SourceConfidence};
     use std::cell::{Cell, RefCell};
     use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     /// Fake OS: a clipboard of `(id, registered name)` entries plus DWORD data for some ids.
     /// Registration mimics atoms (case-insensitive, one id per name).
@@ -837,8 +877,12 @@ mod tests {
         size_calls: RefCell<Vec<u32>>,
         /// Every `(id, max)` passed to `copy_data`.
         copy_calls: RefCell<Vec<(u32, usize)>>,
-        /// Write seam: every call, in order.
-        events: RefCell<Vec<Ev>>,
+        /// Write seam: every call, in order (shared with the fake owner windows).
+        events: Arc<Mutex<Vec<Ev>>>,
+        /// Creating the owner window fails.
+        owner_fails: bool,
+        /// Another writer empties the clipboard right after our `CloseClipboard`.
+        stolen_after_close: bool,
         /// `EmptyClipboard` fails.
         empty_fails: bool,
         /// The n-th `SetClipboardData` (0-based) fails.
@@ -848,18 +892,31 @@ mod tests {
         freed: Arc<AtomicU32>,
         /// `(id, bytes)` handed to the clipboard, in order.
         written: RefCell<Vec<(u32, Vec<u8>)>>,
-        /// The sequence number: +1 per `SetClipboardData` and per `CloseClipboard`, so a
-        /// value read after close differs from the one read before.
+        /// The sequence number: +1 per `SetClipboardData`, +4 at `CloseClipboard` (the
+        /// system adds synthesized formats at close, D-038), +5 for a stealing writer.
         write_seq: Cell<u64>,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Ev {
+        CreateOwner,
         Open,
         Empty,
         Set(u32),
-        Seq(u64),
+        SeqOpen(u64),
         Close,
+        SeqNow(u64),
+        OwnerCheck(bool),
+        DestroyOwner,
+    }
+
+    /// A fake owner window: logs its destruction.
+    struct FakeOwner(Arc<Mutex<Vec<Ev>>>);
+
+    impl Drop for FakeOwner {
+        fn drop(&mut self) {
+            self.0.lock().unwrap().push(Ev::DestroyOwner);
+        }
     }
 
     /// A fake global block: counts itself as freed when dropped without being handed over.
@@ -896,7 +953,9 @@ mod tests {
                 files: Vec::new(),
                 size_calls: RefCell::new(Vec::new()),
                 copy_calls: RefCell::new(Vec::new()),
-                events: RefCell::new(Vec::new()),
+                events: Arc::new(Mutex::new(Vec::new())),
+                owner_fails: false,
+                stolen_after_close: false,
                 empty_fails: false,
                 fail_set_at: None,
                 allocs: Cell::new(0),
@@ -910,9 +969,20 @@ mod tests {
             self.freed.load(AtomicOrdering::SeqCst)
         }
 
+        fn push(&self, e: Ev) {
+            self.events.lock().unwrap().push(e);
+        }
+
+        fn ev(&self) -> Vec<Ev> {
+            self.events.lock().unwrap().clone()
+        }
+
+        fn count(&self, e: Ev) -> usize {
+            self.ev().iter().filter(|x| **x == e).count()
+        }
+
         fn sets(&self) -> Vec<u32> {
-            self.events
-                .borrow()
+            self.ev()
                 .iter()
                 .filter_map(|e| match e {
                     Ev::Set(id) => Some(*id),
@@ -1025,13 +1095,17 @@ mod tests {
 
     impl Drop for FakeWriter<'_> {
         fn drop(&mut self) {
-            self.0.events.borrow_mut().push(Ev::Close);
-            self.0.write_seq.set(self.0.write_seq.get() + 1);
+            self.0.push(Ev::Close);
+            self.0.write_seq.set(self.0.write_seq.get() + 4);
+            if self.0.stolen_after_close {
+                self.0.write_seq.set(self.0.write_seq.get() + 5);
+            }
         }
     }
 
     impl ClipboardWriteOs for FakeOs {
         type Block = FakeBlock;
+        type Owner = FakeOwner;
         type Writer<'a> = FakeWriter<'a>;
 
         fn alloc(&mut self, bytes: &[u8]) -> Result<FakeBlock, PlatformError> {
@@ -1043,19 +1117,39 @@ mod tests {
             })
         }
 
-        fn open_for_write(&mut self) -> Result<FakeWriter<'_>, PlatformError> {
+        fn create_owner(&mut self) -> Result<FakeOwner, PlatformError> {
+            if self.owner_fails {
+                return Err(PlatformError::Backend { code: 1407 });
+            }
+            self.push(Ev::CreateOwner);
+            Ok(FakeOwner(Arc::clone(&self.events)))
+        }
+
+        fn open_for_write(&mut self, _owner: &FakeOwner) -> Result<FakeWriter<'_>, PlatformError> {
             self.opens.set(self.opens.get() + 1);
             if self.busy {
                 return Err(PlatformError::Busy);
             }
-            self.events.borrow_mut().push(Ev::Open);
+            self.push(Ev::Open);
             Ok(FakeWriter(self))
+        }
+
+        fn sequence_now(&self) -> u64 {
+            let seq = self.write_seq.get();
+            self.push(Ev::SeqNow(seq));
+            seq
+        }
+
+        fn owns_clipboard(&self, _owner: &FakeOwner) -> bool {
+            let ours = !self.stolen_after_close;
+            self.push(Ev::OwnerCheck(ours));
+            ours
         }
     }
 
     impl ClipboardWriter<FakeBlock> for FakeWriter<'_> {
         fn empty(&mut self) -> Result<(), PlatformError> {
-            self.0.events.borrow_mut().push(Ev::Empty);
+            self.0.push(Ev::Empty);
             if self.0.empty_fails {
                 return Err(PlatformError::Backend { code: 1418 });
             }
@@ -1064,7 +1158,7 @@ mod tests {
 
         fn set(&mut self, id: u32, mut block: FakeBlock) -> Result<(), PlatformError> {
             let n = self.0.sets().len();
-            self.0.events.borrow_mut().push(Ev::Set(id));
+            self.0.push(Ev::Set(id));
             if self.0.fail_set_at == Some(n) {
                 return Err(PlatformError::Busy); // any failure; mapped to Backend
             }
@@ -1079,7 +1173,7 @@ mod tests {
 
         fn sequence_while_open(&self) -> u64 {
             let seq = self.0.write_seq.get();
-            self.0.events.borrow_mut().push(Ev::Seq(seq));
+            self.0.push(Ev::SeqOpen(seq));
             seq
         }
     }
@@ -1839,8 +1933,16 @@ mod tests {
         }
 
         fn write_with(os: &mut FakeOs, reps: &[RawRepresentation]) -> Result<u64, PlatformError> {
-            let mut thread = None;
-            write_reps(os, &mut thread, reps)
+            write_reps(os, reps)
+        }
+
+        /// The owner window was created once and destroyed once, after the clipboard closed
+        /// (if it was opened).
+        fn assert_owner_destroyed(os: &FakeOs) {
+            let ev = os.ev();
+            assert_eq!(os.count(Ev::CreateOwner), 1, "{ev:?}");
+            assert_eq!(os.count(Ev::DestroyOwner), 1, "{ev:?}");
+            assert_eq!(*ev.last().unwrap(), Ev::DestroyOwner, "{ev:?}");
         }
 
         /// One representation of every kind the adapter writes.
@@ -1973,11 +2075,15 @@ mod tests {
             assert_eq!(written[2].1, b"{\\rtf1 x}\0");
             let files = text::parse_dropfiles(&written[6].1, true, 1 << 20).unwrap();
             assert_eq!(String::from_utf16(&files.names[0]).unwrap(), r"C:\a b.txt");
-            // Order of events: open, empty, sets, sequence, close.
-            let ev = os.events.borrow();
-            assert_eq!(ev[..2], [Ev::Open, Ev::Empty]);
-            assert!(matches!(ev[ev.len() - 2], Ev::Seq(_)));
-            assert_eq!(ev[ev.len() - 1], Ev::Close);
+            // Order: owner, open, empty, sets, close, sequence, owner check, owner destroyed.
+            let ev = os.ev();
+            assert_eq!(ev[..3], [Ev::CreateOwner, Ev::Open, Ev::Empty]);
+            let n = ev.len();
+            assert!(matches!(ev[n - 5], Ev::SeqOpen(_)), "{ev:?}");
+            assert_eq!(ev[n - 4], Ev::Close);
+            assert!(matches!(ev[n - 3], Ev::SeqNow(_)));
+            assert_eq!(ev[n - 2], Ev::OwnerCheck(true));
+            assert_eq!(ev[n - 1], Ev::DestroyOwner);
         }
 
         #[test]
@@ -2006,27 +2112,56 @@ mod tests {
         }
 
         #[test]
-        fn returns_seq_read_before_close() {
+        fn returns_seq_read_after_close_while_owner() {
+            // D-038: CloseClipboard bumps the number (synthesized formats); the monitor's
+            // WM_CLIPBOARDUPDATE carries the post-close value, so that is the one returned.
             let mut os = FakeOs::new();
             let seq = write_with(
                 &mut os,
                 &[raw(Mime::TextPlain, "CF_UNICODETEXT", b"x".to_vec())],
             )
             .unwrap();
-            let ev = os.events.borrow().clone();
-            let seq_at = ev.iter().position(|e| matches!(e, Ev::Seq(_))).unwrap();
+            let ev = os.ev();
             let close_at = ev.iter().position(|e| *e == Ev::Close).unwrap();
-            assert!(seq_at < close_at, "{ev:?}");
-            assert_eq!(ev[seq_at], Ev::Seq(seq));
-            // After the last set, before close: 1000 + 1 set.
-            assert_eq!(seq, 1001);
-            assert_ne!(seq, os.write_seq.get(), "the value after close differs");
+            let now_at = ev.iter().position(|e| matches!(e, Ev::SeqNow(_))).unwrap();
+            let check_at = ev
+                .iter()
+                .position(|e| matches!(e, Ev::OwnerCheck(_)))
+                .unwrap();
+            let destroy_at = ev.iter().position(|e| *e == Ev::DestroyOwner).unwrap();
+            assert!(
+                close_at < now_at && now_at < check_at && check_at < destroy_at,
+                "{ev:?}"
+            );
+            assert_eq!(ev[now_at], Ev::SeqNow(seq));
+            // 1000 + 1 set + 4 at close.
+            assert_eq!(seq, 1005);
+            assert_eq!(seq, os.write_seq.get());
+        }
+
+        #[test]
+        fn returns_pre_close_seq_when_another_writer_got_in() {
+            // Another app emptied the clipboard right after our close: the post-close number
+            // may be theirs, so the pre-close value (which no signal carries) is returned and
+            // their copy is never suppressed.
+            let mut os = FakeOs::new();
+            os.stolen_after_close = true;
+            let seq = write_with(
+                &mut os,
+                &[raw(Mime::TextPlain, "CF_UNICODETEXT", b"x".to_vec())],
+            )
+            .unwrap();
+            assert_eq!(seq, 1001, "the value read while open");
+            assert_ne!(seq, os.write_seq.get());
+            assert!(os.ev().contains(&Ev::OwnerCheck(false)));
+            assert_owner_destroyed(&os);
         }
 
         #[test]
         fn failure_after_empty_frees_handles() {
-            // The second SetClipboardData fails: the clipboard is closed, `Backend` is returned,
-            // the failing block and every block not yet handed over are freed.
+            // The second SetClipboardData fails: the clipboard is closed, then the owner window
+            // destroyed; `Backend` is returned; the failing block and every block not yet
+            // handed over are freed.
             let mut os = FakeOs::new();
             os.fail_set_at = Some(1);
             let err = write_with(&mut os, &all_reps()).unwrap_err();
@@ -2034,8 +2169,12 @@ mod tests {
             assert_eq!(os.allocs.get(), 7);
             assert_eq!(os.written.borrow().len(), 1);
             assert_eq!(os.freed(), 6);
-            assert_eq!(*os.events.borrow().last().unwrap(), Ev::Close);
-            assert!(!os.events.borrow().iter().any(|e| matches!(e, Ev::Seq(_))));
+            let ev = os.ev();
+            assert_eq!(ev[ev.len() - 2..], [Ev::Close, Ev::DestroyOwner], "{ev:?}");
+            assert!(!ev
+                .iter()
+                .any(|e| matches!(e, Ev::SeqOpen(_) | Ev::SeqNow(_))));
+            assert_owner_destroyed(&os);
 
             // EmptyClipboard fails: closed, `Backend`, every block freed, nothing set.
             let mut os = FakeOs::new();
@@ -2044,7 +2183,16 @@ mod tests {
             assert!(matches!(err, PlatformError::Backend { .. }));
             assert_eq!(os.freed(), os.allocs.get());
             assert!(os.sets().is_empty());
-            assert_eq!(*os.events.borrow(), vec![Ev::Open, Ev::Empty, Ev::Close]);
+            assert_eq!(
+                os.ev(),
+                vec![
+                    Ev::CreateOwner,
+                    Ev::Open,
+                    Ev::Empty,
+                    Ev::Close,
+                    Ev::DestroyOwner
+                ]
+            );
         }
 
         #[test]
@@ -2060,53 +2208,71 @@ mod tests {
                 1,
                 "one attempt; retries belong to the actor"
             );
-            assert!(os.events.borrow().is_empty());
+            assert_eq!(os.ev(), vec![Ev::CreateOwner, Ev::DestroyOwner]);
             assert_eq!(os.freed(), os.allocs.get(), "every block freed");
         }
 
         #[test]
-        fn wrong_thread_rejected() {
+        fn owner_window_destroyed_on_every_path() {
+            // Success.
             let mut os = FakeOs::new();
-            let mut thread = None;
-            let reps = [raw(Mime::TextPlain, "CF_UNICODETEXT", b"x".to_vec())];
-            write_reps(&mut os, &mut thread, &reps).unwrap();
-            assert_eq!(os.opens.get(), 1);
-            let (os, thread) = std::thread::spawn(move || {
-                let mut os = os;
-                let mut thread = thread;
-                let reps = [raw(Mime::TextPlain, "CF_UNICODETEXT", b"y".to_vec())];
+            write_with(&mut os, &all_reps()).unwrap();
+            assert_owner_destroyed(&os);
+            // Busy, EmptyClipboard failure, SetClipboardData failure, stolen ownership.
+            for setup in [
+                (|o: &mut FakeOs| o.busy = true) as fn(&mut FakeOs),
+                |o| o.empty_fails = true,
+                |o| o.fail_set_at = Some(0),
+                |o| o.fail_set_at = Some(6),
+                |o| o.stolen_after_close = true,
+            ] {
+                let mut os = FakeOs::new();
+                setup(&mut os);
+                let _ = write_with(&mut os, &all_reps());
+                assert_owner_destroyed(&os);
                 assert_eq!(
-                    write_reps(&mut os, &mut thread, &reps).unwrap_err(),
-                    WRONG_THREAD
+                    os.freed() + u32::try_from(os.written.borrow().len()).unwrap(),
+                    os.allocs.get()
                 );
-                (os, thread)
-            })
-            .join()
-            .unwrap();
-            assert_eq!(os.opens.get(), 1, "never opened from the other thread");
-            assert_eq!(os.allocs.get(), 1);
-            // Back on the first thread, writing works again.
-            let mut os = os;
-            let mut thread = thread;
-            write_reps(&mut os, &mut thread, &reps).unwrap();
-            assert_eq!(os.opens.get(), 2);
-        }
-
-        #[test]
-        fn win_access_write_rejects_other_thread_without_touching_clipboard() {
-            // Nothing writable: returns before any window or clipboard call, but still records
-            // the thread, so a later call from another thread is rejected (no clipboard write).
-            let mut a = WinAccess::new();
+            }
+            // The window cannot be created: nothing opened, every block freed.
+            let mut os = FakeOs::new();
+            os.owner_fails = true;
+            assert!(matches!(
+                write_with(&mut os, &all_reps()),
+                Err(PlatformError::Backend { .. })
+            ));
+            assert_eq!(os.opens.get(), 0);
+            assert!(os.ev().is_empty());
+            assert_eq!(os.freed(), os.allocs.get());
+            // Nothing writable: no window at all.
+            let mut os = FakeOs::new();
             let reps = [raw(
                 Mime::UriList,
                 "CF_HDROP",
                 b"https://example.com/".to_vec(),
             )];
-            assert!(matches!(a.write(&reps), Err(PlatformError::Unsupported(_))));
-            let err = std::thread::spawn(move || a.write(&reps).unwrap_err())
-                .join()
-                .unwrap();
-            assert_eq!(err, WRONG_THREAD);
+            assert!(write_with(&mut os, &reps).is_err());
+            assert!(os.ev().is_empty());
+        }
+
+        #[test]
+        fn each_write_has_its_own_owner_on_its_own_thread() {
+            // D-038: no window outlives a write, so any thread may write (the S-2 wrong-thread
+            // check is no longer needed).
+            let mut os = FakeOs::new();
+            let reps = [raw(Mime::TextPlain, "CF_UNICODETEXT", b"x".to_vec())];
+            write_with(&mut os, &reps).unwrap();
+            let os = std::thread::spawn(move || {
+                let mut os = os;
+                let reps = [raw(Mime::TextPlain, "CF_UNICODETEXT", b"y".to_vec())];
+                write_with(&mut os, &reps).unwrap();
+                os
+            })
+            .join()
+            .unwrap();
+            assert_eq!(os.count(Ev::CreateOwner), 2);
+            assert_eq!(os.count(Ev::DestroyOwner), 2);
         }
 
         #[test]
@@ -2123,18 +2289,23 @@ mod tests {
                 b"darkclip test 104".to_vec(),
             )];
             let seq = retry(|| a.write(&reps));
-            // The monitor's signal for our write carries exactly the returned number.
+            // D-038: the monitor's signal for our write carries exactly the returned
+            // (post-close) number, and our write causes no further signal.
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
             let mut found = false;
-            while let Ok(s) = rx.recv_timeout(deadline - std::time::Instant::now()) {
+            while let Ok(s) =
+                rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+            {
                 if s.seq == seq {
                     found = true;
                     break;
                 }
                 assert!(s.seq < seq, "signal {} after our write {seq}", s.seq);
             }
-            m.stop();
             assert!(found, "no signal with seq {seq}");
+            let extra = rx.recv_timeout(std::time::Duration::from_millis(300));
+            m.stop();
+            assert!(extra.is_err(), "a further signal after our write");
         }
 
         #[test]
