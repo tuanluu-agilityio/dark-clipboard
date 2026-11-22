@@ -15,7 +15,7 @@ Instructions for any AI coding agent (Claude Code, Codex, others) working in thi
 - `darkclip-core`, `-platform`, `-storage`, `-app` stay free of OS, UI and async crates (`scripts/check.ps1` enforces this).
 - Clipboard content never appears in logs, errors, `Debug` output or test output.
 - OS and Darkshot privacy markers are mandatory and never configurable.
-- Only `crates/darkclip-app/src/capture.rs` reads or writes the OS clipboard.
+- Only the capture actor in `crates/darkclip-app/src/capture/` reads or writes the OS clipboard.
 - No network access, no telemetry.
 - Run `cargo fmt --all`, then `scripts/check.ps1` (Windows) or `scripts/check.sh` (macOS/Linux). Report done only when it prints `ALL CHECKS PASSED`.
 - Commit on your task branch with a short English message (`feat:`, `fix:`, `test:`, `docs:`, `chore:`). Do not create, merge or push branches unless you are the orchestrator.

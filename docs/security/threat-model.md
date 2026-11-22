@@ -1,5 +1,7 @@
 # Threat Model
 
+> Changed by D-044 (2026-11-23): `crates/darkclip-app/src/capture.rs` was split into the module directory `crates/darkclip-app/src/capture/`; every reference to `capture.rs` in this document means that directory. The no-logging rule also covers `image.rs` and the OS adapter crates (D-043).
+
 Status: Phase 0, 2026-11-22. Method: assets → trust boundaries → STRIDE per boundary → mitigations → residual risk. Re-review at the end of Phase 3 (P0 complete) and before P2 ships MCP.
 
 ## 1. Assets
