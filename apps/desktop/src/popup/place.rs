@@ -44,6 +44,16 @@ pub fn popup_origin(cursor: (i32, i32), size: (i32, i32), work: Rect, dpi: u32) 
     (x, y)
 }
 
+/// Top-left corner of a popup of `size` (physical) centered in the work area `work` (the
+/// "center of the screen" setting, Task 207); inside the work area, top-left wins if too big.
+pub fn center_origin(size: (i32, i32), work: Rect) -> (i32, i32) {
+    let x = work.left + (work.right - work.left - size.0) / 2;
+    let y = work.top + (work.bottom - work.top - size.1) / 2;
+    let x = x.min(work.right.saturating_sub(size.0)).max(work.left);
+    let y = y.min(work.bottom.saturating_sub(size.1)).max(work.top);
+    (x, y)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,6 +64,27 @@ mod tests {
         right: 1920,
         bottom: 1040,
     };
+
+    #[test]
+    fn centered_in_the_work_area_and_never_outside_it() {
+        assert_eq!(center_origin((420, 560), WORK), (750, 240));
+        // Another monitor, with negative coordinates.
+        let left = Rect {
+            left: -1920,
+            top: 0,
+            right: 0,
+            bottom: 1040,
+        };
+        assert_eq!(center_origin((420, 560), left), (-1170, 240));
+        // Larger than the work area: the top-left corner stays visible.
+        let tiny = Rect {
+            left: 0,
+            top: 0,
+            right: 300,
+            bottom: 300,
+        };
+        assert_eq!(center_origin((420, 560), tiny), (0, 0));
+    }
 
     #[test]
     fn scales_by_dpi() {

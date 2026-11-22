@@ -1,0 +1,840 @@
+// The settings window (Task 207): General, Privacy, History and About. Every value and every
+// decision comes from Rust (`src/ui/settings_host.rs`, with the pure rules in `src/prefs`);
+// this file lays things out and forwards input. Every string comes from the `SText` global
+// (i18n), never from here. Dark only (D-037).
+//
+// The OS and Darkshot privacy markers row is plain text: there is no control for it in this
+// file, and none can be added without changing the Rust side (GC-07).
+
+import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Palette } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export struct AppRow {
+    name: string,
+    id: string,
+    builtin: bool,
+}
+
+export struct KindItem {
+    label: string,
+    on: bool,
+}
+
+export global SText {
+    in property <string> title;
+    in property <string> general;
+    in property <string> privacy;
+    in property <string> history;
+    in property <string> about;
+    // Non-empty while the settings file is read-only (D-028).
+    in property <string> banner;
+    in property <string> save;
+    in property <string> revert;
+    in property <string> cancel;
+    in property <string> close;
+    // General
+    in property <string> shortcut-label;
+    in property <string> shortcut-hint;
+    in property <string> shortcut-warning;
+    in property <string> lang-label;
+    in property <string> lang-en;
+    in property <string> lang-vi;
+    in property <string> login;
+    in property <string> login-note;
+    in property <string> pos-label;
+    in property <string> pos-cursor;
+    in property <string> pos-center;
+    in property <string> close-focus;
+    in property <string> enter-pastes;
+    // Privacy
+    in property <string> capture-label;
+    in property <string> mode-normal;
+    in property <string> mode-private;
+    in property <string> mode-paused;
+    in property <string> mode-current;
+    in property <string> markers-label;
+    in property <string> markers-note;
+    in property <string> sensitive-label;
+    in property <string> sens-drop;
+    in property <string> sens-masked;
+    in property <string> sens-store;
+    in property <string> sens-warn;
+    in property <string> kinds-label;
+    in property <string> excluded-label;
+    in property <string> excluded-note;
+    in property <string> builtin-badge;
+    in property <string> remove;
+    in property <string> add;
+    in property <string> app-placeholder;
+    in property <string> pick-running;
+    in property <string> pick-none;
+    in property <string> pick-note;
+    in property <string> confirm-builtin;
+    // History
+    in property <string> max-items-label;
+    in property <string> max-age-label;
+    in property <string> max-storage-label;
+    in property <string> retention-note;
+    in property <string> stats-label;
+    in property <string> skipped-label;
+    in property <string> clear;
+    in property <string> clear-confirm;
+    in property <string> keep-pinned;
+    in property <string> clear-do;
+    // About
+    in property <string> version;
+    in property <string> caps-label;
+    in property <string> licences-label;
+    in property <string> licence-text;
+    in property <string> third-party;
+    in property <string> folder-label;
+    in property <string> open-folder;
+}
+
+// A caption above a control.
+component Caption inherits Text {
+    color: Theme.text-muted;
+    font-size: 12px;
+    wrap: word-wrap;
+}
+
+// An error line under a field (empty: nothing shown).
+component FieldError inherits Text {
+    color: Theme.danger;
+    font-size: 12px;
+    wrap: word-wrap;
+    visible: self.text != "";
+    height: self.text == "" ? 0px : self.preferred-height;
+}
+
+component SectionTab inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked();
+    height: 36px;
+    border-radius: 6px;
+    background: root.active ? Theme.accent.with-alpha(0.25) : (touch.has-hover ? Theme.surface : transparent);
+    accessible-role: tab;
+    accessible-label: root.text;
+    accessible-checkable: true;
+    accessible-checked: root.active;
+    accessible-action-default => {
+        root.clicked();
+    }
+    Text {
+        x: 12px;
+        width: parent.width - 24px;
+        text: root.text;
+        color: root.active ? Theme.accent : Theme.text;
+        font-weight: root.active ? 700 : 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// A modal question over the window.
+component Overlay inherits Rectangle {
+    in property <bool> open;
+    visible: root.open;
+    background: #000000A0;
+    // Swallows clicks so nothing behind the question can be pressed.
+    TouchArea {}
+    @children
+}
+
+export component SettingsWindow inherits Window {
+    title: SText.title;
+    background: Theme.bg;
+    min-width: 640px;
+    min-height: 480px;
+    preferred-width: 780px;
+    preferred-height: 600px;
+    default-font-size: 13px;
+
+    // 0 General, 1 Privacy, 2 History, 3 About.
+    in-out property <int> section: 0;
+    in property <bool> can-save: true;
+    // The form values (read by Rust on Save).
+    in-out property <string> shortcut;
+    in-out property <int> lang-index;
+    in-out property <bool> launch-at-login;
+    in-out property <int> position-index;
+    in-out property <bool> close-on-focus-loss;
+    in-out property <bool> enter-pastes;
+    in-out property <int> sensitive-index;
+    in-out property <[KindItem]> kinds;
+    in-out property <string> max-items;
+    in-out property <string> max-age;
+    in-out property <string> max-storage;
+    in-out property <string> new-app;
+    in property <[AppRow]> apps;
+    // Per-field messages (empty: fine) and the result of the last save.
+    in property <string> err-shortcut;
+    in property <string> err-items;
+    in property <string> err-age;
+    in property <string> err-storage;
+    in property <string> err-kinds;
+    in property <string> err-app;
+    in property <string> status;
+    in property <bool> status-error;
+    // The capture mode buttons: 0 capturing, 1 private, 2 paused.
+    in property <int> mode;
+    // Non-empty while the built-in exclusion removal asks for confirmation.
+    in property <string> confirm-remove-text;
+    in property <bool> picker-open;
+    in property <bool> picker-loading;
+    in property <[string]> picker;
+    in property <bool> clear-open;
+    in-out property <bool> clear-keep-pinned: true;
+    // Multi-line texts.
+    in property <string> stats-text;
+    in property <string> skip-text;
+    in property <string> caps-text;
+    in property <string> version-text;
+    in property <string> data-path;
+
+    callback save();
+    callback revert();
+    callback edited();
+    callback set-mode(int);
+    callback add-app(string);
+    callback remove-app(int);
+    callback confirm-remove();
+    callback cancel-remove();
+    callback open-picker();
+    callback close-picker();
+    callback pick-app(string);
+    callback clear-ask();
+    callback clear-confirm();
+    callback clear-cancel();
+    callback open-folder();
+    callback escape();
+
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
+
+    FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                root.escape();
+                return accept;
+            }
+            reject
+        }
+
+        HorizontalLayout {
+            // Left: the sections.
+            Rectangle {
+                width: 170px;
+                background: Theme.surface;
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 4px;
+                    alignment: start;
+                    accessible-role: tab-list;
+                    SectionTab {
+                        text: SText.general;
+                        active: root.section == 0;
+                        clicked => {
+                            root.section = 0;
+                        }
+                    }
+                    SectionTab {
+                        text: SText.privacy;
+                        active: root.section == 1;
+                        clicked => {
+                            root.section = 1;
+                        }
+                    }
+                    SectionTab {
+                        text: SText.history;
+                        active: root.section == 2;
+                        clicked => {
+                            root.section = 2;
+                        }
+                    }
+                    SectionTab {
+                        text: SText.about;
+                        active: root.section == 3;
+                        clicked => {
+                            root.section = 3;
+                        }
+                    }
+                }
+            }
+
+            // Right: the banner, the section and the Save bar.
+            VerticalLayout {
+                horizontal-stretch: 1;
+
+                if SText.banner != "": Rectangle {
+                    background: Theme.warning.with-alpha(0.18);
+                    border-color: Theme.warning;
+                    border-width: 1px;
+                    height: banner-text.preferred-height + 20px;
+                    accessible-role: text;
+                    accessible-label: SText.banner;
+                    banner-text := Text {
+                        x: 12px;
+                        y: 10px;
+                        width: parent.width - 24px;
+                        text: SText.banner;
+                        color: Theme.warning;
+                        wrap: word-wrap;
+                    }
+                }
+
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 10px;
+                        alignment: start;
+
+                        // ---------------------------------------------------- General
+                        if root.section == 0: VerticalLayout {
+                            spacing: 10px;
+                            Caption {
+                                text: SText.shortcut-label;
+                            }
+                            LineEdit {
+                                text <=> root.shortcut;
+                                placeholder-text: SText.shortcut-hint;
+                                accessible-label: SText.shortcut-label;
+                                edited(t) => {
+                                    root.edited();
+                                }
+                            }
+                            FieldError {
+                                text: root.err-shortcut;
+                            }
+                            FieldError {
+                                text: SText.shortcut-warning;
+                            }
+                            Caption {
+                                text: SText.lang-label;
+                            }
+                            ComboBox {
+                                model: [SText.lang-en, SText.lang-vi];
+                                current-index <=> root.lang-index;
+                                accessible-label: SText.lang-label;
+                                selected(v) => {
+                                    root.edited();
+                                }
+                            }
+                            CheckBox {
+                                text: SText.login;
+                                checked <=> root.launch-at-login;
+                                toggled => {
+                                    root.edited();
+                                }
+                            }
+                            if SText.login-note != "": Caption {
+                                text: SText.login-note;
+                            }
+                            Caption {
+                                text: SText.pos-label;
+                            }
+                            ComboBox {
+                                model: [SText.pos-cursor, SText.pos-center];
+                                current-index <=> root.position-index;
+                                accessible-label: SText.pos-label;
+                                selected(v) => {
+                                    root.edited();
+                                }
+                            }
+                            CheckBox {
+                                text: SText.close-focus;
+                                checked <=> root.close-on-focus-loss;
+                                toggled => {
+                                    root.edited();
+                                }
+                            }
+                            CheckBox {
+                                text: SText.enter-pastes;
+                                checked <=> root.enter-pastes;
+                                toggled => {
+                                    root.edited();
+                                }
+                            }
+                        }
+
+                        // ---------------------------------------------------- Privacy
+                        if root.section == 1: VerticalLayout {
+                            spacing: 10px;
+                            Caption {
+                                text: SText.capture-label;
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                Button {
+                                    text: SText.mode-normal;
+                                    primary: root.mode == 0;
+                                    clicked => {
+                                        root.set-mode(0);
+                                    }
+                                }
+                                Button {
+                                    text: SText.mode-private;
+                                    primary: root.mode == 1;
+                                    clicked => {
+                                        root.set-mode(1);
+                                    }
+                                }
+                                Button {
+                                    text: SText.mode-paused;
+                                    primary: root.mode == 2;
+                                    clicked => {
+                                        root.set-mode(2);
+                                    }
+                                }
+                            }
+                            Caption {
+                                text: SText.mode-current;
+                            }
+
+                            // The markers row: text only, by design (GC-07).
+                            Rectangle {
+                                background: Theme.surface;
+                                border-radius: 6px;
+                                border-width: 1px;
+                                border-color: Theme.success;
+                                height: markers-col.preferred-height + 20px;
+                                accessible-role: text;
+                                accessible-label: SText.markers-label + ". " + SText.markers-note;
+                                markers-col := VerticalLayout {
+                                    padding: 10px;
+                                    spacing: 4px;
+                                    Text {
+                                        text: "🔒 " + SText.markers-label;
+                                        color: Theme.success;
+                                        font-weight: 700;
+                                        wrap: word-wrap;
+                                    }
+                                    Caption {
+                                        text: SText.markers-note;
+                                    }
+                                }
+                            }
+
+                            Caption {
+                                text: SText.sensitive-label;
+                            }
+                            ComboBox {
+                                model: [SText.sens-drop, SText.sens-masked, SText.sens-store];
+                                current-index <=> root.sensitive-index;
+                                accessible-label: SText.sensitive-label;
+                                selected(v) => {
+                                    root.edited();
+                                }
+                            }
+                            if root.sensitive-index == 2: FieldError {
+                                text: SText.sens-warn;
+                            }
+
+                            Caption {
+                                text: SText.kinds-label;
+                            }
+                            for k[i] in root.kinds: CheckBox {
+                                text: k.label;
+                                checked: k.on;
+                                toggled => {
+                                    root.kinds[i] = { label: k.label, on: self.checked };
+                                    root.edited();
+                                }
+                            }
+                            FieldError {
+                                text: root.err-kinds;
+                            }
+
+                            Caption {
+                                text: SText.excluded-label;
+                                font-weight: 700;
+                            }
+                            Caption {
+                                text: SText.excluded-note;
+                            }
+                            for a[i] in root.apps: Rectangle {
+                                height: 34px;
+                                background: Theme.surface;
+                                border-radius: 6px;
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 6px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: a.name != "" ? a.name + " (" + a.id + ")" : a.id;
+                                        color: Theme.text;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
+                                    }
+                                    if a.builtin: Text {
+                                        text: SText.builtin-badge;
+                                        color: Theme.text-muted;
+                                        font-size: 12px;
+                                        vertical-alignment: center;
+                                    }
+                                    Button {
+                                        text: SText.remove;
+                                        clicked => {
+                                            root.remove-app(i);
+                                        }
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                LineEdit {
+                                    text <=> root.new-app;
+                                    placeholder-text: SText.app-placeholder;
+                                    accessible-label: SText.app-placeholder;
+                                    horizontal-stretch: 1;
+                                    accepted(t) => {
+                                        root.add-app(t);
+                                    }
+                                }
+                                Button {
+                                    text: SText.add;
+                                    clicked => {
+                                        root.add-app(root.new-app);
+                                    }
+                                }
+                                Button {
+                                    text: SText.pick-running;
+                                    clicked => {
+                                        root.open-picker();
+                                    }
+                                }
+                            }
+                            FieldError {
+                                text: root.err-app;
+                            }
+                        }
+
+                        // ---------------------------------------------------- History
+                        if root.section == 2: VerticalLayout {
+                            spacing: 10px;
+                            Caption {
+                                text: SText.max-items-label;
+                            }
+                            LineEdit {
+                                text <=> root.max-items;
+                                input-type: number;
+                                accessible-label: SText.max-items-label;
+                                edited(t) => {
+                                    root.edited();
+                                }
+                            }
+                            FieldError {
+                                text: root.err-items;
+                            }
+                            Caption {
+                                text: SText.max-age-label;
+                            }
+                            LineEdit {
+                                text <=> root.max-age;
+                                input-type: number;
+                                accessible-label: SText.max-age-label;
+                                edited(t) => {
+                                    root.edited();
+                                }
+                            }
+                            FieldError {
+                                text: root.err-age;
+                            }
+                            Caption {
+                                text: SText.max-storage-label;
+                            }
+                            LineEdit {
+                                text <=> root.max-storage;
+                                input-type: number;
+                                accessible-label: SText.max-storage-label;
+                                edited(t) => {
+                                    root.edited();
+                                }
+                            }
+                            FieldError {
+                                text: root.err-storage;
+                            }
+                            Caption {
+                                text: SText.retention-note;
+                            }
+
+                            Caption {
+                                text: SText.stats-label;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: root.stats-text;
+                                color: Theme.text;
+                                wrap: word-wrap;
+                            }
+                            Caption {
+                                text: SText.skipped-label;
+                            }
+                            Text {
+                                text: root.skip-text;
+                                color: Theme.text;
+                                wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                alignment: start;
+                                Button {
+                                    text: SText.clear;
+                                    clicked => {
+                                        root.clear-ask();
+                                    }
+                                }
+                            }
+                        }
+
+                        // ---------------------------------------------------- About
+                        if root.section == 3: VerticalLayout {
+                            spacing: 10px;
+                            Text {
+                                text: SText.title;
+                                color: Theme.text;
+                                font-size: 18px;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: root.version-text;
+                                color: Theme.text;
+                            }
+                            Caption {
+                                text: SText.caps-label;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: root.caps-text;
+                                color: Theme.text;
+                                wrap: word-wrap;
+                            }
+                            Caption {
+                                text: SText.folder-label;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: root.data-path;
+                                color: Theme.text;
+                                wrap: word-wrap;
+                                accessible-role: text;
+                            }
+                            HorizontalLayout {
+                                alignment: start;
+                                Button {
+                                    text: SText.open-folder;
+                                    clicked => {
+                                        root.open-folder();
+                                    }
+                                }
+                            }
+                            if root.status != "": Text {
+                                text: root.status;
+                                color: root.status-error ? Theme.danger : Theme.success;
+                                wrap: word-wrap;
+                            }
+                            Caption {
+                                text: SText.licences-label;
+                                font-weight: 700;
+                            }
+                            Caption {
+                                text: SText.licence-text;
+                            }
+                            Text {
+                                text: SText.third-party;
+                                color: Theme.text-muted;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+
+                // The Save bar (hidden on About: nothing to save there).
+                if root.section != 3: Rectangle {
+                    height: 52px;
+                    background: Theme.surface;
+                    HorizontalLayout {
+                        padding: 10px;
+                        spacing: 10px;
+                        Text {
+                            text: root.status;
+                            color: root.status-error ? Theme.danger : Theme.success;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                            accessible-role: text;
+                        }
+                        Button {
+                            text: SText.revert;
+                            clicked => {
+                                root.revert();
+                            }
+                        }
+                        Button {
+                            text: SText.save;
+                            primary: true;
+                            enabled: root.can-save;
+                            clicked => {
+                                root.save();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Built-in exclusion removal: asks first.
+    Overlay {
+        open: root.confirm-remove-text != "";
+        Rectangle {
+            width: min(parent.width - 40px, 420px);
+            height: remove-col.preferred-height + 28px;
+            background: Theme.bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.warning;
+            remove-col := VerticalLayout {
+                padding: 14px;
+                spacing: 12px;
+                Text {
+                    text: root.confirm-remove-text;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Button {
+                        text: SText.cancel;
+                        clicked => {
+                            root.cancel-remove();
+                        }
+                    }
+                    Button {
+                        text: SText.remove;
+                        primary: true;
+                        clicked => {
+                            root.confirm-remove();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Clear history: asks first, with "keep pinned".
+    Overlay {
+        open: root.clear-open;
+        Rectangle {
+            width: min(parent.width - 40px, 420px);
+            height: clear-col.preferred-height + 28px;
+            background: Theme.bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.danger;
+            clear-col := VerticalLayout {
+                padding: 14px;
+                spacing: 12px;
+                Text {
+                    text: SText.clear-confirm;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                CheckBox {
+                    text: SText.keep-pinned;
+                    checked <=> root.clear-keep-pinned;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Button {
+                        text: SText.cancel;
+                        clicked => {
+                            root.clear-cancel();
+                        }
+                    }
+                    Button {
+                        text: SText.clear-do;
+                        primary: true;
+                        clicked => {
+                            root.clear-confirm();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Pick running app: program file names only.
+    Overlay {
+        open: root.picker-open;
+        Rectangle {
+            width: min(parent.width - 40px, 420px);
+            height: min(parent.height - 40px, 420px);
+            background: Theme.bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.line;
+            VerticalLayout {
+                padding: 14px;
+                spacing: 8px;
+                Caption {
+                    text: SText.pick-note;
+                }
+                if root.picker-loading: Text {
+                    text: "...";
+                    color: Theme.text-muted;
+                }
+                if !root.picker-loading && root.picker.length == 0: Text {
+                    text: SText.pick-none;
+                    color: Theme.text-muted;
+                }
+                ListView {
+                    vertical-stretch: 1;
+                    for p in root.picker: Rectangle {
+                        height: 30px;
+                        background: pick-touch.has-hover ? Theme.surface : transparent;
+                        accessible-role: button;
+                        accessible-label: p;
+                        accessible-action-default => {
+                            root.pick-app(p);
+                        }
+                        Text {
+                            x: 8px;
+                            width: parent.width - 16px;
+                            text: p;
+                            color: Theme.text;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        pick-touch := TouchArea {
+                            clicked => {
+                                root.pick-app(p);
+                            }
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    Button {
+                        text: SText.close;
+                        clicked => {
+                            root.close-picker();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
