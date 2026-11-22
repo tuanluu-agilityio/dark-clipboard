@@ -20,5 +20,7 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 - Quality gates: banned-crate, privacy-boundary and logging checks; cargo-deny.
 
 ### Known issues
+- Windows: text copied from apps that write the clipboard through OLE with a flush (for example Notepad) is stored without a source app; an excluded app without privacy markers that writes this way would not be matched by the excluded-app list (F-14).
+- Windows verification covered KeePassXC 2.8.0 and Darkshot; Bitwarden, 1Password, Office and RDP are untested.
 - No application build exists yet (no OS adapter, no UI).
 - macOS and Linux behaviour is untested.

@@ -39,14 +39,15 @@ Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers sub
 | 103b App image decode | task/103b-app-image-decode | builder | sonnet | done | 95,352 | 70,837 (reviewer opus ×2: CHANGES REQUIRED (should-fix) → APPROVED) | 18,014 | 184,203 |
 | 104 Windows write | task/104-windows-write | specialist | opus | done | 178,113 | 98,630 (reviewer opus ×2: CHANGES REQUIRED (2 blocking: post-close seq, per-write owner window) → APPROVED) | 28,935 | 305,678 |
 | 106 Headless binary | task/106-headless-binary | builder | sonnet | done | 141,048 | 92,504 (reviewer opus ×2: APPROVED with 5 should-fix → fixed, APPROVED) | 21,895 | 255,447 |
-| 107 Windows verification | task/107-windows-verification | platform-verifier | sonnet | next (waiting for the owner at the machine) | | | | |
+| 107 Windows verification | task/107-windows-verification | orchestrator (interactive, D-041) | opus | done | not measured (orchestrator) | 79,051 (reviewer opus ×3: CR (over-claims) → CR (1 cell) → fixed) | 0 | 79,051 |
+| 109 OLE source carry (F-14) | task/109-ole-source-carry | specialist | opus | in progress | | | | |
 | 108 Phase review | main | specialist | opus | pending | | | | |
 
 ## Totals by model
 
 | Model | Tokens |
 |---|---|
-| opus | 4,644,739 |
+| opus | 4,723,790 |
 | sonnet | 2,112,098 |
 | haiku | 0 |
-| **Total** | **6,756,837** (subagents only; orchestrator not measured) |
+| **Total** | **6,835,888** (subagents only; orchestrator not measured) |

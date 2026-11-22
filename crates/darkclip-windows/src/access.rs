@@ -1818,7 +1818,8 @@ mod tests {
         // Capped read on a char boundary.
         let p = plan(&[(Mime::TextPlain, "CF_UNICODETEXT")], 6, 0);
         let reps = retry(|| a.read(&p));
-        assert_eq!(std::str::from_utf8(&reps[0].bytes).unwrap(), "Tiế");
+        // "Tiế" is 5 bytes; the next char "n" fits in the 6-byte cap.
+        assert_eq!(std::str::from_utf8(&reps[0].bytes).unwrap(), "Tiến");
         assert!(reps[0].truncated);
     }
 
