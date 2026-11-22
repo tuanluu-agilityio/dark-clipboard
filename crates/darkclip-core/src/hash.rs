@@ -39,6 +39,9 @@ fn sorted_uris(bytes: &[u8]) -> String {
     lines.join("\n")
 }
 
+/// For `ClipType::Image`, pass decoded RGBA. Without it the hash falls back to the
+/// encoded bytes under a separate `enc\0` tag: dedupe is degraded (the same image in
+/// different encodings no longer matches).
 pub fn canonical_hash(
     kind: ClipType,
     reps: &[RawRepresentation],
@@ -55,8 +58,10 @@ pub fn canonical_hash(
                 h.update(hgt.to_le_bytes());
                 h.update(px);
             }
-            // No decoded pixels: fall back to the encoded bytes.
+            // No decoded pixels: degraded dedupe over the encoded bytes, domain-separated
+            // from the pixel hash. Callers should pass decoded RGBA.
             None => {
+                h.update(b"enc\0");
                 if let Some(r) = find(reps, Mime::ImagePng) {
                     h.update(&r.bytes);
                 }
@@ -153,6 +158,23 @@ mod tests {
             canonical_hash(ClipType::Files, &uris("file:///a"), None),
             canonical_hash(ClipType::Files, &uris("file:///b"), None)
         );
+    }
+
+    #[test]
+    fn image_fallback_hash_differs_from_pixel_hash() {
+        let px = [1u8, 2, 3, 255];
+        let pixel = canonical_hash(ClipType::Image, &[], Some((&px, 1, 1)));
+        let mut same_bytes = 1u32.to_le_bytes().to_vec();
+        same_bytes.extend_from_slice(&1u32.to_le_bytes());
+        same_bytes.extend_from_slice(&px);
+        let reps = vec![RawRepresentation {
+            mime: Mime::ImagePng,
+            platform_format: "PNG".into(),
+            bytes: same_bytes,
+            width: Some(1),
+            height: Some(1),
+        }];
+        assert_ne!(pixel, canonical_hash(ClipType::Image, &reps, None));
     }
 
     #[test]
