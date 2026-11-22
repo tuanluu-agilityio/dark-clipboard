@@ -1,6 +1,6 @@
 # Progress and token ledger
 
-Updated: 2026-11-22
+Updated: 2026-11-22 (Phase 1 complete)
 
 Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers subagents report when they finish. Orchestrator tokens cannot be measured per task.
 
@@ -25,13 +25,14 @@ Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers sub
 | 009 Storage retention | task/009-storage-retention | builder | sonnet | done | 94,709 | 53,101 (reviewer opus: APPROVED) | 102,230 | 250,040 |
 | 010 Capture actor | task/010-app-capture-actor | specialist | opus | done | 180,356 | 374,129 (security-reviewer opus ×3: CR → CR → APPROVED) | 506,097 (2 rounds) | 1,060,582 |
 | 011 App API, settings | task/011-app-api-settings | builder | sonnet | done | 152,545 | 241,464 (security-reviewer opus ×2: CR → APPROVED; reviewer upgraded from sonnet) | 406,538 (2 rounds) | 800,547 |
-| 012 Phase review | main | specialist | opus | done: CHANGES REQUIRED (B-1 bench) → Task 013 | | see 013 row | | |
-| 013 Phase 1 review fixes | task/013-phase1-fixes | specialist | opus | in progress | | | | |
+| 012 Phase review | main | specialist | opus | done: CHANGES REQUIRED (B-1 bench; later shown to be a measurement artifact) → Task 013 | | 195,016 | | 195,016 |
+| 013 Phase 1 review fixes | task/013-phase1-fixes | specialist | opus | done | 139,586 | 38,199 (reviewer opus: APPROVED) | 181,043 | 358,828 |
 
 ## Totals by model
 
 | Model | Tokens |
 |---|---|
-| opus | 2,816,549 |
+| opus | 3,370,393 |
 | sonnet | 1,751,949 |
 | haiku | 0 |
+| **Total** | **5,122,342** (subagents only; orchestrator not measured) |

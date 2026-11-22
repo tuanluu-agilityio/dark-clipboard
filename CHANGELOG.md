@@ -9,6 +9,10 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 - Feasibility spikes on Windows (clipboard monitoring; Tauri 2 vs Slint shell). These are throwaway code under `spikes/`.
 - Agent workflow (`CLAUDE.md`, `AGENTS.md`, `.claude/`), memory-bank, quality gate scripts, CI workflow.
 
+### Added (Phase 1 Foundation)
+- Portable Rust workspace: `darkclip-core` (models, capture policy and privacy markers, classification and hashing, sensitive-data detection, i18n en/vi), `darkclip-platform` (adapter traits, capabilities, fake platform), `darkclip-storage` (SQLite + FTS5 with accent-insensitive search, content-addressed blobs, retention, migrations), `darkclip-app` (single capture actor, Application API, settings). Headless only: no OS adapter or UI yet.
+- Quality gates: banned-crate, privacy-boundary and logging checks; cargo-deny.
+
 ### Known issues
-- No application build exists yet.
+- No application build exists yet (no OS adapter, no UI).
 - macOS and Linux behaviour is untested.

@@ -49,8 +49,8 @@ Model policy: never `fable` (inherited from Darkshot decision 154). `haiku` is n
 
 ## Phase exit checklist
 
-- [ ] `scripts/check.ps1` prints `ALL CHECKS PASSED` on Windows; CI (`.github/workflows/ci.yml`) green on `windows-latest`, `macos-latest`, `ubuntu-latest`.
-- [ ] `cargo test -p darkclip-app` runs the full capture pipeline against `FakePlatform`, including all Review Focus tests.
-- [ ] Search bench: 10,000 synthetic clips, p95 ≤ 30 ms per query (printed by `cargo test -p darkclip-storage --release -- --ignored bench_search`).
-- [ ] No crate in GC-01's list depends on a banned crate.
-- [ ] Phase review (Task 012) verdict APPROVED; memory-bank updated.
+- [x] `scripts/check.ps1` prints `ALL CHECKS PASSED` on Windows (2026-11-22). CI on three OSes **not verified**: no remote yet (D-013).
+- [x] `cargo test -p darkclip-app` runs the full capture pipeline against `FakePlatform`, including all Review Focus tests (73 app tests).
+- [x] Search bench: median p95 of 5 isolated runs ≤ 30 ms (D-029/D-030): 17.5 ms worst case, 15.7 ms realistic. Run with `--test-threads=1` and nothing else running.
+- [x] No crate in GC-01's list depends on a banned crate.
+- [x] Phase review (Task 012) blocker resolved in Task 013 (reviewer APPROVED); memory-bank updated.

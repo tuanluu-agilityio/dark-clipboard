@@ -5,7 +5,8 @@ Updated: 2026-11-22
 ## Where we are
 
 - **Phase 0 (discovery and architecture): complete**, pending owner approval of the blueprint.
-- **Current phase:** Phase 1 Foundation (`docs/plans/phase-1-foundation.md`). Task 001 done (merged 2026-11-22). Tasks 001–007 done. Tasks 001–011 done. **In progress: 012 phase review.**
+- **Phase 1 Foundation: COMPLETE (2026-11-22).** Tasks 001–011 and 013 merged; phase review 012 done (its one blocker, the bench, was a measurement artifact; fixed and re-measured in 013). Workspace: 263 tests pass, 2 benches ignored (median p95 17.5 ms worst-case corpus, 15.7 ms realistic).
+- **Next: Phase 2 Windows capture** (`docs/plans/phase-2-windows-capture.md`, including the "Amendments from the Phase 1 review" table). First step: write task packages `docs/tasks/101-…` to `108-…` (+ 103b) from the plan, then run them with `/next-task`. Task 107 needs the owner at the machine (Darkshot, KeePassXC, Bitwarden copies).
 - Git: local only (D-013). Branch `main`; Phase 0 is the first commit. No remote yet: tasks merge locally with `git merge --no-ff`.
 
 ## Waiting on owner
