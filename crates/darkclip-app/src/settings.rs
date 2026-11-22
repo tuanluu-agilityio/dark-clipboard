@@ -7,6 +7,7 @@ use crate::events::ApiError;
 use darkclip_core::{Lang, PrivacyPolicy, RetentionPolicy};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const SETTINGS_VERSION: u32 = 1;
 const OS_MARKERS_PATH: &str = "privacy.respect_os_markers";
@@ -107,7 +108,13 @@ pub enum LoadOutcome {
     },
     /// Loaded, with these field paths forced back to their only allowed value.
     LoadedWithCorrections(Vec<&'static str>),
+    /// Defaults are in use and the file must NOT be written: it exists but could not be read,
+    /// is from a newer version, or could not be moved aside. The reason is static text.
+    DefaultedReadOnly(&'static str),
 }
+
+/// Makes temp file names unique within the process (saves from several threads).
+static SAVE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn unix_ms() -> u128 {
     std::time::SystemTime::now()
@@ -118,11 +125,20 @@ fn unix_ms() -> u128 {
 impl Settings {
     /// Never fails: the worst case is defaults. See [`LoadOutcome`].
     pub fn load(path: &Path) -> (Settings, LoadOutcome) {
-        let Ok(bytes) = std::fs::read(path) else {
-            return (Settings::default(), LoadOutcome::Defaulted);
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return (Settings::default(), LoadOutcome::Defaulted)
+            }
+            Err(_) => {
+                return (
+                    Settings::default(),
+                    LoadOutcome::DefaultedReadOnly("settings file unreadable"),
+                )
+            }
         };
         let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-            return Self::recover(path);
+            return Self::recover(path, |from, to| std::fs::rename(from, to));
         };
         // Core rejects `respect_os_markers: false`; the app corrects it instead of
         // discarding the whole file (GC-07: the marker list cannot be switched off).
@@ -145,16 +161,29 @@ impl Settings {
                 };
                 (s, outcome)
             }
-            // Invalid, or written by a newer version: keep the file, use defaults.
-            _ => Self::recover(path),
+            // A newer version wrote it: leave the file alone, never overwrite it.
+            Ok(_) => (
+                Settings::default(),
+                LoadOutcome::DefaultedReadOnly("settings file is from a newer version"),
+            ),
+            Err(_) => Self::recover(path, |from, to| std::fs::rename(from, to)),
         }
     }
 
-    fn recover(path: &Path) -> (Settings, LoadOutcome) {
+    fn recover(
+        path: &Path,
+        rename: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+    ) -> (Settings, LoadOutcome) {
         let mut name = path.file_name().unwrap_or_default().to_os_string();
         name.push(format!(".corrupt-{}", unix_ms()));
         let backup = path.with_file_name(name);
-        let _ = std::fs::rename(path, &backup);
+        if rename(path, &backup).is_err() {
+            // Still in place: saving would destroy the only copy.
+            return (
+                Settings::default(),
+                LoadOutcome::DefaultedReadOnly("corrupt settings file could not be moved"),
+            );
+        }
         (
             Settings::default(),
             LoadOutcome::RecoveredFromCorrupt { backup },
@@ -166,7 +195,8 @@ impl Settings {
     pub fn save(&self, path: &Path) -> Result<(), ApiError> {
         let json = serde_json::to_vec_pretty(self).map_err(|_| ApiError::Internal)?;
         let mut name = path.file_name().ok_or(ApiError::Internal)?.to_os_string();
-        name.push(format!(".tmp-{}-{}", std::process::id(), unix_ms()));
+        let n = SAVE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        name.push(format!(".tmp-{}-{n}", std::process::id()));
         let tmp = path.with_file_name(name);
         let result = write_synced(&tmp, &json).and_then(|()| std::fs::rename(&tmp, path));
         if result.is_err() {
@@ -283,14 +313,64 @@ mod tests {
     }
 
     #[test]
-    fn settings_newer_version_is_kept_aside() {
+    fn settings_newer_version_is_left_untouched() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("settings.json");
         let mut v = serde_json::to_value(Settings::default()).unwrap();
         v["settings_version"] = 99.into();
         std::fs::write(&p, v.to_string()).unwrap();
-        let (_, o) = Settings::load(&p);
-        assert!(matches!(o, LoadOutcome::RecoveredFromCorrupt { .. }));
+        let (s, o) = Settings::load(&p);
+        assert_eq!(s, Settings::default());
+        assert!(matches!(o, LoadOutcome::DefaultedReadOnly(_)), "{o:?}");
+        assert_eq!(files(d.path()), vec!["settings.json".to_string()]);
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), v.to_string());
+    }
+
+    #[test]
+    fn settings_unreadable_is_read_only_defaults() {
+        let d = tempfile::tempdir().unwrap();
+        // A directory in place of the file: reading fails with something other than NotFound.
+        let p = d.path().join("settings.json");
+        std::fs::create_dir(&p).unwrap();
+        let (s, o) = Settings::load(&p);
+        assert_eq!(s, Settings::default());
+        assert!(matches!(o, LoadOutcome::DefaultedReadOnly(_)), "{o:?}");
+        assert!(p.is_dir());
+    }
+
+    #[test]
+    fn settings_corrupt_that_cannot_be_moved_is_read_only() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        std::fs::write(&p, b"garbage").unwrap();
+        let (s, o) = Settings::recover(&p, |_, _| {
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        });
+        assert_eq!(s, Settings::default());
+        assert!(matches!(o, LoadOutcome::DefaultedReadOnly(_)), "{o:?}");
+        assert_eq!(std::fs::read(&p).unwrap(), b"garbage");
+    }
+
+    #[test]
+    fn settings_concurrent_saves_leave_one_valid_file() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        std::thread::scope(|sc| {
+            for i in 0..8u32 {
+                let p = p.clone();
+                sc.spawn(move || {
+                    let mut s = Settings::default();
+                    s.retention.max_items = 100 + i;
+                    for _ in 0..10 {
+                        let _ = s.save(&p);
+                    }
+                });
+            }
+        });
+        let (s, o) = Settings::load(&p);
+        assert_eq!(o, LoadOutcome::Loaded);
+        assert!((100..108).contains(&s.retention.max_items));
+        assert_eq!(files(d.path()), vec!["settings.json".to_string()]);
     }
 
     #[test]

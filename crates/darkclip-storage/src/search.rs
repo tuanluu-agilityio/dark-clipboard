@@ -47,7 +47,7 @@ pub struct Cursor {
     pub id: ClipId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ClipSummary {
     pub id: ClipId,
     pub kind: ClipType,
@@ -56,6 +56,19 @@ pub struct ClipSummary {
     pub last_copied_at: Timestamp,
     pub sensitivity: SensitivityLevel,
     pub thumb: Option<[u8; 32]>,
+}
+
+/// Never prints the preview (GC-06).
+impl std::fmt::Debug for ClipSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClipSummary")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("preview", &"<redacted>")
+            .field("pinned", &self.pinned)
+            .field("sensitivity", &self.sensitivity)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Cursor {

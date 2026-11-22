@@ -12,7 +12,10 @@
 //! events carry ids, skip reasons and static text only.
 
 use crate::config::CaptureConfig;
-use crate::events::{ApiError, AppEvent, SkipCounters};
+use crate::events::{
+    ApiError, AppEvent, SkipCounters, UNAVAILABLE_READ, UNAVAILABLE_RETENTION,
+    UNAVAILABLE_STORAGE_WRITE,
+};
 use darkclip_core::policy::{
     decide_pre_read, AvailableFormat, Decision, PreReadInput, SizeCaps, SkipReason,
 };
@@ -41,11 +44,16 @@ const RETENTION_EVERY: Duration = Duration::from_secs(10 * 60);
 const MAX_BURST_WAIT: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
+///
+/// Commands with a `reply` carry a `deadline`: the actor skips one that is already late, with
+/// no side effect, because its caller has given up. A caller that times out while the actor
+/// is executing the command cannot tell whether it ran: the outcome is unknown.
 pub enum ActorCommand {
     /// Writes a stored clip back to the clipboard (`plain`: text/plain only).
     CopyBack {
         id: ClipId,
         plain: bool,
+        deadline: Instant,
         reply: Sender<Result<(), ApiError>>,
     },
     SetMode(CaptureMode),
@@ -55,15 +63,18 @@ pub enum ActorCommand {
     SetPinned {
         id: ClipId,
         pinned: bool,
+        deadline: Instant,
         reply: Sender<Result<(), ApiError>>,
     },
     DeleteClip {
         id: ClipId,
+        deadline: Instant,
         reply: Sender<Result<(), ApiError>>,
     },
     /// Deletes the history; replies with the number of clips removed.
     ClearHistory {
         keep_pinned: bool,
+        deadline: Instant,
         reply: Sender<Result<u64, ApiError>>,
     },
     UpdatePolicy(PrivacyPolicy, RetentionPolicy),
@@ -328,6 +339,11 @@ fn size_caps(r: &RetentionPolicy) -> SizeCaps {
         text_max_bytes: u64::from(r.text_max_kb).saturating_mul(1024),
         image_max_bytes: u64::from(r.image_max_mb).saturating_mul(1024 * 1024),
     }
+}
+
+/// The caller of a reply-bearing command has stopped waiting.
+fn late(deadline: Instant) -> bool {
+    Instant::now() >= deadline
 }
 
 fn map_platform(e: &PlatformError) -> ApiError {
@@ -600,7 +616,7 @@ impl Actor {
                 self.emit(AppEvent::Unavailable(what));
             }
             PlatformError::Backend { .. } => {
-                self.emit(AppEvent::Unavailable("clipboard read failed"));
+                self.emit(AppEvent::Unavailable(UNAVAILABLE_READ));
             }
         }
     }
@@ -805,7 +821,7 @@ impl Actor {
                 self.emit(AppEvent::ClipAdded(id));
             }
             Ok(UpsertOutcome::Bumped(id)) => self.emit(AppEvent::ClipBumped(id)),
-            Err(_) => self.emit(AppEvent::Unavailable("storage write failed")),
+            Err(_) => self.emit(AppEvent::Unavailable(UNAVAILABLE_STORAGE_WRITE)),
         }
     }
 
@@ -848,6 +864,9 @@ impl Actor {
             self.storage.apply_retention(&self.retention).map(|_| ())
         };
         if result.is_ok() {
+            if self.retention_backoff.is_some() {
+                self.emit(AppEvent::RetentionOk);
+            }
             self.retention_backoff = None;
             self.retention_retry_at = None;
             // On error fall back to the periodic timer rather than keep a stale schedule.
@@ -867,7 +886,7 @@ impl Actor {
             self.retention_backoff = Some(step);
             let now = Instant::now();
             self.retention_retry_at = Some(now.checked_add(step).unwrap_or(now));
-            self.emit(AppEvent::Unavailable("retention failed"));
+            self.emit(AppEvent::Unavailable(UNAVAILABLE_RETENTION));
         }
         let now = Instant::now();
         self.next_retention = now.checked_add(RETENTION_EVERY).unwrap_or(now);
@@ -881,23 +900,57 @@ impl Actor {
 
     fn on_command(&mut self, cmd: ActorCommand) {
         match cmd {
-            ActorCommand::CopyBack { id, plain, reply } => {
-                let r = self.copy_back(&id, plain);
+            ActorCommand::CopyBack {
+                id,
+                plain,
+                deadline,
+                reply,
+            } => {
+                let r = if late(deadline) {
+                    Err(ApiError::Internal)
+                } else {
+                    self.copy_back(&id, plain)
+                };
                 let _ = reply.send(r);
             }
             ActorCommand::SetLang(lang) => self.cfg.lang = lang,
-            ActorCommand::SetPinned { id, pinned, reply } => {
-                let _ = reply.send(self.set_pinned(&id, pinned));
-            }
-            ActorCommand::DeleteClip { id, reply } => {
-                let r = self.storage.delete_clip(&id).map_err(|e| map_storage(&e));
+            ActorCommand::SetPinned {
+                id,
+                pinned,
+                deadline,
+                reply,
+            } => {
+                let r = if late(deadline) {
+                    Err(ApiError::Internal)
+                } else {
+                    self.set_pinned(&id, pinned)
+                };
                 let _ = reply.send(r);
             }
-            ActorCommand::ClearHistory { keep_pinned, reply } => {
-                let r = self
-                    .storage
-                    .clear_history(keep_pinned)
-                    .map_err(|e| map_storage(&e));
+            ActorCommand::DeleteClip {
+                id,
+                deadline,
+                reply,
+            } => {
+                let r = if late(deadline) {
+                    Err(ApiError::Internal)
+                } else {
+                    self.storage.delete_clip(&id).map_err(|e| map_storage(&e))
+                };
+                let _ = reply.send(r);
+            }
+            ActorCommand::ClearHistory {
+                keep_pinned,
+                deadline,
+                reply,
+            } => {
+                let r = if late(deadline) {
+                    Err(ApiError::Internal)
+                } else {
+                    self.storage
+                        .clear_history(keep_pinned)
+                        .map_err(|e| map_storage(&e))
+                };
                 let _ = reply.send(r);
             }
             ActorCommand::SetMode(mode) => {
@@ -1216,6 +1269,7 @@ mod tests {
                 .send(ActorCommand::CopyBack {
                     id,
                     plain,
+                    deadline: Instant::now() + WAIT,
                     reply: tx,
                 })
                 .unwrap();
@@ -1852,6 +1906,72 @@ mod tests {
             .mask_hint
             .unwrap();
         assert_eq!(clip2.preview, masked_preview(&hint2, Lang::En));
+    }
+
+    #[test]
+    fn late_commands_have_no_side_effect() {
+        let h = start(PrivacyPolicy::default());
+        h.fake.copy(text_copy("keep me"));
+        let (id, _) = h.wait_added();
+        let deadline = Instant::now();
+        std::thread::sleep(Duration::from_millis(5));
+        let (tx, rx) = mpsc::channel();
+        h.cap()
+            .send(ActorCommand::DeleteClip {
+                id,
+                deadline,
+                reply: tx,
+            })
+            .unwrap();
+        assert_eq!(rx.recv_timeout(WAIT).unwrap(), Err(ApiError::Internal));
+        let (tx, rx) = mpsc::channel();
+        h.cap()
+            .send(ActorCommand::SetPinned {
+                id,
+                pinned: true,
+                deadline,
+                reply: tx,
+            })
+            .unwrap();
+        assert_eq!(rx.recv_timeout(WAIT).unwrap(), Err(ApiError::Internal));
+        let (tx, rx) = mpsc::channel();
+        h.cap()
+            .send(ActorCommand::ClearHistory {
+                keep_pinned: false,
+                deadline,
+                reply: tx,
+            })
+            .unwrap();
+        assert_eq!(rx.recv_timeout(WAIT).unwrap(), Err(ApiError::Internal));
+        assert_eq!(h.clip_count(), 1);
+        assert!(!h.ro().get_clip(&id).unwrap().unwrap().pinned);
+    }
+
+    #[test]
+    fn retention_recovery_emits_retention_ok() {
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            test_cfg(),
+            |_| {},
+        );
+        let hooks = &h.cap().hooks;
+        hooks.fail.store(true, Ordering::SeqCst);
+        let send_policy = || {
+            h.cap()
+                .send(ActorCommand::UpdatePolicy(
+                    PrivacyPolicy::default(),
+                    RetentionPolicy::default(),
+                ))
+                .unwrap();
+        };
+        send_policy();
+        h.wait_for("retention failed", |e| {
+            *e == AppEvent::Unavailable(UNAVAILABLE_RETENTION)
+        });
+        hooks.fail.store(false, Ordering::SeqCst);
+        send_policy();
+        h.wait_for("RetentionOk", |e| *e == AppEvent::RetentionOk);
     }
 
     #[test]

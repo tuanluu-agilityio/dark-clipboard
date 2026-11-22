@@ -11,7 +11,9 @@
 use crate::capture::{ActorCommand, CaptureHandle};
 use crate::config::CaptureConfig;
 use crate::envelope::Page;
-use crate::events::{ApiError, AppEvent};
+use crate::events::{
+    ApiError, AppEvent, UNAVAILABLE_READ, UNAVAILABLE_RETENTION, UNAVAILABLE_STORAGE_WRITE,
+};
 use crate::permission::{Operation, PermissionGuard};
 use crate::settings::{LoadOutcome, Settings};
 use darkclip_core::{
@@ -26,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Who is calling. The App is in-process in Phase 1; the P2 CLI and MCP processes
 /// will reach it over IPC.
@@ -49,7 +51,7 @@ pub struct GetOptions {
 }
 
 /// Search result item (api-envelope example: `id, kind, preview, pinned, last_copied_at`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct ClipSummaryView {
     pub id: ClipId,
     pub kind: ClipType,
@@ -59,6 +61,19 @@ pub struct ClipSummaryView {
     /// Only ever true for `Caller::Ui` (other callers never get masked clips).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub masked: bool,
+}
+
+/// Never prints the preview (GC-06).
+impl std::fmt::Debug for ClipSummaryView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClipSummaryView")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("preview", &"<redacted>")
+            .field("pinned", &self.pinned)
+            .field("masked", &self.masked)
+            .finish_non_exhaustive()
+    }
 }
 
 impl From<ClipSummary> for ClipSummaryView {
@@ -74,9 +89,21 @@ impl From<ClipSummary> for ClipSummaryView {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct ClipContent {
     pub text: String,
+    /// The text was cut at 100 KiB (on a character boundary).
+    pub truncated: bool,
+}
+
+/// Never prints the text (GC-06).
+impl std::fmt::Debug for ClipContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClipContent")
+            .field("text", &"<redacted>")
+            .field("truncated", &self.truncated)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -138,6 +165,9 @@ pub enum CaptureStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppStatus {
     pub capture: CaptureStatus,
+    /// Settings could not be read or are from a newer version: defaults are in use and
+    /// nothing is written to the settings file (so the original is never overwritten).
+    pub settings_read_only: bool,
 }
 
 /// ai-integration §1. `PermissionGuard` runs first in every method.
@@ -198,22 +228,36 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Capture health as the pump sees it. `Unavailable` is set by `AppEvent::Unavailable` and
-/// cleared by the next successful store or a mode change.
+/// Capture health as the pump sees it, one slot per cause with its own recovery:
+/// - `permanent` (monitor stopped, platform unsupported or denied): until restart;
+/// - `retention`: cleared by a successful retention run (`RetentionOk`);
+/// - `transient` (storage write or clipboard read failed): cleared by the next successful
+///   store.
+///
+/// A mode change clears nothing.
 #[derive(Debug, Default)]
 struct StatusState {
-    unavailable: Option<&'static str>,
+    permanent: Option<&'static str>,
+    retention: Option<&'static str>,
+    transient: Option<&'static str>,
 }
 
 impl StatusState {
     fn apply(&mut self, e: &AppEvent) {
         match e {
-            AppEvent::Unavailable(what) => self.unavailable = Some(what),
-            AppEvent::ClipAdded(_) | AppEvent::ClipBumped(_) | AppEvent::ModeChanged(_) => {
-                self.unavailable = None;
-            }
-            AppEvent::Skipped(_) => {}
+            AppEvent::Unavailable(what) => match *what {
+                UNAVAILABLE_RETENTION => self.retention = Some(what),
+                UNAVAILABLE_STORAGE_WRITE | UNAVAILABLE_READ => self.transient = Some(what),
+                _ => self.permanent = Some(what),
+            },
+            AppEvent::RetentionOk => self.retention = None,
+            AppEvent::ClipAdded(_) | AppEvent::ClipBumped(_) => self.transient = None,
+            AppEvent::ModeChanged(_) | AppEvent::Skipped(_) => {}
         }
+    }
+
+    fn current(&self) -> Option<&'static str> {
+        self.permanent.or(self.retention).or(self.transient)
     }
 }
 
@@ -221,8 +265,11 @@ pub struct App {
     /// Read-only connection; the actor's connection is the only writer.
     reader: Mutex<Storage>,
     cap: CaptureHandle,
+    /// Held while saving, so saves are serialized and the file matches memory.
     settings: Mutex<Settings>,
     settings_path: PathBuf,
+    /// False when the settings file must not be written (see `AppStatus::settings_read_only`).
+    persist: bool,
     status: Arc<Mutex<StatusState>>,
     clock: Arc<dyn Clock>,
     pump: Option<JoinHandle<()>>,
@@ -240,6 +287,7 @@ impl App {
         events: Sender<AppEvent>,
     ) -> Result<(App, LoadOutcome), ApiError> {
         let (settings, outcome) = Settings::load(settings_path);
+        let persist = !matches!(outcome, LoadOutcome::DefaultedReadOnly(_));
         let writer = Storage::open(data_dir, OpenMode::ReadWrite, Arc::clone(&clock))
             .map_err(|e| map_storage(&e))?;
         let reader = Storage::open(data_dir, OpenMode::ReadOnly, Arc::clone(&clock))
@@ -274,6 +322,7 @@ impl App {
             cap,
             settings: Mutex::new(settings),
             settings_path: settings_path.to_path_buf(),
+            persist,
             status,
             clock,
             pump: Some(pump),
@@ -287,8 +336,12 @@ impl App {
         // Move the handle out so dropping `self` afterwards does not send a second stop.
         let App { cap, .. } = self;
         let r = cap.shutdown(Duration::from_secs(2));
-        if let Some(p) = pump {
-            let _ = p.join();
+        // Join the pump only after a clean stop; otherwise the actor may still hold its
+        // sender and the join would block, so the pump is detached.
+        if r.is_ok() {
+            if let Some(p) = pump {
+                let _ = p.join();
+            }
         }
         r
     }
@@ -302,7 +355,7 @@ impl App {
     }
 
     pub fn status(&self) -> AppStatus {
-        let capture = if let Some(what) = lock(&self.status).unavailable {
+        let capture = if let Some(what) = lock(&self.status).current() {
             CaptureStatus::Unavailable(what)
         } else {
             let s = lock(&self.settings);
@@ -319,23 +372,43 @@ impl App {
                 }
             }
         };
-        AppStatus { capture }
+        AppStatus {
+            capture,
+            settings_read_only: !self.persist,
+        }
     }
 
-    /// Validates, applies to the actor, then saves. `respect_os_markers` cannot be turned off.
+    /// Validates, saves, then applies to the actor (restoring the old file if that fails).
+    /// `respect_os_markers` cannot be turned off. The capture mode (`privacy.mode`) is runtime
+    /// state that only `set_capture_mode` changes: the one in `new` is ignored.
     pub fn update_settings(&self, new: Settings) -> Result<(), ApiError> {
         if !new.privacy.respect_os_markers {
             return Err(ApiError::InvalidArgument(
                 "OS privacy markers cannot be disabled",
             ));
         }
-        self.cap.send(ActorCommand::SetLang(new.ui.language))?;
-        self.cap.send(ActorCommand::UpdatePolicy(
-            new.privacy.clone(),
-            new.retention.clone(),
-        ))?;
-        new.save(&self.settings_path)?;
-        *lock(&self.settings) = new;
+        let mut cur = lock(&self.settings);
+        let mut new = new;
+        new.privacy.mode = cur.privacy.mode;
+        if self.persist {
+            new.save(&self.settings_path)?;
+        }
+        let applied = self
+            .cap
+            .send(ActorCommand::SetLang(new.ui.language))
+            .and_then(|()| {
+                self.cap.send(ActorCommand::UpdatePolicy(
+                    new.privacy.clone(),
+                    new.retention.clone(),
+                ))
+            });
+        if let Err(e) = applied {
+            if self.persist {
+                let _ = cur.save(&self.settings_path);
+            }
+            return Err(e);
+        }
+        *cur = new;
         Ok(())
     }
 
@@ -343,20 +416,27 @@ impl App {
     /// Runs on the actor thread.
     pub fn clear_history(&self, c: &Caller, keep_pinned: bool) -> Result<u64, ApiError> {
         PermissionGuard::check(c, Operation::ClearHistory)?;
-        self.ask(|reply| ActorCommand::ClearHistory { keep_pinned, reply })
+        self.ask(|reply, deadline| ActorCommand::ClearHistory {
+            keep_pinned,
+            deadline,
+            reply,
+        })
     }
 
     fn reader(&self) -> MutexGuard<'_, Storage> {
         lock(&self.reader)
     }
 
-    /// Sends a command to the actor and waits for its reply.
+    /// Sends a command to the actor and waits for its reply. The command carries the
+    /// deadline, so the actor drops it unexecuted if it is already late. A `NotFound`-free
+    /// `Internal` after a timeout during execution means the outcome is unknown.
     fn ask<T>(
         &self,
-        make: impl FnOnce(Sender<Result<T, ApiError>>) -> ActorCommand,
+        make: impl FnOnce(Sender<Result<T, ApiError>>, Instant) -> ActorCommand,
     ) -> Result<T, ApiError> {
         let (tx, rx) = mpsc::channel();
-        self.cap.send(make(tx))?;
+        let deadline = Instant::now() + ACTOR_REPLY_TIMEOUT;
+        self.cap.send(make(tx, deadline))?;
         rx.recv_timeout(ACTOR_REPLY_TIMEOUT)
             .map_err(|_| ApiError::Internal)?
     }
@@ -430,9 +510,14 @@ impl ClipApi for App {
                     .reader()
                     .read_representation(&id, ord)
                     .map_err(|e| map_storage(&e))?;
-                let cut = bytes.len().min(CONTENT_MAX_BYTES);
+                let full = String::from_utf8_lossy(&bytes);
+                let mut end = full.len().min(CONTENT_MAX_BYTES);
+                while !full.is_char_boundary(end) {
+                    end -= 1;
+                }
                 content = Some(ClipContent {
-                    text: String::from_utf8_lossy(&bytes[..cut]).into_owned(),
+                    text: full[..end].to_string(),
+                    truncated: end < full.len(),
                 });
             }
         }
@@ -481,10 +566,15 @@ impl ClipApi for App {
 
     fn pin_clip(&self, c: &Caller, clip: ClipId, pinned: bool) -> Result<(), ApiError> {
         PermissionGuard::check(c, Operation::PinClip)?;
+        // Masked clips do not exist for non-UI callers.
+        if *c != Caller::Ui {
+            self.visible_clip(c, &clip)?;
+        }
         // The actor decides (it rejects masked clips) so the check and the write cannot race.
-        self.ask(|reply| ActorCommand::SetPinned {
+        self.ask(|reply, deadline| ActorCommand::SetPinned {
             id: clip,
             pinned,
+            deadline,
             reply,
         })
     }
@@ -498,16 +588,24 @@ impl ClipApi for App {
         PermissionGuard::check(c, Operation::CopyClipToClipboard)?;
         // Hides masked clips from non-UI callers; the write itself is the actor's.
         self.visible_clip(c, &clip)?;
-        self.ask(|reply| ActorCommand::CopyBack {
+        self.ask(|reply, deadline| ActorCommand::CopyBack {
             id: clip,
             plain: mode == CopyMode::PlainText,
+            deadline,
             reply,
         })
     }
 
     fn delete_clip(&self, c: &Caller, clip: ClipId) -> Result<(), ApiError> {
         PermissionGuard::check(c, Operation::DeleteClip)?;
-        self.ask(|reply| ActorCommand::DeleteClip { id: clip, reply })
+        if *c != Caller::Ui {
+            self.visible_clip(c, &clip)?;
+        }
+        self.ask(|reply, deadline| ActorCommand::DeleteClip {
+            id: clip,
+            deadline,
+            reply,
+        })
     }
 
     fn get_storage_stats(&self, c: &Caller) -> Result<StorageStatsView, ApiError> {
@@ -541,13 +639,13 @@ impl ClipApi for App {
 
     fn set_capture_mode(&self, c: &Caller, mode: CaptureMode) -> Result<(), ApiError> {
         PermissionGuard::check(c, Operation::SetCaptureMode)?;
+        let mut s = lock(&self.settings);
         self.cap.send(ActorCommand::SetMode(mode))?;
-        let snapshot = {
-            let mut s = lock(&self.settings);
-            s.privacy.mode = mode;
-            s.clone()
-        };
-        snapshot.save(&self.settings_path)
+        s.privacy.mode = mode;
+        if self.persist {
+            s.save(&self.settings_path)?;
+        }
+        Ok(())
     }
 }
 
@@ -562,6 +660,7 @@ mod tests {
     use darkclip_platform::fake::{FakeCopy, FakeHandle, FakePlatform};
     use darkclip_platform::PlatformFormat;
     use darkclip_storage::NewClip;
+    use std::path::Path;
     use std::sync::atomic::{AtomicI64, Ordering};
     use std::sync::mpsc::Receiver;
     use std::time::Instant;
@@ -667,6 +766,15 @@ mod tests {
 
     /// Seeds `(text, masked)` clips, then starts the App on the same directory.
     fn start(seed: &[(&str, bool)], settings: Option<Settings>) -> H {
+        start_with_file(seed, |p| {
+            if let Some(s) = settings {
+                s.save(p).unwrap();
+            }
+        })
+    }
+
+    /// Like `start`, with the settings file prepared by `prepare` (given its path).
+    fn start_with_file(seed: &[(&str, bool)], prepare: impl FnOnce(&Path)) -> H {
         let dir = tempfile::tempdir().unwrap();
         let clock: Arc<dyn Clock> = Arc::new(TestClock(AtomicI64::new(T0)));
         let mut ids = Vec::new();
@@ -680,9 +788,7 @@ mod tests {
             }
         }
         let settings_path = dir.path().join("settings.json");
-        if let Some(s) = settings {
-            s.save(&settings_path).unwrap();
-        }
+        prepare(&settings_path);
         let (platform, fake) = FakePlatform::new();
         let (tx, events) = mpsc::channel();
         let cfg = CaptureConfig {
@@ -952,16 +1058,227 @@ mod tests {
     }
 
     #[test]
-    fn status_follows_events_and_mode() {
+    fn status_cause_recovery() {
+        let added = AppEvent::ClipAdded(ClipId::new_v7(Timestamp(T0)));
         let mut st = StatusState::default();
+        // Storage write failure: cleared by the next successful store only.
         st.apply(&AppEvent::Unavailable("storage write failed"));
-        assert_eq!(st.unavailable, Some("storage write failed"));
-        st.apply(&AppEvent::ClipAdded(ClipId::new_v7(Timestamp(T0))));
-        assert_eq!(st.unavailable, None);
-        st.apply(&AppEvent::Unavailable("retention failed"));
+        assert_eq!(st.current(), Some("storage write failed"));
         st.apply(&AppEvent::ModeChanged(CaptureMode::Private));
-        assert_eq!(st.unavailable, None);
+        st.apply(&AppEvent::RetentionOk);
+        assert_eq!(st.current(), Some("storage write failed"));
+        st.apply(&added);
+        assert_eq!(st.current(), None);
+        // Retention failure: cleared by a successful retention, not by stores or mode changes.
+        st.apply(&AppEvent::Unavailable("retention failed"));
+        st.apply(&added);
+        st.apply(&AppEvent::ModeChanged(CaptureMode::Normal));
+        assert_eq!(st.current(), Some("retention failed"));
+        st.apply(&AppEvent::RetentionOk);
+        assert_eq!(st.current(), None);
+        // Monitor stopped / platform denial: until restart, nothing clears them.
+        for what in ["clipboard monitor stopped", "clipboard access denied"] {
+            let mut st = StatusState::default();
+            st.apply(&AppEvent::Unavailable(what));
+            st.apply(&added);
+            st.apply(&AppEvent::RetentionOk);
+            st.apply(&AppEvent::ModeChanged(CaptureMode::Private));
+            assert_eq!(st.current(), Some(what));
+        }
+        // The permanent cause wins over the recoverable ones.
+        let mut st = StatusState::default();
+        st.apply(&AppEvent::Unavailable("retention failed"));
+        st.apply(&AppEvent::Unavailable("clipboard monitor stopped"));
+        assert_eq!(st.current(), Some("clipboard monitor stopped"));
+    }
 
+    #[test]
+    fn api_views_debug_redacts_content() {
+        let secret = "TOPSECRET-VALUE";
+        let view = ClipSummaryView {
+            id: ClipId::new_v7(Timestamp(T0)),
+            kind: ClipType::Text,
+            preview: secret.into(),
+            pinned: false,
+            last_copied_at: Timestamp(T0),
+            masked: false,
+        };
+        let content = ClipContent {
+            text: secret.into(),
+            truncated: false,
+        };
+        let page = Page {
+            items: vec![view.clone()],
+            limit: 5,
+            next_cursor: None,
+        };
+        let summary = ClipSummary {
+            id: view.id,
+            kind: ClipType::Text,
+            preview: secret.into(),
+            pinned: false,
+            last_copied_at: Timestamp(T0),
+            sensitivity: SensitivityLevel::None,
+            thumb: None,
+        };
+        let h = start(&[("clip", false)], None);
+        let full = h
+            .app()
+            .get_clip(
+                &Caller::Ui,
+                h.ids[0],
+                GetOptions {
+                    include_content: true,
+                },
+            )
+            .unwrap();
+        for d in [
+            format!("{view:?}"),
+            format!("{view:#?}"),
+            format!("{content:?}"),
+            format!("{content:#?}"),
+            format!("{page:?}"),
+            format!("{page:#?}"),
+            format!("{summary:?}"),
+            format!("{summary:#?}"),
+            format!("{full:?}"),
+            format!("{full:#?}"),
+        ] {
+            assert!(!d.contains(secret), "{d}");
+            assert!(!d.contains("clip\""), "{d}");
+        }
+        let ClipView {
+            content: Some(c), ..
+        } = full
+        else {
+            panic!("content expected");
+        };
+        assert!(!format!("{c:?}").contains("clip"));
+    }
+
+    #[test]
+    fn update_settings_keeps_runtime_mode() {
+        let h = start(&[], None);
+        let a = h.app();
+        let snapshot = a.settings();
+        assert_eq!(snapshot.privacy.mode, CaptureMode::Normal);
+        a.set_capture_mode(&Caller::Ui, CaptureMode::Private)
+            .unwrap();
+        let mut changed = snapshot;
+        changed.ui.language = Lang::Vi;
+        a.update_settings(changed).unwrap();
+        // In memory, saved, and (below) in the actor.
+        assert_eq!(a.settings().privacy.mode, CaptureMode::Private);
+        assert_eq!(a.settings().ui.language, Lang::Vi);
+        assert_eq!(a.status().capture, CaptureStatus::Private);
+        let (saved, _) = Settings::load(&h.dir.path().join("settings.json"));
+        assert_eq!(saved.privacy.mode, CaptureMode::Private);
+        assert_eq!(saved.ui.language, Lang::Vi);
+        // The actor still blocks capture.
+        h.fake.copy(text_copy("must not be captured"));
+        let sentinel_wait = h.events.recv_timeout(Duration::from_millis(300));
+        assert!(!matches!(sentinel_wait, Ok(AppEvent::ClipAdded(_))));
+        assert_eq!(a.get_storage_stats(&Caller::Ui).unwrap().clips, 0);
+    }
+
+    #[test]
+    fn newer_settings_file_is_never_overwritten() {
+        let mut newer = String::new();
+        let h = start_with_file(&[], |p| {
+            let mut v = serde_json::to_value(Settings::default()).unwrap();
+            v["settings_version"] = 99.into();
+            newer = v.to_string();
+            std::fs::write(p, &newer).unwrap();
+        });
+        let a = h.app();
+        assert!(a.status().settings_read_only);
+        a.set_capture_mode(&Caller::Ui, CaptureMode::Private)
+            .unwrap();
+        let mut s = a.settings();
+        s.ui.language = Lang::Vi;
+        a.update_settings(s).unwrap();
+        // Applied in memory, never written.
+        assert_eq!(a.status().capture, CaptureStatus::Private);
+        assert_eq!(
+            std::fs::read_to_string(h.dir.path().join("settings.json")).unwrap(),
+            newer
+        );
+    }
+
+    #[test]
+    fn unreadable_settings_are_never_overwritten() {
+        let h = start_with_file(&[], |p| std::fs::create_dir(p).unwrap());
+        let a = h.app();
+        assert!(a.status().settings_read_only);
+        // Saving would fail anyway; it is not even tried, so the call succeeds.
+        a.set_capture_mode(&Caller::Ui, CaptureMode::Private)
+            .unwrap();
+        assert!(h.dir.path().join("settings.json").is_dir());
+        // A normal start is writable.
+        let ok = start(&[], None);
+        assert!(!ok.app().status().settings_read_only);
+    }
+
+    #[test]
+    fn masked_clips_do_not_exist_for_non_ui_mutations() {
+        let h = start(&[("normal", false), ("secret", true)], None);
+        let a = h.app();
+        let masked = h.ids[1];
+        assert_eq!(
+            a.pin_clip(&Caller::Cli, masked, true).unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.pin_clip(&Caller::Cli, masked, false).unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.delete_clip(&Caller::Cli, masked).unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(a.get_storage_stats(&Caller::Ui).unwrap().clips, 2);
+        // The UI still can.
+        a.delete_clip(&Caller::Ui, masked).unwrap();
+    }
+
+    #[test]
+    fn get_clip_content_is_cut_on_a_char_boundary() {
+        // Three-byte characters: 100 KiB is not a multiple of 3, so the cut must back off.
+        let text: String = "€".repeat(40_000);
+        assert!(text.len() > CONTENT_MAX_BYTES);
+        let h = start(&[(&text, false), ("short", false)], None);
+        let a = h.app();
+        let big = a
+            .get_clip(
+                &Caller::Ui,
+                h.ids[0],
+                GetOptions {
+                    include_content: true,
+                },
+            )
+            .unwrap()
+            .content
+            .unwrap();
+        assert!(big.truncated);
+        assert!(big.text.len() <= CONTENT_MAX_BYTES);
+        assert_eq!(big.text.len() % 3, 0);
+        assert!(!big.text.contains('\u{FFFD}'));
+        let small = a
+            .get_clip(
+                &Caller::Ui,
+                h.ids[1],
+                GetOptions {
+                    include_content: true,
+                },
+            )
+            .unwrap()
+            .content
+            .unwrap();
+        assert!(!small.truncated);
+    }
+
+    #[test]
+    fn status_follows_events_and_mode() {
         let h = start(&[], None);
         let a = h.app();
         assert_eq!(a.status().capture, CaptureStatus::Active);

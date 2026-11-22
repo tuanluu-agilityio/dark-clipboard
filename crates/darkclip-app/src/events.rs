@@ -15,7 +15,15 @@ pub enum AppEvent {
     ModeChanged(CaptureMode),
     /// A platform or storage facility failed; static text only, never content.
     Unavailable(&'static str),
+    /// A retention run succeeded after one had failed (clears the "retention failed" status).
+    RetentionOk,
 }
+
+/// `AppEvent::Unavailable` texts that have a recovery of their own (all others are permanent
+/// until restart).
+pub const UNAVAILABLE_RETENTION: &str = "retention failed";
+pub const UNAVAILABLE_STORAGE_WRITE: &str = "storage write failed";
+pub const UNAVAILABLE_READ: &str = "clipboard read failed";
 
 /// Application error. The variant set matches the Task 011 interface. No variant carries
 /// content (GC-06).
