@@ -82,3 +82,7 @@ See ADR-0005 and `docs/architecture/ai-integration.md`. Summary: off by default,
 ## 10. Darkshot interoperability rule
 
 Dark Clipboard must **never** read, store, index, or forward content carrying Darkshot's exclusion markers. No setting, CLI flag, MCP scope or debug mode may change this. Any future Darkshot integration (for example "send image clip to Darkshot") is one-way from Dark Clipboard to Darkshot, and only for clips Dark Clipboard captured legitimately.
+
+## 11. Limits of the static checks (Phase 1 review, D-029)
+
+`scripts/check.ps1`/`check.sh` enforce that `ClipboardAccess` (type, `.access` field, `access:` destructuring) and adapter `read`/`write` calls appear only in allowed files. They do **not** prove the ordering "read only right after a `Decision::Read`". That ordering is proven by tests with the fake platform's counters (`excluded_never_read`, `paused_never_reads_formats`, `paused_passes_no_formats_to_policy`). Reviews of `capture.rs` must re-check it by reading the code.

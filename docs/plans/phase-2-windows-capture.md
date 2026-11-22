@@ -27,3 +27,19 @@
 | 108 | Phase review + memory-bank, CHANGELOG (Unreleased) | 101–107 | reviewer / opus | — | — | APPROVED | `check.ps1` |
 
 Note on 104: Dark Clipboard's own copy-back must **not** add exclusion markers. Otherwise pasting a clip back would hide it from Win+V and other tools in ways the user did not ask for. Self-write suppression uses the sequence number, not markers. This is decided here (decision D-012 in `memory-bank/decisions.md`).
+
+## Amendments from the Phase 1 review (Task 012, D-029)
+
+These are binding for the Phase 2 task packages, which are written at phase start.
+
+| Item | Task | Requirement |
+|---|---|---|
+| F-01 / S-4 | 101 | `ChangeSignal` carries `source: Option<ClipboardSource>`, resolved on the monitor thread at `WM_CLIPBOARDUPDATE` time (the struct stops being `Copy`). The actor keeps the first non-None source per seq and still checks every source seen. Decide whether `PlatformBundle.source` stays (snapshot-time fallback) and record it. |
+| S-5 | 101/102 | The adapter makes a **single** `OpenClipboard` attempt per call and returns `PlatformError::Busy`; the actor owns retries (10 × 20 ms). No retry loop inside the adapter. |
+| S-1 | 102 | `snapshot_meta` reports at most one `PlatformFormat` per `Mime`, with the preference `PNG` > `CF_DIBV5` > `CF_DIB` for images and `CF_UNICODETEXT` only for text. Placeholders (`DataObject`, `Ole Private Data`) are reported with `mime: None`. |
+| S-2 | 104 | `OpenClipboard(NULL)` makes `SetClipboardData` fail, so `write` needs an owner HWND on the thread that calls it (the actor thread): create a message-only window lazily on the actor thread. PNG clips are written as `PNG` + `CF_DIBV5` (+ `CF_DIB`). |
+| S-3 / F-05 | new 103b (app) | Decode PNG/DIB to RGBA in `darkclip-app` with a decoded-pixel cap (e.g. 64 MP / 256 MiB). Pass RGBA to `canonical_hash`, generate a ≤ 256 px PNG thumbnail, and set `width`/`height` on image reps. Test that the same image as DIB and as PNG dedupes. |
+| S-6 | 106 | Keep `PlatformBundle.caps` and expose `App::capabilities()`; it is shown in About/diagnostics. |
+| F-02 | 106 | StorageFull → retention, then retry the insert once. |
+| S-10 | 106 | Add a check rule for content-free logging in `apps/desktop` (no clip types or previews in log macros). |
+| F-03 | 101 | `sequence()` never fails on Windows (`GetClipboardSequenceNumber`); return `Ok` always. |

@@ -71,7 +71,7 @@ foreach ($f in $rs) {
 if ($bad) { exit 1 }
 # Hardening (Task 010 review): any use of the ClipboardAccess type or a bundle's `.access` field outside the
 # allowed files fails, whatever the variable name. Comment lines are ignored.
-$typeUse = '\bClipboardAccess\b|\.access\b'
+$typeUse = '\bClipboardAccess\b|\.access\b|\baccess\s*:'
 foreach ($f in $rs) {
     $rel = Rel $f
     if ($rel -match $allowed) { continue }

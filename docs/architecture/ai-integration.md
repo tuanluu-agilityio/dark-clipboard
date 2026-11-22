@@ -9,6 +9,8 @@ Status: Phase 0 draft, 2026-11-22. Implementation: Application API in Phase 1 (i
 ```rust
 pub enum Caller { Ui, Cli, Mcp { client_id: String } }
 
+// As built (Task 011): results use view types (`ClipSummaryView`, `ClipView`, `StorageStatsView`),
+// and search takes `darkclip_storage::SearchQuery` (typed `Cursor`; collection/tag filters arrive in P1).
 pub trait ClipApi {
     fn search_clips(&self, c: &Caller, q: SearchQuery) -> Result<Page<ClipSummary>, ApiError>;
     fn get_clip(&self, c: &Caller, id: ClipId, opts: GetOptions /* include_content */) -> Result<ClipView, ApiError>;
