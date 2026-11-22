@@ -29,3 +29,5 @@ If the package contradicts a spec or ADR, an expected test value looks wrong, or
 - Done: files created or changed, crates added.
 - Checks: commands run and real results (tests passed, warnings, failures).
 - Doubts, deviations from the package with reasons, and anything the owner must test by hand.
+
+**Owner's live machine (GC-19):** never take screenshots or screen captures, never read other windows, never simulate keyboard or mouse input, never write the real clipboard, never run `#[ignore]` real-clipboard tests, and run the app only with `--data-dir <temp>` + `--exit-after-ms`. Visual and input checks become owner manual rows.
