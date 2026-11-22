@@ -5,10 +5,21 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod api;
 pub mod capture;
 pub mod config;
+pub mod envelope;
 pub mod events;
+pub mod permission;
+pub mod settings;
 
+pub use api::{
+    App, AppStatus, Caller, CaptureStatus, ClipApi, ClipSummaryView, ClipView, CopyMode,
+    GetOptions, StorageStatsView,
+};
 pub use capture::{ActorCommand, CaptureHandle};
 pub use config::CaptureConfig;
+pub use envelope::{to_envelope, Page};
 pub use events::{ApiError, AppEvent, SkipCounters};
+pub use permission::{Operation, PermissionGuard};
+pub use settings::{LoadOutcome, Settings};

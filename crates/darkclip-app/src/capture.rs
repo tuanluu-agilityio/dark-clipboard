@@ -27,6 +27,7 @@ use darkclip_platform::{
     SourceResolver,
 };
 use darkclip_storage::{NewClip, Storage, StorageError, UpsertOutcome};
+#[cfg(test)]
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -39,9 +40,6 @@ const RETENTION_EVERY: Duration = Duration::from_secs(10 * 60);
 /// Longest wait from the first signal of a burst, so a noisy writer cannot starve capture.
 const MAX_BURST_WAIT: Duration = Duration::from_millis(500);
 
-/// Language of stored masked previews. The UI language arrives with settings (Task 011).
-const MASK_LANG: Lang = Lang::En;
-
 #[derive(Debug)]
 pub enum ActorCommand {
     /// Writes a stored clip back to the clipboard (`plain`: text/plain only).
@@ -51,6 +49,23 @@ pub enum ActorCommand {
         reply: Sender<Result<(), ApiError>>,
     },
     SetMode(CaptureMode),
+    /// Language for masked previews stored from now on.
+    SetLang(Lang),
+    /// Pin or unpin. Masked clips are rejected (pinning would not extend their expiry).
+    SetPinned {
+        id: ClipId,
+        pinned: bool,
+        reply: Sender<Result<(), ApiError>>,
+    },
+    DeleteClip {
+        id: ClipId,
+        reply: Sender<Result<(), ApiError>>,
+    },
+    /// Deletes the history; replies with the number of clips removed.
+    ClearHistory {
+        keep_pinned: bool,
+        reply: Sender<Result<u64, ApiError>>,
+    },
     UpdatePolicy(PrivacyPolicy, RetentionPolicy),
     /// Processes every command queued before it, stops the monitor and ends the actor.
     Shutdown {
@@ -61,9 +76,13 @@ pub enum ActorCommand {
 /// Retention instrumentation: an attempt counter, and (tests only) forced failure.
 #[derive(Default)]
 struct RetentionHooks {
+    #[cfg(test)]
     attempts: AtomicU32,
     #[cfg(test)]
     fail: std::sync::atomic::AtomicBool,
+    /// Tests: `next_expiry` fails after a successful retention.
+    #[cfg(test)]
+    expiry_fail: std::sync::atomic::AtomicBool,
 }
 
 /// What the actor's queue carries.
@@ -367,6 +386,8 @@ struct Actor {
     retention: RetentionPolicy,
     events: Sender<AppEvent>,
     counters: Arc<Mutex<SkipCounters>>,
+    /// Test instrumentation; unused in release builds.
+    #[cfg_attr(not(test), allow(dead_code))]
     hooks: Arc<RetentionHooks>,
     last_processed_seq: Option<u64>,
     last_self_write_seq: Option<u64>,
@@ -740,7 +761,7 @@ impl Actor {
                     });
                     let mut old = std::mem::replace(
                         &mut classified.preview,
-                        masked_preview(&hint, MASK_LANG),
+                        masked_preview(&hint, self.cfg.lang),
                     );
                     wipe_string(&mut old);
                     let ttl_ms =
@@ -815,6 +836,7 @@ impl Actor {
     }
 
     fn run_retention(&mut self) {
+        #[cfg(test)]
         self.hooks.attempts.fetch_add(1, Ordering::Relaxed);
         #[cfg(test)]
         let forced = self.hooks.fail.load(Ordering::SeqCst);
@@ -828,9 +850,16 @@ impl Actor {
         if result.is_ok() {
             self.retention_backoff = None;
             self.retention_retry_at = None;
-            if let Ok(next) = self.storage.next_expiry() {
-                self.next_expiry = next;
-            }
+            // On error fall back to the periodic timer rather than keep a stale schedule.
+            #[cfg(test)]
+            let expiry = if self.hooks.expiry_fail.load(Ordering::SeqCst) {
+                Err(StorageError::ReadOnly)
+            } else {
+                self.storage.next_expiry()
+            };
+            #[cfg(not(test))]
+            let expiry = self.storage.next_expiry();
+            self.next_expiry = expiry.unwrap_or(None);
         } else {
             // One attempt, hence at most one event, per back-off step (no busy loop on a
             // past expiry).
@@ -854,6 +883,21 @@ impl Actor {
         match cmd {
             ActorCommand::CopyBack { id, plain, reply } => {
                 let r = self.copy_back(&id, plain);
+                let _ = reply.send(r);
+            }
+            ActorCommand::SetLang(lang) => self.cfg.lang = lang,
+            ActorCommand::SetPinned { id, pinned, reply } => {
+                let _ = reply.send(self.set_pinned(&id, pinned));
+            }
+            ActorCommand::DeleteClip { id, reply } => {
+                let r = self.storage.delete_clip(&id).map_err(|e| map_storage(&e));
+                let _ = reply.send(r);
+            }
+            ActorCommand::ClearHistory { keep_pinned, reply } => {
+                let r = self
+                    .storage
+                    .clear_history(keep_pinned)
+                    .map_err(|e| map_storage(&e));
                 let _ = reply.send(r);
             }
             ActorCommand::SetMode(mode) => {
@@ -895,6 +939,22 @@ impl Actor {
                 self.last_processed_seq = Some(seq);
             }
         }
+    }
+
+    fn set_pinned(&mut self, id: &ClipId, pinned: bool) -> Result<(), ApiError> {
+        if pinned {
+            let clip = self
+                .storage
+                .get_clip(id)
+                .map_err(|e| map_storage(&e))?
+                .ok_or(ApiError::NotFound)?;
+            if clip.sensitivity.level == SensitivityLevel::Masked {
+                return Err(ApiError::InvalidArgument("masked clips cannot be pinned"));
+            }
+        }
+        self.storage
+            .set_pinned(id, pinned)
+            .map_err(|e| map_storage(&e))
     }
 
     fn copy_back(&mut self, id: &ClipId, plain: bool) -> Result<(), ApiError> {
@@ -977,6 +1037,7 @@ mod tests {
             debounce_ms: 5,
             open_retries: 10,
             retry_delay_ms: 1,
+            lang: Lang::En,
         }
     }
 
@@ -1091,6 +1152,23 @@ mod tests {
         fn ro(&self) -> Storage {
             let clock: Arc<dyn Clock> = self.clock.clone();
             Storage::open(self.dir.path(), OpenMode::ReadOnly, clock).unwrap()
+        }
+
+        /// Previews of every stored clip (masked ones included).
+        fn stored_previews(&self) -> Vec<String> {
+            let (rows, _) = self
+                .ro()
+                .search(&SearchQuery {
+                    text: None,
+                    kinds: Vec::new(),
+                    pinned_only: false,
+                    since: None,
+                    include_masked: true,
+                    limit: 200,
+                    cursor: None,
+                })
+                .unwrap();
+            rows.into_iter().map(|r| r.preview).collect()
         }
 
         fn clip_count(&self) -> u64 {
@@ -1549,6 +1627,8 @@ mod tests {
             wait_resolved(&h, 1);
             h.fake.copy(excluded_copy("vault entry"));
             let seen = h.wait_skip(SkipReason::ExcludedApp);
+            // Every attempt, also one whose window closed early: the excluded copy is never stored.
+            assert!(!h.stored_previews().iter().any(|p| p == "vault entry"));
             if h.fake.snapshot_meta_calls() > 1 {
                 return false; // Window closed between the copies: notepad's was inspected alone.
             }
@@ -1741,6 +1821,68 @@ mod tests {
             })
             .unwrap();
         }
+    }
+
+    #[test]
+    fn masked_preview_uses_settings_language() {
+        let policy = PrivacyPolicy {
+            sensitive_handling: SensitiveHandling::StoreMasked,
+            ..PrivacyPolicy::default()
+        };
+        let enabled = policy.sensitive_categories_enabled.clone();
+        let cfg = CaptureConfig {
+            lang: Lang::Vi,
+            ..test_cfg()
+        };
+        let h = start_with(policy, RetentionPolicy::default(), cfg, |_| {});
+        let text = api_key_text();
+        h.fake.copy(text_copy(&text));
+        let (id, _) = h.wait_added();
+        let hint = scan(&text, &enabled).mask_hint.unwrap();
+        let clip = h.ro().get_clip(&id).unwrap().unwrap();
+        assert_eq!(clip.preview, masked_preview(&hint, Lang::Vi));
+        assert_ne!(clip.preview, masked_preview(&hint, Lang::En));
+        // A language change applies to later captures.
+        h.cap().send(ActorCommand::SetLang(Lang::En)).unwrap();
+        h.fake
+            .copy(text_copy(&format!("other {}", &api_key_text()[4..])));
+        let (id2, _) = h.wait_added();
+        let clip2 = h.ro().get_clip(&id2).unwrap().unwrap();
+        let hint2 = scan(&format!("other {}", &api_key_text()[4..]), &enabled)
+            .mask_hint
+            .unwrap();
+        assert_eq!(clip2.preview, masked_preview(&hint2, Lang::En));
+    }
+
+    #[test]
+    fn expiry_lookup_failure_falls_back_to_timer() {
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            test_cfg(),
+            seed_masked(T0 + 1_000),
+        );
+        h.sentinel();
+        let hooks = &h.cap().hooks;
+        hooks.expiry_fail.store(true, Ordering::SeqCst);
+        // A retention run that succeeds but cannot read the next expiry: the schedule is dropped.
+        h.cap()
+            .send(ActorCommand::UpdatePolicy(
+                PrivacyPolicy::default(),
+                RetentionPolicy::default(),
+            ))
+            .unwrap();
+        assert_eq!(
+            h.copy_back(ClipId::new_v7(Timestamp(T0)), false),
+            Err(ApiError::NotFound)
+        );
+        let before = hooks.attempts.load(Ordering::SeqCst);
+        h.clock.set(T0 + 2_000);
+        h.fake.signal_again(1);
+        std::thread::sleep(Duration::from_millis(200));
+        // No expiry-driven retention (the 10-minute timer is far away), so the clip stays.
+        assert_eq!(hooks.attempts.load(Ordering::SeqCst), before);
+        assert_eq!(h.clip_count(), 2);
     }
 
     #[test]

@@ -1,5 +1,7 @@
 //! Capture actor tuning (system-overview §2 rules 2–3, spike design consequences 2 and 4).
 
+use darkclip_core::Lang;
+
 /// Timing of the capture actor. Defaults follow the Windows spike.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CaptureConfig {
@@ -9,6 +11,8 @@ pub struct CaptureConfig {
     pub open_retries: u32,
     /// Pause between attempts on a `Busy` clipboard.
     pub retry_delay_ms: u64,
+    /// Language of stored masked previews (the UI language from settings).
+    pub lang: Lang,
 }
 
 impl Default for CaptureConfig {
@@ -17,6 +21,7 @@ impl Default for CaptureConfig {
             debounce_ms: 75,
             open_retries: 10,
             retry_delay_ms: 20,
+            lang: Lang::En,
         }
     }
 }
@@ -31,5 +36,6 @@ mod tests {
         assert_eq!(c.debounce_ms, 75);
         assert_eq!(c.open_retries, 10);
         assert_eq!(c.retry_delay_ms, 20);
+        assert_eq!(c.lang, Lang::En);
     }
 }

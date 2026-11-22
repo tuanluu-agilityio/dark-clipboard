@@ -17,8 +17,8 @@ pub enum AppEvent {
     Unavailable(&'static str),
 }
 
-/// Application error. Task 011 owns the full API surface and adds `code()`; the variant set
-/// already matches the Task 011 interface. No variant carries content (GC-06).
+/// Application error. The variant set matches the Task 011 interface. No variant carries
+/// content (GC-06).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiError {
     NotFound,
@@ -30,6 +30,23 @@ pub enum ApiError {
     AppNotRunning,
     SchemaTooNew,
     Internal,
+}
+
+impl ApiError {
+    /// The envelope `error.code`: exactly the `api-envelope.schema.json` enum.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NotFound => "NOT_FOUND",
+            Self::InvalidArgument(_) => "INVALID_ARGUMENT",
+            Self::PermissionDenied(_) => "PERMISSION_DENIED",
+            Self::UnsupportedPlatform => "UNSUPPORTED_PLATFORM",
+            Self::ClipboardBusy => "CLIPBOARD_BUSY",
+            Self::Storage => "STORAGE_ERROR",
+            Self::AppNotRunning => "APP_NOT_RUNNING",
+            Self::SchemaTooNew => "SCHEMA_TOO_NEW",
+            Self::Internal => "INTERNAL",
+        }
+    }
 }
 
 impl std::fmt::Display for ApiError {
