@@ -5,11 +5,11 @@
 //! token is quoted (`"tok"*`, internal quotes doubled). Query text is never logged and
 //! never appears in an error.
 //!
-//! Pagination: keyset on `(last_copied_at, id)` over the unpinned rows of the recent
-//! list (empty text). Pinned rows that match the filters are returned on the first page
-//! only and do not count toward `limit`. Text queries are ranked by bm25, which a
-//! `(last_copied_at, id)` cursor cannot resume, so they return a single page (at most
-//! `limit` rows, never a cursor) and ignore `cursor`.
+//! Pagination: the recent list (empty text) is one keyset over pinned rows (by
+//! `pin_order`) then unpinned rows (`last_copied_at DESC, id DESC`); pinned rows count
+//! toward `limit`. Text queries are ranked by bm25, which a `(last_copied_at, id)`
+//! cursor cannot resume, so they return a single page (at most `limit` rows, never a
+//! cursor) and ignore `cursor`. `limit` is clamped to 200.
 //!
 //! Queries shorter than 3 characters, or without any letter or digit, cannot use the
 //! prefix index usefully; they fall back to a case-insensitive substring match on the
@@ -24,7 +24,7 @@ use serde::Serialize;
 /// Bytes of plain text indexed per clip.
 pub(crate) const BODY_MAX_BYTES: usize = 32 * 1024;
 const DEFAULT_LIMIT: usize = 50;
-const MAX_LIMIT: usize = 500;
+const MAX_LIMIT: usize = 200;
 /// Recent rows scanned by the substring fallback.
 const FALLBACK_WINDOW: i64 = 2000;
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -224,6 +224,9 @@ fn row_to_summary(r: &rusqlite::Row<'_>) -> Result<ClipSummary, StorageError> {
 
 impl Storage {
     /// Searches clips. See the module docs for ranking and pagination.
+    ///
+    /// Text queries return one page with `next_cursor = None`: bm25 order is not
+    /// keyset-pageable. Offset paging capped at 200 is the planned future option.
     pub fn search(
         &self,
         q: &SearchQuery,
@@ -232,7 +235,8 @@ impl Storage {
             0 => DEFAULT_LIMIT,
             n => n.min(MAX_LIMIT),
         };
-        let text = q.text.as_deref().map(str::trim).filter(|t| !t.is_empty());
+        let cleaned = q.text.as_deref().map(|t| t.replace(' ', " "));
+        let text = cleaned.as_deref().map(str::trim).filter(|t| !t.is_empty());
 
         // Shared filters; every value is a bound parameter.
         let mut filt = String::new();
@@ -298,7 +302,10 @@ impl Storage {
         Ok(out)
     }
 
-    /// Recent list: pinned rows (first page only), then unpinned by keyset.
+    /// Recent list ordered pinned (by `pin_order`) first, then unpinned by recency, with
+    /// one keyset over the whole order. The cursor clip decides the phase: a pinned
+    /// cursor continues the pinned rows, then starts the unpinned ones from the top;
+    /// any other cursor continues the unpinned rows by its own values.
     fn recent(
         &self,
         filt: &str,
@@ -306,41 +313,61 @@ impl Storage {
         limit: usize,
         q: &SearchQuery,
     ) -> Result<(Vec<ClipSummary>, Option<Cursor>), StorageError> {
+        let cursor_pin: Option<(bool, i64)> = match q.cursor {
+            Some(c) => self
+                .conn
+                .query_row(
+                    "SELECT pinned, COALESCE(pin_order, 0) FROM clips WHERE id = ?1",
+                    [c.id.to_string()],
+                    |r| Ok((r.get::<_, bool>(0)?, r.get::<_, i64>(1)?)),
+                )
+                .ok(),
+            None => None,
+        };
+        let cursor_is_pinned = cursor_pin.is_some_and(|(p, _)| p);
         let mut out = Vec::new();
-        if q.cursor.is_none() {
+        // Pinned phase: no cursor, or a cursor on a pinned clip.
+        if q.cursor.is_none() || cursor_is_pinned {
+            let mut a = args.clone();
+            let mut keyset = String::new();
+            if let (Some(c), Some((_, po))) = (q.cursor, cursor_pin) {
+                for v in [po, po, c.last_copied_at.0, c.last_copied_at.0] {
+                    a.push(Value::Integer(v));
+                }
+                a.push(Value::Text(c.id.to_string()));
+                keyset = " AND (COALESCE(c.pin_order, 0) > ? OR (COALESCE(c.pin_order, 0) = ?                           AND (c.last_copied_at < ? OR (c.last_copied_at = ? AND c.id < ?))))"
+                    .into();
+            }
             let sql = format!(
-                "SELECT {COLS} FROM clips c WHERE c.pinned = 1 {filt} \
-                 ORDER BY c.pin_order ASC, c.last_copied_at DESC, c.id DESC"
+                "SELECT {COLS} FROM clips c WHERE c.pinned = 1 {filt} {keyset}                  ORDER BY COALESCE(c.pin_order, 0) ASC, c.last_copied_at DESC, c.id DESC                  LIMIT {}",
+                limit + 1
             );
-            out = self.collect(&sql, args.clone())?;
+            out = self.collect(&sql, a)?;
         }
-        if q.pinned_only {
-            return Ok((out, None));
+        if !q.pinned_only && out.len() <= limit {
+            let mut a = args;
+            let mut keyset = "";
+            if let (Some(c), false) = (q.cursor, cursor_is_pinned) {
+                a.push(Value::Integer(c.last_copied_at.0));
+                a.push(Value::Integer(c.last_copied_at.0));
+                a.push(Value::Text(c.id.to_string()));
+                keyset = " AND (c.last_copied_at < ? OR (c.last_copied_at = ? AND c.id < ?))";
+            }
+            let sql = format!(
+                "SELECT {COLS} FROM clips c WHERE c.pinned = 0 {filt} {keyset}                  ORDER BY c.last_copied_at DESC, c.id DESC LIMIT {}",
+                limit + 1 - out.len()
+            );
+            out.extend(self.collect(&sql, a)?);
         }
-        let mut a = args;
-        let mut keyset = "";
-        if let Some(c) = q.cursor {
-            a.push(Value::Integer(c.last_copied_at.0));
-            a.push(Value::Integer(c.last_copied_at.0));
-            a.push(Value::Text(c.id.to_string()));
-            keyset = " AND (c.last_copied_at < ? OR (c.last_copied_at = ? AND c.id < ?))";
-        }
-        let sql = format!(
-            "SELECT {COLS} FROM clips c WHERE c.pinned = 0 {filt} {keyset} \
-             ORDER BY c.last_copied_at DESC, c.id DESC LIMIT {}",
-            limit + 1
-        );
-        let mut page = self.collect(&sql, a)?;
-        let next = if page.len() > limit {
-            page.truncate(limit);
-            page.last().map(|s| Cursor {
+        let next = if out.len() > limit {
+            out.truncate(limit);
+            out.last().map(|s| Cursor {
                 last_copied_at: s.last_copied_at,
                 id: s.id,
             })
         } else {
             None
         };
-        out.extend(page);
         Ok((out, next))
     }
 }
@@ -654,6 +681,72 @@ mod tests {
         since.text = None;
         since.since = Some(Timestamp(i64::MAX));
         assert!(s.search(&since).unwrap().0.is_empty());
+    }
+
+    #[test]
+    fn limit_clamped_to_200() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path());
+        for i in 0..210 {
+            s.upsert_clip(text_clip(&format!("clip {i}"))).unwrap();
+        }
+        let mut query = q("");
+        query.text = None;
+        query.limit = 1000;
+        let (rows, next) = s.search(&query).unwrap();
+        assert_eq!(rows.len(), 200);
+        assert!(next.is_some());
+    }
+
+    #[test]
+    fn many_pins_respect_limit_and_page() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path());
+        for i in 0..30 {
+            let id = id_of(s.upsert_clip(text_clip(&format!("pinned {i}"))).unwrap());
+            s.set_pinned(&id, true).unwrap();
+        }
+        for i in 0..30 {
+            s.upsert_clip(text_clip(&format!("plain {i}"))).unwrap();
+        }
+        let mut query = q("");
+        query.text = None;
+        query.limit = 10;
+        let mut seen = Vec::new();
+        loop {
+            let (rows, next) = s.search(&query).unwrap();
+            assert!(rows.len() <= 10);
+            seen.extend(rows);
+            match next {
+                Some(c) => query.cursor = Some(c),
+                None => break,
+            }
+        }
+        assert_eq!(seen.len(), 60);
+        let ids: std::collections::HashSet<_> = seen.iter().map(|c| c.id).collect();
+        assert_eq!(ids.len(), 60);
+        assert!(seen[..30].iter().all(|c| c.pinned));
+        assert!(seen[30..].iter().all(|c| !c.pinned));
+        // pinned_only pages too.
+        let mut only = q("");
+        only.text = None;
+        only.pinned_only = true;
+        only.limit = 10;
+        let (rows, next) = s.search(&only).unwrap();
+        assert_eq!(rows.len(), 10);
+        only.cursor = next;
+        assert!(only.cursor.is_some());
+        assert_eq!(s.search(&only).unwrap().0.len(), 10);
+    }
+
+    #[test]
+    fn nul_in_query_is_harmless() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path());
+        s.upsert_clip(text_clip("abc def")).unwrap();
+        assert!(s.search(&q("abc def")).is_ok());
+        assert!(s.search(&q("a ")).is_ok());
+        assert_eq!(s.search(&q("abc def")).unwrap().0.len(), 1);
     }
 
     #[test]
