@@ -178,6 +178,7 @@ impl CaptureHandle {
             last_self_write_seq: None,
             pending: None,
             carried: None,
+            excluded_recent: None,
             next_retention: Instant::now(),
             next_expiry: None,
             retention_retry_at: None,
@@ -294,6 +295,22 @@ fn decide_all_sources(input: &PreReadInput<'_>, others: &[&ClipboardSource]) -> 
         }
     }
     d
+}
+
+/// The sources of a change (primary and others) that the excluded-app step matches.
+fn excluded_sources(input: &PreReadInput<'_>, others: &[&ClipboardSource]) -> Vec<ClipboardSource> {
+    input
+        .source
+        .into_iter()
+        .chain(others.iter().copied())
+        .filter(|s| {
+            decide_pre_read(&PreReadInput {
+                source: Some(*s),
+                ..*input
+            }) == Decision::Skip(SkipReason::ExcludedApp)
+        })
+        .cloned()
+        .collect()
 }
 
 /// Sensitive scan of the clip's text: the plain text, or, when that is empty, the HTML/RTF
@@ -457,8 +474,17 @@ struct Superseded {
     inspected: bool,
 }
 
+/// F-14 rule 3 (D-042): the excluded sources of the last change skipped as `ExcludedApp`.
+/// A later ownerless change close to it is checked against them (skip only, never stored).
+struct ExcludedRecent {
+    seq: u64,
+    sources: Vec<ClipboardSource>,
+    signal_at: Timestamp,
+}
+
 /// Largest seq distance between a superseded change and the ownerless flush that may inherit
-/// its source (F-14 rule 2).
+/// its source (F-14 rule 2), and between an excluded skip and a later ownerless change
+/// checked against it (rule 3).
 const MAX_HEIR_SEQ_GAP: u64 = 8;
 
 /// Windows OLE placeholders; their presence in the final snapshot is the flush signature.
@@ -504,6 +530,8 @@ struct Actor {
     /// Source of a change that had nothing readable yet (OLE delayed rendering), kept for a
     /// later burst with the same sequence number.
     carried: Option<(u64, Option<ClipboardSource>)>,
+    /// F-14 rule 3: the last excluded-app skip, for a following ownerless flush.
+    excluded_recent: Option<ExcludedRecent>,
     next_retention: Instant,
     /// Earliest `expires_at` in storage (clock time); retention runs when it falls due so a
     /// masked clip does not outlive its TTL.
@@ -722,6 +750,29 @@ impl Actor {
         (superseded, heir, p.burst_signal_at)
     }
 
+    /// F-14 rule 3: the excluded sources an ownerless change `seq` (first signal at
+    /// `signal_at`) must also be checked against: those of the last excluded-app skip, when
+    /// it is 1..=`MAX_HEIR_SEQ_GAP` seqs and at most `max_burst_wait` before this change,
+    /// with no self-write in between. Skip only; never a stored source.
+    fn recent_excluded(&self, seq: u64, signal_at: Timestamp) -> &[ClipboardSource] {
+        let Some(r) = &self.excluded_recent else {
+            return &[];
+        };
+        let cap_ms = u64::try_from(self.max_burst_wait.as_millis()).unwrap_or(u64::MAX);
+        let applies = seq
+            .checked_sub(r.seq)
+            .is_some_and(|gap| (1..=MAX_HEIR_SEQ_GAP).contains(&gap))
+            && !self
+                .last_self_write_seq
+                .is_some_and(|w| w > r.seq && w <= seq)
+            && within_ms(r.signal_at, signal_at, cap_ms);
+        if applies {
+            &r.sources
+        } else {
+            &[]
+        }
+    }
+
     /// F-14 rule 2: the stored source of an ownerless change, taken from the change it
     /// superseded, only for the OLE flush shape: never inspected, same seq as the snapshot,
     /// at most `MAX_HEIR_SEQ_GAP` seqs and `debounce_ms` after it, inside the burst cap, no
@@ -835,7 +886,11 @@ impl Actor {
         };
         let mut others: Vec<ClipboardSource> = seen.collect();
         if ownerless {
-            for s in &p.superseded {
+            for s in p
+                .superseded
+                .iter()
+                .chain(self.recent_excluded(seq, p.signal_at))
+            {
                 if source.as_ref() != Some(s) && !others.contains(s) {
                     others.push(s.clone());
                 }
@@ -854,22 +909,25 @@ impl Actor {
             })
             .collect();
         let now = self.clock.now();
-        let decision = decide_all_sources(
-            &PreReadInput {
-                seq,
-                last_self_write_seq: self.last_self_write_seq,
-                mode: &self.policy.mode,
-                now,
-                capture_enabled: self.policy.capture_enabled,
-                markers: &meta.markers,
-                source: source.as_ref(),
-                excluded: &self.policy.excluded_apps,
-                available: &available,
-                enabled_kinds: &self.policy.capture_kinds,
-                caps: size_caps(&self.retention),
-            },
-            &others,
-        );
+        let input = PreReadInput {
+            seq,
+            last_self_write_seq: self.last_self_write_seq,
+            mode: &self.policy.mode,
+            now,
+            capture_enabled: self.policy.capture_enabled,
+            markers: &meta.markers,
+            source: source.as_ref(),
+            excluded: &self.policy.excluded_apps,
+            available: &available,
+            enabled_kinds: &self.policy.capture_kinds,
+            caps: size_caps(&self.retention),
+        };
+        let decision = decide_all_sources(&input, &others);
+        let excluded_now = if decision == Decision::Skip(SkipReason::ExcludedApp) {
+            excluded_sources(&input, &others)
+        } else {
+            Vec::new()
+        };
         let plan = match decision {
             Decision::Read(plan) => plan,
             Decision::Skip(SkipReason::NothingReadable) => {
@@ -880,6 +938,13 @@ impl Actor {
                 return;
             }
             Decision::Skip(reason) => {
+                if reason == SkipReason::ExcludedApp {
+                    self.excluded_recent = Some(ExcludedRecent {
+                        seq,
+                        sources: excluded_now,
+                        signal_at: p.signal_at,
+                    });
+                }
                 self.last_processed_seq = Some(seq);
                 self.skip(reason);
                 return;
@@ -1276,6 +1341,8 @@ impl Actor {
         let seq = written.map_err(|e| map_platform(&e))?;
         // Rule 5: exactly this change is ours and must not be captured again.
         self.last_self_write_seq = Some(seq);
+        // Rule 3: nothing after our own write is a flush of the excluded change.
+        self.excluded_recent = None;
         self.storage.mark_used(id).map_err(|e| map_storage(&e))
     }
 }
@@ -3018,5 +3085,64 @@ mod tests {
         assert_eq!(run(400).as_deref(), Some("notepad.exe"));
         // Beyond the cap (but inside the debounce): not inherited.
         assert_eq!(run(600), None);
+    }
+
+    // F-14 rule 3 (D-042): an ownerless change shortly after an excluded-app skip.
+
+    #[test]
+    fn excluded_app_processed_then_ownerless_flush_is_skipped() {
+        let h = start(PrivacyPolicy::default());
+        h.fake.copy(ole_owned("KeePassXC.exe", "vault entry"));
+        let seen = h.wait_skip(SkipReason::ExcludedApp);
+        assert!(no_store_events(&seen), "{seen:?}");
+        // The excluded change was inspected and skipped; then the ownerless flush comes.
+        h.fake.copy(ole_flush("vault entry"));
+        let seen = h.wait_skip(SkipReason::ExcludedApp);
+        assert!(no_store_events(&seen), "{seen:?}");
+        assert_eq!(h.fake.read_calls(), 0);
+        // Sentinel with an owner (an ownerless one this soon is skipped too, by design).
+        h.fake.copy(ole_owned("notepad.exe", "sentinel clip"));
+        let (_, between) = h.wait_added();
+        assert!(no_store_events(&between), "{between:?}");
+        assert_eq!(h.clip_count(), 1);
+    }
+
+    #[test]
+    fn ownerless_change_after_window_is_not_affected() {
+        // Beyond the 500 ms cap from the excluded change's signal.
+        let h = start(PrivacyPolicy::default());
+        h.fake
+            .copy_burst_at(vec![(Timestamp(T0), ole_owned("KeePassXC.exe", "vault"))]);
+        h.wait_skip(SkipReason::ExcludedApp);
+        h.fake
+            .copy_burst_at(vec![(Timestamp(T0 + 600), ole_flush("later text"))]);
+        let (id, before) = h.wait_added();
+        assert!(no_store_events(&before), "{before:?}");
+        assert_eq!(app_of(&h, &id), None);
+        // A self-write in between clears it, even inside the window.
+        let h = start(PrivacyPolicy::default());
+        h.fake.copy(text_copy("stored earlier"));
+        let (earlier, _) = h.wait_added();
+        h.fake.copy(ole_owned("KeePassXC.exe", "vault"));
+        h.wait_skip(SkipReason::ExcludedApp);
+        h.copy_back(earlier, false).unwrap();
+        h.wait_skip(SkipReason::SelfWrite);
+        h.fake.copy(ole_flush("after copy back"));
+        let (id, before) = h.wait_added();
+        assert!(no_store_events(&before), "{before:?}");
+        let clip = h.ro().get_clip(&id).unwrap().unwrap();
+        assert_eq!(clip.preview, "after copy back");
+        assert!(clip.source.is_none());
+    }
+
+    #[test]
+    fn owned_change_after_excluded_skip_is_not_affected() {
+        let h = start(PrivacyPolicy::default());
+        h.fake.copy(ole_owned("KeePassXC.exe", "vault entry"));
+        h.wait_skip(SkipReason::ExcludedApp);
+        h.fake.copy(ole_owned("notepad.exe", "notepad text"));
+        let (id, before) = h.wait_added();
+        assert!(no_store_events(&before), "{before:?}");
+        assert_eq!(app_of(&h, &id).as_deref(), Some("notepad.exe"));
     }
 }
