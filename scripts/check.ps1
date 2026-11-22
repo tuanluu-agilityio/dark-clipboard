@@ -15,12 +15,6 @@ function Step([string]$name, [scriptblock]$cmd) {
 
 $hasWorkspace = Test-Path -LiteralPath 'Cargo.toml'
 
-# TASK-001: remove this skip block when the workspace exists (Task 001 makes the cargo gates mandatory).
-if (-not $hasWorkspace) {
-    Write-Host '== cargo gates: SKIPPED (no workspace yet; Task 001 creates it)'
-}
-# END TASK-001
-
 if ($hasWorkspace) {
     Step 'cargo fmt --check' { cargo fmt --all --check }
     Step 'cargo clippy' { cargo clippy --workspace --all-targets -- -D warnings }

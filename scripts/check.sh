@@ -9,10 +9,6 @@ step() { local name="$1"; shift; echo "== $name"; "$@" || fail "$name"; }
 
 has_ws=0; [ -f Cargo.toml ] && has_ws=1
 
-# TASK-001: remove this skip block when the workspace exists.
-if [ "$has_ws" = 0 ]; then echo "== cargo gates: SKIPPED (no workspace yet; Task 001 creates it)"; fi
-# END TASK-001
-
 if [ "$has_ws" = 1 ]; then
   step "cargo fmt --check" cargo fmt --all --check
   step "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings

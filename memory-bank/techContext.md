@@ -18,6 +18,7 @@ Updated: 2026-11-22
 | Schema validation only | `node tools/schema-check/validate.mjs` |
 | Regenerate schemas | `python scripts/gen_schemas.py` (then re-run validation) |
 | Add a dependency | `cargo add -p <crate> <dep>` |
+| Supply-chain check | `cargo deny check` (cargo-deny 0.22.0 installed locally; also runs in CI) |
 
 ## Planned dependencies (decided in ADRs; versions are pinned by Cargo.lock when added)
 | Crate | Where | Why |
