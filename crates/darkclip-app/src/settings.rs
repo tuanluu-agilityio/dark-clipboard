@@ -6,6 +6,7 @@
 use crate::events::ApiError;
 use darkclip_core::{Lang, PrivacyPolicy, RetentionPolicy};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -58,7 +59,24 @@ pub struct UiSettings {
     /// written before Task 205.
     #[serde(default)]
     pub enter_pastes: bool,
+    /// Where the history window was last, per monitor (Task 211): the key names the monitor
+    /// (its geometry, never a device name). Missing in older files.
+    #[serde(default)]
+    pub history_windows: BTreeMap<String, WindowRect>,
 }
+
+/// A saved window rectangle: the position is in physical pixels of the virtual screen, the
+/// size in logical pixels (so it survives a DPI change of the same monitor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Monitors remembered at most (the oldest key by name is dropped beyond this).
+pub const MAX_REMEMBERED_MONITORS: usize = 16;
 
 impl Default for UiSettings {
     fn default() -> Self {
@@ -66,6 +84,7 @@ impl Default for UiSettings {
             language: Lang::En,
             popup_position: PopupPosition::Cursor,
             enter_pastes: false,
+            history_windows: BTreeMap::new(),
         }
     }
 }
@@ -276,6 +295,35 @@ mod tests {
         assert_eq!(o, LoadOutcome::Loaded);
         assert_eq!(s.ui.language, Lang::Vi);
         assert!(!s.ui.enter_pastes);
+    }
+
+    #[test]
+    fn history_window_rects_are_optional_in_older_files_and_round_trip() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        // A file written before Task 211 has no `history_windows`.
+        std::fs::write(
+            &p,
+            br#"{"settings_version":1,"ui":{"language":"en","popup_position":"cursor","enter_pastes":true}}"#,
+        )
+        .unwrap();
+        let (mut s, o) = Settings::load(&p);
+        assert_eq!(o, LoadOutcome::Loaded);
+        assert!(s.ui.history_windows.is_empty());
+        assert!(s.ui.enter_pastes);
+        s.ui.history_windows.insert(
+            "0,0,1920x1080".into(),
+            WindowRect {
+                x: -10,
+                y: 20,
+                width: 980,
+                height: 640,
+            },
+        );
+        s.save(&p).unwrap();
+        let (back, o) = Settings::load(&p);
+        assert_eq!(o, LoadOutcome::Loaded);
+        assert_eq!(back, s);
     }
 
     #[test]

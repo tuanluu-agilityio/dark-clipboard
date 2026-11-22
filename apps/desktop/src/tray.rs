@@ -43,6 +43,8 @@ pub enum IconId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
     Open,
+    /// "History...": the history window (Task 211).
+    History,
     Pause5Min,
     Pause1Hour,
     PauseUntilResumed,
@@ -127,7 +129,7 @@ pub fn mode_for(action: MenuAction, current: TrayState, now: Timestamp) -> Optio
         MenuAction::Resume => Some(CaptureMode::Normal),
         MenuAction::TogglePrivate if current == TrayState::Private => Some(CaptureMode::Normal),
         MenuAction::TogglePrivate => Some(CaptureMode::Private),
-        MenuAction::Open | MenuAction::Settings | MenuAction::Quit => None,
+        MenuAction::Open | MenuAction::History | MenuAction::Settings | MenuAction::Quit => None,
     }
 }
 
@@ -229,6 +231,7 @@ mod win {
         icon: TrayIcon,
         shown: Option<IconId>,
         open: MenuItem,
+        history: MenuItem,
         pause: Submenu,
         pause_5: MenuItem,
         pause_1h: MenuItem,
@@ -249,6 +252,7 @@ mod win {
         pub fn new(first: TrayUpdate, on_action: OnAction) -> Option<Tray> {
             let l = first.lang;
             let open = MenuItem::new(t(l, Msg::TrayOpen), true, None);
+            let history = MenuItem::new(t(l, Msg::TrayHistory), true, None);
             let pause_5 = MenuItem::new(t(l, Msg::TrayPause5Min), true, None);
             let pause_1h = MenuItem::new(t(l, Msg::TrayPause1Hour), true, None);
             let pause_until = MenuItem::new(t(l, Msg::TrayPauseUntilResumed), true, None);
@@ -265,12 +269,13 @@ mod win {
             let sep1 = tray_icon::menu::PredefinedMenuItem::separator();
             let sep2 = tray_icon::menu::PredefinedMenuItem::separator();
             let menu = Menu::with_items(&[
-                &open, &sep1, &pause, &resume, &private, &sep2, &settings, &quit,
+                &open, &history, &sep1, &pause, &resume, &private, &sep2, &settings, &quit,
             ])
             .ok()?;
 
             let routes: Vec<(MenuId, MenuAction)> = vec![
                 (open.id().clone(), MenuAction::Open),
+                (history.id().clone(), MenuAction::History),
                 (pause_5.id().clone(), MenuAction::Pause5Min),
                 (pause_1h.id().clone(), MenuAction::Pause1Hour),
                 (pause_until.id().clone(), MenuAction::PauseUntilResumed),
@@ -310,6 +315,7 @@ mod win {
                 icon: built,
                 shown: Some(id),
                 open,
+                history,
                 pause,
                 pause_5,
                 pause_1h,
@@ -336,6 +342,7 @@ mod win {
             }
             let _ = self.icon.set_tooltip(Some(tooltip_for(&u)));
             self.open.set_text(t(l, Msg::TrayOpen));
+            self.history.set_text(t(l, Msg::TrayHistory));
             self.pause.set_text(t(l, Msg::TrayPause));
             self.pause_5.set_text(t(l, Msg::TrayPause5Min));
             self.pause_1h.set_text(t(l, Msg::TrayPause1Hour));
@@ -495,7 +502,12 @@ mod tests {
             go(MenuAction::TogglePrivate, TrayState::Private),
             Some(CaptureMode::Normal)
         );
-        for a in [MenuAction::Open, MenuAction::Settings, MenuAction::Quit] {
+        for a in [
+            MenuAction::Open,
+            MenuAction::History,
+            MenuAction::Settings,
+            MenuAction::Quit,
+        ] {
             assert_eq!(go(a, TrayState::Active), None);
         }
     }

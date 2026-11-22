@@ -23,26 +23,20 @@
 //! outcome). Queries, previews, source names and window titles are never logged or formatted
 //! (GC-06, SR-11).
 
-use super::{Chip, ClipRow, FileRow, MainWindow, Poster, Seg, Strings};
+use super::common::{self, clip_row, Px};
+use super::{Chip, ClipRow, MainWindow, Poster, Strings};
 use crate::log::{Log, Val};
-use crate::popup::detail::{
-    file_entries, DetailData, DetailModel, DetailRequest, Pic, Want, FULL_IMAGE_SIDE,
-    TEXT_DISPLAY_CAP,
-};
-use crate::popup::highlight::row_segments;
+use crate::popup::chips;
+use crate::popup::detail::{DetailModel, DetailRequest};
 use crate::popup::keys::{self, Action, ChipFocus, CopyKind, KeyCtx, Mods};
-use crate::popup::list::{Applied, Filters, Item, ListModel, Request, TimeFilter, View};
+use crate::popup::list::{Applied, Filters, Item, ListModel, Request, View};
 use crate::popup::paste::{self as paste_rules, AfterCopy, Via};
-use crate::popup::row::{fill, kind_msg, row_text, split_two_lines, LINE_CHARS, MONO_LINE_CHARS};
 use darkclip_app::api::{Caller, CopyMode};
-use darkclip_app::{ClipApi, ClipSummaryView, Page, PixelsView};
+use darkclip_app::{ClipApi, ClipSummaryView, Page};
 use darkclip_core::i18n::{t, Lang, Msg};
-use darkclip_core::{ClipId, ClipType, Clock};
+use darkclip_core::{ClipId, Clock};
 use darkclip_platform::{PasteInjector, PlatformError};
-use slint::{
-    ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer,
-    TimerMode, VecModel, Weak,
-};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -58,22 +52,6 @@ const UNDO_FOR: Duration = Duration::from_secs(5);
 const ERROR_FOR: Duration = Duration::from_secs(4);
 /// Source app chips shown at most.
 const MAX_SOURCES: usize = 4;
-
-/// Kind chips, in order; the chip id is the index.
-const KIND_CHIPS: [ClipType; 7] = [
-    ClipType::Text,
-    ClipType::RichText,
-    ClipType::Url,
-    ClipType::Code,
-    ClipType::Image,
-    ClipType::Files,
-    ClipType::Color,
-];
-const CHIP_PINNED: i32 = 100;
-const CHIP_TODAY: i32 = 101;
-const CHIP_WEEK: i32 = 102;
-/// Source chips are `CHIP_SOURCE + index` into the current source list.
-const CHIP_SOURCE: i32 = 200;
 
 /// The platform's paste injector, shared with the paste threads (one job at a time).
 pub type Injector = Arc<Mutex<Box<dyn PasteInjector>>>;
@@ -96,35 +74,12 @@ impl Trigger {
     }
 }
 
-/// A decoded picture as the UI thread holds it (cheap to clone).
-type Px = SharedPixelBuffer<Rgba8Pixel>;
-
 /// Sets the popup's strings (called with every status refresh).
 pub fn set_strings(w: &MainWindow, lang: Lang) {
-    let s = w.global::<Strings>();
-    s.set_search_placeholder(t(lang, Msg::UiSearchPlaceholder).into());
-    s.set_search_label(t(lang, Msg::UiSearchLabel).into());
-    s.set_filters_label(t(lang, Msg::UiFiltersLabel).into());
-    s.set_list_label(t(lang, Msg::UiClipListLabel).into());
-    s.set_empty_history(t(lang, Msg::UiEmptyHistory).into());
-    s.set_no_results(t(lang, Msg::UiNoResults).into());
-    s.set_loading(t(lang, Msg::UiLoading).into());
-    s.set_load_failed(t(lang, Msg::UiLoadFailed).into());
-    s.set_copy(t(lang, Msg::UiCopy).into());
-    s.set_copy_plain(t(lang, Msg::UiCopyPlain).into());
-    s.set_pin(t(lang, Msg::UiPin).into());
-    s.set_unpin(t(lang, Msg::UiUnpin).into());
-    s.set_delete(t(lang, Msg::UiDelete).into());
-    s.set_undo(t(lang, Msg::UiUndo).into());
-    s.set_close(t(lang, Msg::UiClose).into());
+    common::set_shared_strings(w, lang);
     let (can_paste, enter_pastes) = PASTE_PREFS.get();
-    s.set_key_hints(t(lang, paste_rules::key_hints(can_paste, enter_pastes)).into());
-    s.set_detail_label(t(lang, Msg::UiDetailLabel).into());
-    s.set_load_full_text(t(lang, Msg::UiLoadFullText).into());
-    s.set_load_larger_image(t(lang, Msg::UiLoadLargerImage).into());
-    s.set_no_image_preview(t(lang, Msg::UiNoImagePreview).into());
-    s.set_masked_detail(t(lang, Msg::UiMaskedDetail).into());
-    s.set_text_cut(fill(t(lang, Msg::UiTextCut), (TEXT_DISPLAY_CAP / 1024) as u64).into());
+    w.global::<Strings>()
+        .set_key_hints(t(lang, paste_rules::key_hints(can_paste, enter_pastes)).into());
 }
 
 struct Host {
@@ -201,38 +156,7 @@ impl Host {
     }
 
     fn row_for(&self, item: &Item, index: usize) -> ClipRow {
-        let query = self.model.filters().text.clone();
-        let text = row_text(item, index, self.lang, crate::SystemClock.now());
-        let line = if text.mono {
-            MONO_LINE_CHARS
-        } else {
-            LINE_CHARS
-        };
-        let all = row_segments(&item.preview, &query, line * 2);
-        let label: String = all.iter().map(|s| s.text.as_str()).collect();
-        let (first, second) = split_two_lines(all, line);
-        let to_model = |v: Vec<crate::popup::highlight::Segment>| {
-            ModelRc::new(VecModel::from(
-                v.into_iter()
-                    .map(|s| Seg {
-                        text: s.text.into(),
-                        hit: s.hit,
-                    })
-                    .collect::<Vec<_>>(),
-            ))
-        };
-        ClipRow {
-            segs: to_model(first),
-            segs2: to_model(second),
-            meta: text.meta.into(),
-            label: label.into(),
-            description: text.description.into(),
-            icon: text.icon.into(),
-            pin_badge: text.pin_badge.unwrap_or("").into(),
-            masked_badge: text.masked_badge.unwrap_or("").into(),
-            mono: text.mono,
-            pinned: item.pinned,
-        }
+        clip_row(item, index, self.lang, &self.model.filters().text)
     }
 
     /// Rebuilds every row (new results, or the language changed).
@@ -248,39 +172,15 @@ impl Host {
     }
 
     fn rebuild_chips(&mut self) {
-        let f = self.model.filters().clone();
-        let mut chips: Vec<Chip> = KIND_CHIPS
-            .iter()
-            .enumerate()
-            .map(|(i, k)| Chip {
-                id: i32::try_from(i).unwrap_or(0),
-                label: t(self.lang, kind_msg(*k)).into(),
-                on: f.kinds.contains(k),
+        self.sources = self.model.sources(MAX_SOURCES);
+        let chips: Vec<Chip> = chips::popup_chips(self.model.filters(), &self.sources, self.lang)
+            .into_iter()
+            .map(|c| Chip {
+                id: c.id,
+                label: c.label.into(),
+                on: c.on,
             })
             .collect();
-        chips.push(Chip {
-            id: CHIP_PINNED,
-            label: t(self.lang, Msg::UiFilterPinned).into(),
-            on: f.pinned_only,
-        });
-        chips.push(Chip {
-            id: CHIP_TODAY,
-            label: t(self.lang, Msg::UiFilterToday).into(),
-            on: f.time == TimeFilter::Today,
-        });
-        chips.push(Chip {
-            id: CHIP_WEEK,
-            label: t(self.lang, Msg::UiFilter7Days).into(),
-            on: f.time == TimeFilter::Week,
-        });
-        self.sources = self.model.sources(MAX_SOURCES);
-        for (i, s) in self.sources.iter().enumerate() {
-            chips.push(Chip {
-                id: CHIP_SOURCE + i32::try_from(i).unwrap_or(0),
-                label: s.as_str().into(),
-                on: f.source.as_ref() == Some(s),
-            });
-        }
         // Changed chips are updated in place, so a toggled chip keeps the keyboard focus; the
         // model is replaced only when the set of chips changes (e.g. other source apps).
         let old: Vec<Chip> = self.chips.iter().collect();
@@ -367,66 +267,17 @@ impl Host {
         self.render_detail();
     }
 
-    /// Runs one load on the worker. Decoding and downscaling happen there; the UI thread only
-    /// gets pixel buffers and small lists.
+    /// Runs one load on the worker (see `common::run_detail`).
     fn run_detail(&mut self, r: DetailRequest) {
-        let DetailRequest { id, want } = r;
         let ui = self.window.clone();
-        if let Ok(mut w) = self.wanted.lock() {
-            *w = Some(id);
-        }
-        let wanted = Arc::clone(&self.wanted);
-        self.poster.post_quiet(move |app| {
-            if !wanted.lock().is_ok_and(|w| *w == Some(id)) {
-                return;
-            }
-            match want {
-                Want::Detail => {
-                    let (res, bytes) = match app.ui_clip_detail(&Caller::Ui, id) {
-                        Ok(d) => {
-                            let (data, bytes) = detail_data(d);
-                            (Ok(data), bytes)
-                        }
-                        Err(_) => (Err(()), 0),
-                    };
-                    let _ = ui.upgrade_in_event_loop(move |_| {
-                        with_host(|h| {
-                            if h.detail.on_detail(id, res, bytes) {
-                                h.render_detail();
-                            }
-                        });
-                    });
-                }
-                Want::FullText => {
-                    let res = app
-                        .ui_clip_text(&Caller::Ui, id)
-                        .map(|c| (c.text, c.truncated))
-                        .map_err(|_| ());
-                    let _ = ui.upgrade_in_event_loop(move |_| {
-                        with_host(|h| {
-                            if h.detail.on_text(id, res) {
-                                h.render_detail();
-                            }
-                        });
-                    });
-                }
-                Want::FullImage => {
-                    let (res, bytes) = match app.ui_clip_image(&Caller::Ui, id, FULL_IMAGE_SIDE) {
-                        Ok(p) => {
-                            let (pic, bytes) = pic_of(p);
-                            (Ok(pic), bytes)
-                        }
-                        Err(_) => (Err(()), 0),
-                    };
-                    let _ = ui.upgrade_in_event_loop(move |_| {
-                        with_host(|h| {
-                            if h.detail.on_full_image(id, res, bytes) {
-                                h.render_detail();
-                            }
-                        });
-                    });
-                }
-            }
+        common::run_detail(&self.poster, &self.wanted, r, move |a| {
+            let _ = ui.upgrade_in_event_loop(move |_| {
+                with_host(|h| {
+                    if common::apply_answer(&mut h.detail, a) {
+                        h.render_detail();
+                    }
+                });
+            });
         });
     }
 
@@ -443,91 +294,10 @@ impl Host {
         }
         let Some(item) = item.filter(|_| open) else {
             // Nothing stays in the hidden window: no text, picture or file names.
-            w.set_detail_text(SharedString::new());
-            w.set_detail_picture(Image::default());
-            w.set_detail_has_picture(false);
-            w.set_detail_files(ModelRc::new(VecModel::<FileRow>::default()));
-            w.set_detail_files_more(SharedString::new());
-            w.set_detail_picture_info(SharedString::new());
-            w.set_detail_status(SharedString::new());
-            w.set_detail_note(SharedString::new());
+            w.set_detail(common::empty_detail());
             return;
         };
-        let v = self.detail.view();
-        let lang = self.lang;
-        let kind_name = t(lang, kind_msg(item.kind));
-        let mut title = format!("{} \u{b7} {kind_name}", t(lang, Msg::UiDetailLabel));
-        let (kind, mut text, mut note) = if v.masked {
-            (3, String::new(), t(lang, Msg::UiMaskedDetail).to_string())
-        } else {
-            match item.kind {
-                ClipType::Image => (1, String::new(), t(lang, Msg::UiNoImagePreview).to_string()),
-                ClipType::Files => (2, String::new(), String::new()),
-                _ => (0, item.preview.clone(), String::new()),
-            }
-        };
-        if kind == 0 {
-            if let Some(full) = &v.text {
-                text.clone_from(full);
-            }
-        }
-        if kind == 2 && v.file_total > 0 {
-            title.push_str(" \u{b7} ");
-            title.push_str(&fill(t(lang, Msg::UiFilesCount), v.file_total as u64));
-        }
-        if kind == 1 && v.loading && v.image.is_none() {
-            note = t(lang, Msg::UiLoading).to_string();
-        }
-        let status = if v.failed {
-            t(lang, Msg::UiActionFailed).to_string()
-        } else if v.loading {
-            t(lang, Msg::UiLoading).to_string()
-        } else if kind == 0 && v.text_cut {
-            fill(t(lang, Msg::UiTextCut), (TEXT_DISPLAY_CAP / 1024) as u64)
-        } else {
-            String::new()
-        };
-        w.set_detail_kind(kind);
-        w.set_detail_title(title.into());
-        // Only when it changed: re-setting a large text re-lays it out.
-        if w.get_detail_text().as_str() != text {
-            w.set_detail_text(text.into());
-        }
-        w.set_detail_note(note.into());
-        w.set_detail_status(status.into());
-        w.set_detail_can_load_text(v.can_load_text);
-        w.set_detail_can_load_image(v.can_load_image);
-        w.set_detail_mono(item.kind == ClipType::Code);
-        match v.image {
-            Some(buf) => {
-                w.set_detail_picture(Image::from_rgba8(buf));
-                w.set_detail_has_picture(true);
-            }
-            None => {
-                w.set_detail_picture(Image::default());
-                w.set_detail_has_picture(false);
-            }
-        }
-        let info = match v.dims {
-            Some((pw, ph)) => format!("{pw} \u{d7} {ph} px"),
-            None => String::new(),
-        };
-        w.set_detail_picture_info(info.into());
-        let files: Vec<FileRow> = v
-            .files
-            .into_iter()
-            .map(|f| FileRow {
-                name: f.name.into(),
-                path: f.path.into(),
-            })
-            .collect();
-        w.set_detail_files(ModelRc::new(VecModel::from(files)));
-        let more = if v.files_more > 0 {
-            fill(t(lang, Msg::UiFilesMore), v.files_more as u64)
-        } else {
-            String::new()
-        };
-        w.set_detail_files_more(more.into());
+        w.set_detail(common::render_state(&item, &mut self.detail, self.lang));
     }
 
     fn scroll_to_selected(&self) {
@@ -805,6 +575,17 @@ impl Host {
             Action::ToggleDetail => self.toggle_detail(),
             Action::OpenDetail => self.set_detail_open(true),
             Action::CloseDetail => self.set_detail_open(false),
+            Action::OpenHistory => {
+                // Close the popup (without returning the focus: the history is a window of its
+                // own), then open the history. Outside the borrow: both call back into hosts.
+                let ui = self.window.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = ui.upgrade() {
+                        hide(&w);
+                    }
+                    super::history_host::show();
+                });
+            }
             Action::Close => {
                 // Hide outside the borrow (it calls back into the host).
                 let ui = self.window.clone();
@@ -830,85 +611,11 @@ impl Host {
         if let Some(w) = self.window() {
             f.text = w.get_query().to_string();
         }
-        match id {
-            CHIP_PINNED => f.pinned_only = !f.pinned_only,
-            CHIP_TODAY | CHIP_WEEK => {
-                let want = if id == CHIP_TODAY {
-                    TimeFilter::Today
-                } else {
-                    TimeFilter::Week
-                };
-                f.time = if f.time == want {
-                    TimeFilter::Any
-                } else {
-                    want
-                };
-            }
-            id if id >= CHIP_SOURCE => {
-                let i = usize::try_from(id - CHIP_SOURCE).unwrap_or(usize::MAX);
-                let Some(src) = self.sources.get(i).cloned() else {
-                    return;
-                };
-                f.source = if f.source.as_ref() == Some(&src) {
-                    None
-                } else {
-                    Some(src)
-                };
-            }
-            id => {
-                let Some(k) = usize::try_from(id).ok().and_then(|i| KIND_CHIPS.get(i)) else {
-                    return;
-                };
-                if let Some(pos) = f.kinds.iter().position(|x| x == k) {
-                    f.kinds.remove(pos);
-                } else {
-                    f.kinds.push(*k);
-                }
-            }
-        }
+        let Some(f) = chips::toggle(&f, id, &self.sources) else {
+            return;
+        };
         self.search(f);
     }
-}
-
-/// A decoded picture as a pixel buffer plus what it weighs.
-fn pic_of(p: PixelsView) -> (Pic<Px>, usize) {
-    let bytes = p.rgba.len();
-    let buf = Px::clone_from_slice(&p.rgba, p.width, p.height);
-    (
-        Pic {
-            pixels: buf,
-            width: p.width,
-            height: p.height,
-        },
-        bytes,
-    )
-}
-
-/// The app's detail answer as the model wants it (worker thread).
-fn detail_data(d: darkclip_app::ClipDetailView) -> (DetailData<Px>, usize) {
-    let mut bytes = 0;
-    let (dims, thumb) = match d.image {
-        Some(img) => {
-            let dims = img.width.zip(img.height);
-            let thumb = img.thumbnail.map(|t| {
-                let (p, b) = pic_of(t);
-                bytes = b;
-                p
-            });
-            (dims, thumb)
-        }
-        None => (None, None),
-    };
-    (
-        DetailData {
-            masked: d.masked,
-            dims,
-            thumb,
-            files: file_entries(&d.file_uris),
-            file_total: d.file_total,
-        },
-        bytes,
-    )
 }
 
 /// A focus return or paste finished (event loop). The clip is on the clipboard either way.

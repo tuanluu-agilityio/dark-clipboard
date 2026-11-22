@@ -28,6 +28,8 @@ pub enum TimeFilter {
     Today,
     /// The last 7 × 24 hours.
     Week,
+    /// The last 30 × 24 hours (the history window, Task 211).
+    Month,
 }
 
 /// What the user asked for. `source` is applied to the loaded rows (the search API has no
@@ -185,6 +187,7 @@ pub fn since_for(time: TimeFilter, now: Timestamp, utc_offset_min: i32) -> Optio
     match time {
         TimeFilter::Any => None,
         TimeFilter::Week => Some(Timestamp(now.0.saturating_sub(7 * DAY_MS))),
+        TimeFilter::Month => Some(Timestamp(now.0.saturating_sub(30 * DAY_MS))),
         TimeFilter::Today => {
             let offset = i64::from(utc_offset_min) * 60_000;
             let local = now.0.saturating_add(offset);
@@ -497,6 +500,16 @@ impl ListModel {
         self.visible().iter().position(|i| i.id == id)
     }
 
+    /// Forgets every row and filter (the history window closed). The generation moves on, so
+    /// an answer still in flight is ignored when it arrives.
+    pub fn clear(&mut self) {
+        let gen = self.gen.wrapping_add(1);
+        *self = Self {
+            gen,
+            ..Self::default()
+        };
+    }
+
     pub fn clear_hidden(&mut self) {
         self.hidden.clear();
     }
@@ -643,6 +656,40 @@ mod tests {
             since_for(TimeFilter::Week, now, 420),
             Some(Timestamp(now.0 - 7 * DAY_MS))
         );
+    }
+
+    #[test]
+    fn a_month_is_thirty_days() {
+        let now = Timestamp(1_795_320_000_000);
+        assert_eq!(
+            since_for(TimeFilter::Month, now, 420),
+            Some(Timestamp(now.0 - 30 * DAY_MS))
+        );
+    }
+
+    #[test]
+    fn clear_drops_the_rows_and_ignores_answers_still_in_flight() {
+        let mut m = ListModel::new();
+        let r = m.search(Filters::default(), NOW, 0);
+        assert!(matches!(
+            m.apply(r.gen, false, Ok(page(items(0..3), Some("c")))),
+            Applied::Replaced
+        ));
+        m.select(2);
+        let hidden = m.visible()[0].id;
+        m.hide(hidden);
+        // An answer for a search that is still running when the window closes.
+        let running = m.search(text("secret"), NOW, 0);
+        m.clear();
+        assert!(m.visible().is_empty());
+        assert_eq!(m.selected(), 0);
+        assert!(m.sources(4).is_empty());
+        assert!(m.filters().is_empty());
+        assert!(matches!(
+            m.apply(running.gen, false, Ok(page(items(0..3), None))),
+            Applied::Ignored
+        ));
+        assert!(m.visible().is_empty());
     }
 
     #[test]

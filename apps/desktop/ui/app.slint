@@ -1,8 +1,10 @@
 import { ListView, Palette } from "std-widgets.slint";
 import { Theme, Strings } from "theme.slint";
-import { Seg, ClipRow, FileRow, Chip, ChipView, ActionButton, RowView, DetailPane, RowMetrics } from "popup.slint";
+import { Seg, ClipRow, FileRow, Chip, ChipView, ActionButton, RowView, DetailPane, DetailState, RowMetrics } from "popup.slint";
 
-export { Theme, Strings, Seg, ClipRow, FileRow, Chip }
+import { HistoryWindow, FilterItem } from "history.slint";
+
+export { Theme, Strings, Seg, ClipRow, FileRow, Chip, DetailState, HistoryWindow, FilterItem }
 
 // The popup (Task 204): created once at start and kept hidden; shown near the cursor by the
 // shortcut, the tray or `--toggle`. All data and every decision come from Rust
@@ -27,19 +29,7 @@ export component MainWindow inherits Window {
     in property <bool> has-selection;
     // Detail pane (Task 206). kind: 0 text, 1 image, 2 files, 3 masked.
     in property <bool> detail-open;
-    in property <int> detail-kind;
-    in property <string> detail-title;
-    in property <string> detail-text;
-    in property <string> detail-note;
-    in property <string> detail-status;
-    in property <bool> detail-can-load-text;
-    in property <image> detail-picture;
-    in property <bool> detail-has-picture;
-    in property <string> detail-picture-info;
-    in property <bool> detail-can-load-image;
-    in property <[FileRow]> detail-files;
-    in property <string> detail-files-more;
-    in property <bool> detail-mono;
+    in property <DetailState> detail;
     in-out property <string> query;
     // Whole rows that fit in the list (for Page Up / Page Down).
     out property <int> page-rows: max(1, floor(clip-list.visible-height / RowMetrics.height));
@@ -250,19 +240,7 @@ export component MainWindow inherits Window {
                 // Detail of the selected clip (toggle with Right or Space).
                 if root.detail-open && root.has-selection: DetailPane {
                     height: 220px;
-                    kind: root.detail-kind;
-                    title: root.detail-title;
-                    text: root.detail-text;
-                    note: root.detail-note;
-                    status: root.detail-status;
-                    can-load-text: root.detail-can-load-text;
-                    picture: root.detail-picture;
-                    has-picture: root.detail-has-picture;
-                    picture-info: root.detail-picture-info;
-                    can-load-image: root.detail-can-load-image;
-                    files: root.detail-files;
-                    files-more: root.detail-files-more;
-                    mono: root.detail-mono;
+                    state: root.detail;
                     load-text => {
                         root.load-full-text();
                     }

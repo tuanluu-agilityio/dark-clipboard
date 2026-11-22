@@ -1,0 +1,559 @@
+// The history window (Task 211): filters on the left, the list in the middle, the details on the
+// right. Data and every decision come from Rust (`src/ui/history_host.rs`, which reuses the
+// popup's view-models); this file only lays things out and forwards input. Every string comes
+// from the `Strings` global (i18n). Dark only (D-037).
+
+import { ListView, ScrollView, Palette } from "std-widgets.slint";
+import { Theme, Strings } from "theme.slint";
+import { ClipRow, ActionButton, RowView, DetailPane, DetailState, RowMetrics } from "popup.slint";
+
+// One line of the left pane: a filter, or a group heading (`header`).
+export struct FilterItem {
+    id: int,
+    label: string,
+    on: bool,
+    header: bool,
+}
+
+// A filter in the left pane (full width, toggles like a chip).
+component FilterButton inherits FocusScope {
+    in property <FilterItem> item;
+    callback toggled();
+    callback focus-report(bool);
+
+    focus-on-click: false;
+    height: 28px;
+    accessible-role: checkbox;
+    accessible-checkable: true;
+    accessible-checked: item.on;
+    accessible-label: item.label;
+    accessible-action-default => {
+        root.toggled();
+    }
+
+    key-pressed(e) => {
+        if (e.text == " " || e.text == Key.Return) {
+            root.toggled();
+            return accept;
+        }
+        reject
+    }
+    focus-gained(reason) => {
+        root.focus-report(true);
+    }
+    focus-lost(reason) => {
+        root.focus-report(false);
+    }
+
+    Rectangle {
+        border-radius: 6px;
+        background: item.on ? Theme.accent.with-alpha(0.25) : (touch.has-hover ? Theme.surface : transparent);
+        border-width: root.has-focus ? 2px : 0px;
+        border-color: Theme.text;
+        Text {
+            x: 10px;
+            width: parent.width - 20px;
+            text: item.label;
+            color: item.on ? Theme.accent : Theme.text;
+            font-weight: item.on ? 700 : 400;
+            font-size: 13px;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.toggled();
+        }
+    }
+}
+
+// One entry of the context menu.
+component MenuEntry inherits Rectangle {
+    in property <string> text;
+    in property <bool> danger: false;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 30px;
+    background: touch.has-hover && root.enabled ? Theme.line : transparent;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.clicked();
+        }
+    }
+
+    Text {
+        x: 12px;
+        width: parent.width - 24px;
+        text: root.text;
+        color: !root.enabled ? Theme.text-muted.with-alpha(0.6) : (root.danger ? Theme.danger : Theme.text);
+        font-size: 13px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component HistoryWindow inherits Window {
+    title: Strings.history-title;
+    background: Theme.bg;
+    min-width: 760px;
+    min-height: 460px;
+    preferred-width: 980px;
+    preferred-height: 640px;
+    default-font-size: 13px;
+
+    in property <[ClipRow]> rows;
+    in property <[FilterItem]> filters;
+    in property <int> selected;
+    // 0 rows, 1 loading, 2 empty history, 3 no results, 4 error.
+    in property <int> view-state;
+    in property <string> toast;
+    // The clips actions apply to: none, one or several.
+    in property <bool> has-selection;
+    in property <bool> can-copy;
+    in property <bool> will-unpin;
+    // "3 selected" when several are marked; empty otherwise.
+    in property <string> summary;
+    // Details (single clip only). Hidden when `detail-open` is false.
+    in property <bool> detail-open;
+    in property <DetailState> detail;
+    // Non-empty while the delete confirmation is open (the text it asks).
+    in property <string> confirm-text;
+    in-out property <string> query;
+    // Where the context menu opens (window coordinates).
+    private property <length> menu-x;
+    private property <length> menu-y;
+    out property <int> page-rows: max(1, floor(clip-list.visible-height / RowMetrics.height));
+
+    callback query-edited(string);
+    // Returns true when the key was handled (the search box does not see it then).
+    callback key(string, bool, bool, bool, bool, bool) -> bool;
+    callback filter-focus(int, bool);
+    callback filter-toggled(int);
+    // A left click on a row with Ctrl / Shift held; a right click selects the row first.
+    callback row-pressed(int, bool, bool);
+    callback row-context(int);
+    callback row-activated(int);
+    callback act-copy();
+    callback act-copy-plain();
+    callback act-pin();
+    callback act-delete();
+    callback act-select-all();
+    callback act-clear-selection();
+    callback act-confirm();
+    callback act-cancel();
+    callback load-full-text();
+    callback load-full-image();
+    callback shown-until(int);
+
+    public function focus-search() {
+        search.focus();
+    }
+
+    public function scroll-to(i: int) {
+        if (i <= 0) {
+            clip-list.content-y = 0;
+            return;
+        }
+        if (i * RowMetrics.height < -clip-list.content-y) {
+            clip-list.content-y = -(i * RowMetrics.height);
+        } else if ((i + 1) * RowMetrics.height > -clip-list.content-y + clip-list.visible-height) {
+            clip-list.content-y = -((i + 1) * RowMetrics.height - clip-list.visible-height);
+        }
+    }
+
+    // The context menu of the selected row (Menu key).
+    public function open-menu-at-selected() {
+        root.menu-x = clip-list.absolute-position.x - self.absolute-position.x + 48px;
+        root.menu-y = clip-list.absolute-position.y - self.absolute-position.y + root.selected * RowMetrics.height + clip-list.content-y + 40px;
+        menu.show();
+    }
+
+    function report-shown() {
+        root.shown-until(floor((-clip-list.content-y + clip-list.visible-height) / RowMetrics.height));
+    }
+
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
+
+    // Sees every key before the focused element, never takes focus.
+    keys := FocusScope {
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+        capture-key-pressed(e) => {
+            if (root.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, search.has-focus)) {
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            padding: 12px;
+            spacing: 10px;
+
+            // Search box.
+            Rectangle {
+                height: 36px;
+                border-radius: 6px;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: search.has-focus ? Theme.accent : Theme.line;
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    Rectangle {
+                        search := TextInput {
+                            single-line: true;
+                            text <=> root.query;
+                            color: Theme.text;
+                            selection-background-color: Theme.accent;
+                            selection-foreground-color: Theme.bg;
+                            font-size: 14px;
+                            vertical-alignment: center;
+                            accessible-label: Strings.search-label;
+                            accessible-placeholder-text: Strings.search-placeholder;
+                            accessible-description: Strings.key-hints;
+                            edited => {
+                                root.query-edited(self.text);
+                            }
+                        }
+                        Text {
+                            visible: root.query == "";
+                            text: Strings.search-placeholder;
+                            color: Theme.text-muted;
+                            font-size: 14px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            width: 100%;
+                            accessible-role: none;
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 10px;
+                vertical-stretch: 1;
+
+                // Left pane: filters.
+                ScrollView {
+                    width: 180px;
+                    accessible-role: groupbox;
+                    accessible-label: Strings.filters-label;
+                    VerticalLayout {
+                        spacing: 2px;
+                        for f in root.filters: VerticalLayout {
+                            if f.header: Text {
+                                height: 30px;
+                                text: f.label;
+                                color: Theme.text-muted;
+                                font-size: 11px;
+                                font-weight: 700;
+                                vertical-alignment: bottom;
+                                accessible-role: text;
+                            }
+                            if !f.header: FilterButton {
+                                item: f;
+                                toggled => {
+                                    root.filter-toggled(f.id);
+                                }
+                                focus-report(on) => {
+                                    root.filter-focus(f.id, on);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    width: 1px;
+                    background: Theme.line;
+                }
+
+                // Centre: the list, or a state message in its place.
+                Rectangle {
+                    horizontal-stretch: 3;
+                    min-width: 300px;
+
+                    list-focus := FocusScope {
+                        focus-on-click: false;
+                        accessible-role: list;
+                        accessible-label: Strings.list-label;
+                        accessible-item-count: root.rows.length;
+                        visible: root.view-state == 0;
+
+                        Rectangle {
+                            border-radius: 6px;
+                            border-width: list-focus.has-focus ? 1px : 0px;
+                            border-color: Theme.accent;
+                        }
+
+                        clip-list := ListView {
+                            for r[i] in root.rows: RowView {
+                                data: r;
+                                index: i;
+                                selected: i == root.selected;
+                                pressed(ctrl, shift) => {
+                                    root.row-pressed(i, ctrl, shift);
+                                }
+                                context(x, y) => {
+                                    root.row-context(i);
+                                    root.menu-x = x - root.absolute-position.x;
+                                    root.menu-y = y - root.absolute-position.y;
+                                    menu.show();
+                                }
+                                activated => {
+                                    root.row-activated(i);
+                                }
+                            }
+                            changed content-y => {
+                                root.report-shown();
+                            }
+                            changed visible-height => {
+                                root.report-shown();
+                            }
+                        }
+                    }
+
+                    Text {
+                        visible: root.view-state != 0;
+                        width: parent.width - 40px;
+                        text: root.view-state == 1 ? Strings.loading
+                            : root.view-state == 2 ? Strings.empty-history
+                            : root.view-state == 3 ? Strings.no-results
+                            : Strings.load-failed;
+                        color: root.view-state == 4 ? Theme.danger : Theme.text-muted;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+
+                Rectangle {
+                    width: 1px;
+                    background: Theme.line;
+                }
+
+                // Right pane: the details of one clip, or what is selected.
+                Rectangle {
+                    horizontal-stretch: 2;
+                    min-width: 240px;
+
+                    if root.detail-open: DetailPane {
+                        state: root.detail;
+                        load-text => {
+                            root.load-full-text();
+                        }
+                        load-image => {
+                            root.load-full-image();
+                        }
+                    }
+                    if !root.detail-open: Text {
+                        width: parent.width - 24px;
+                        text: root.summary != "" ? root.summary : Strings.history-hint;
+                        color: Theme.text-muted;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                        accessible-role: text;
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 1px;
+                background: Theme.line;
+            }
+
+            // Footer: actions for the selection, or a message.
+            HorizontalLayout {
+                height: 28px;
+                spacing: 4px;
+
+                ActionButton {
+                    text: Strings.copy;
+                    visible: root.can-copy;
+                    clicked => {
+                        root.act-copy();
+                    }
+                }
+                ActionButton {
+                    text: Strings.copy-plain;
+                    visible: root.can-copy;
+                    clicked => {
+                        root.act-copy-plain();
+                    }
+                }
+                ActionButton {
+                    text: root.will-unpin ? Strings.unpin : Strings.pin;
+                    visible: root.has-selection;
+                    clicked => {
+                        root.act-pin();
+                    }
+                }
+                ActionButton {
+                    text: Strings.delete;
+                    visible: root.has-selection;
+                    clicked => {
+                        root.act-delete();
+                    }
+                }
+                ActionButton {
+                    text: Strings.select-all;
+                    clicked => {
+                        root.act-select-all();
+                    }
+                }
+                ActionButton {
+                    text: Strings.clear-selection;
+                    visible: root.summary != "";
+                    clicked => {
+                        root.act-clear-selection();
+                    }
+                }
+                Text {
+                    text: root.toast != "" ? root.toast : root.summary;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    accessible-role: text;
+                }
+            }
+            Text {
+                text: root.confirm-text != "" ? Strings.confirm-hints : Strings.key-hints;
+                color: Theme.text-muted;
+                font-size: 11px;
+                overflow: elide;
+                accessible-role: none;
+            }
+        }
+    }
+
+    // The context menu (same actions as the footer; the keyboard keys work too).
+    Rectangle {
+        x: root.menu-x;
+        y: root.menu-y;
+        width: 0px;
+        height: 0px;
+        menu := PopupWindow {
+            x: 0px;
+            y: 0px;
+            width: 230px;
+            height: menu-col.preferred-height + 2px;
+            close-policy: close-on-click-outside;
+            Rectangle {
+                background: Theme.surface;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: Theme.line;
+                menu-col := VerticalLayout {
+                    padding: 1px;
+                    MenuEntry {
+                        text: Strings.copy;
+                        enabled: root.can-copy;
+                        clicked => {
+                            menu.close();
+                            root.act-copy();
+                        }
+                    }
+                    MenuEntry {
+                        text: Strings.copy-plain;
+                        enabled: root.can-copy;
+                        clicked => {
+                            menu.close();
+                            root.act-copy-plain();
+                        }
+                    }
+                    MenuEntry {
+                        text: root.will-unpin ? Strings.unpin : Strings.pin;
+                        enabled: root.has-selection;
+                        clicked => {
+                            menu.close();
+                            root.act-pin();
+                        }
+                    }
+                    MenuEntry {
+                        text: Strings.delete;
+                        danger: true;
+                        enabled: root.has-selection;
+                        clicked => {
+                            menu.close();
+                            root.act-delete();
+                        }
+                    }
+                    MenuEntry {
+                        text: Strings.select-all;
+                        clicked => {
+                            menu.close();
+                            root.act-select-all();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The delete confirmation: modal (it covers the window and takes every click).
+    if root.confirm-text != "": Rectangle {
+        background: #000000a0;
+        accessible-role: groupbox;
+        accessible-label: root.confirm-text;
+
+        TouchArea {}
+
+        Rectangle {
+            width: min(420px, parent.width - 40px);
+            height: dialog-col.preferred-height + 32px;
+            background: Theme.surface;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.line;
+
+            dialog-col := VerticalLayout {
+                padding: 16px;
+                spacing: 16px;
+                Text {
+                    text: root.confirm-text;
+                    color: Theme.text;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                    accessible-role: text;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    height: 30px;
+                    ActionButton {
+                        text: Strings.cancel;
+                        clicked => {
+                            root.act-cancel();
+                        }
+                    }
+                    ActionButton {
+                        text: Strings.delete;
+                        clicked => {
+                            root.act-confirm();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

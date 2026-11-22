@@ -13,6 +13,7 @@
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+mod history;
 mod log;
 mod popup;
 mod seed;

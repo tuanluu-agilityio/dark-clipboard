@@ -22,8 +22,12 @@
 mod generated {
     slint::include_modules!();
 }
-pub use generated::{Chip, ClipRow, FileRow, MainWindow, Seg, Strings, Theme};
+pub use generated::{
+    Chip, ClipRow, DetailState, FileRow, FilterItem, HistoryWindow, MainWindow, Seg, Strings, Theme,
+};
 
+mod common;
+mod history_host;
 mod popup_host;
 mod shortcut_host;
 mod tray_host;
@@ -238,6 +242,7 @@ fn push_status(
     );
     let wanted = settings.shortcuts.toggle_popup;
     let enter_pastes = settings.ui.enter_pastes;
+    let remembered = settings.ui.history_windows.clone();
     let (ui, log) = (ui.clone(), Arc::clone(log));
     // The registration lives on the main thread; it changes only when the setting changed.
     let _ = slint::invoke_from_event_loop(move || {
@@ -253,12 +258,15 @@ fn push_status(
             warning: sc.warning(),
         });
         popup_host::set_enter_pastes(enter_pastes);
+        history_host::set_remembered(&remembered);
         if let Some(w) = ui.upgrade() {
             set_strings(&w, lang, Some(status), sc);
         }
         popup_host::set_lang(lang);
+        history_host::set_lang(lang);
         // Clips may have been added, pinned or deleted: a visible popup re-runs its search.
         popup_host::app_changed();
+        history_host::app_changed();
     });
     wake_after(state, now)
 }
@@ -443,6 +451,7 @@ fn handle_tray_action(action: MenuAction, window: &Weak<MainWindow>, poster: &Po
                 apply_command(&w, cmd, Instant::now(), Trigger::Tray);
             }
         }
+        MenuAction::History => history_host::show(),
         MenuAction::Quit => {
             log.event("tray_quit", &[]);
             let _ = slint::quit_event_loop();
@@ -526,6 +535,8 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
     };
     // The popup: list, search and keyboard (Task 204).
     popup_host::install(&window, worker.poster(), args_lang, Arc::clone(&log));
+    // The history window is created when it is first opened (tray "History..." or Ctrl+H).
+    history_host::install(worker.poster(), args_lang);
     popup_host::close_on_focus_loss(&window);
     window.window().on_close_requested(|| {
         popup_host::shutdown_pending();
@@ -566,6 +577,7 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
     let looped = slint::run_event_loop_until_quit();
     // A delete still waiting for its undo is sent before the worker stops.
     popup_host::shutdown();
+    history_host::shutdown();
     // Remove the icon first, so it does not linger while the app shuts down.
     tray_host::destroy();
     shortcut_host::release();

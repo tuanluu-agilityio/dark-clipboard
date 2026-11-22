@@ -5,7 +5,7 @@
 // The palette is only used by the Windows app for now (the UI runs on Windows first).
 #![cfg_attr(not(windows), allow(dead_code))]
 
-use crate::ui::{MainWindow, Theme};
+use crate::ui::Theme;
 use slint::{Color, ComponentHandle};
 
 pub const BG: Color = Color::from_rgb_u8(0x1C, 0x1E, 0x22);
@@ -27,7 +27,10 @@ pub const MONO_FONT: &str = "Menlo";
 pub const MONO_FONT: &str = "DejaVu Sans Mono";
 
 /// Sets the Slint `Theme` global of `window`.
-pub fn apply(window: &MainWindow) {
+pub fn apply<'a, C: ComponentHandle>(window: &'a C)
+where
+    Theme<'a>: slint::Global<'a, C>,
+{
     let t = window.global::<Theme>();
     t.set_bg(BG);
     t.set_surface(SURFACE);
