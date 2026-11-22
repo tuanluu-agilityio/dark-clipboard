@@ -1,46 +1,70 @@
-//! PEM private keys: a `-----BEGIN <LABEL>-----` line whose label ends in `PRIVATE KEY`
-//! (or `PRIVATE KEY BLOCK` for PGP).
+//! Armored private keys:
+//! - PEM / OpenSSH / PGP: a `-----BEGIN <LABEL>-----` line whose label ends in `PRIVATE KEY`
+//!   (or `PRIVATE KEY BLOCK` for PGP);
+//! - RFC 4716 (SSH2): `---- BEGIN <LABEL> ----`, e.g. `SSH2 ENCRYPTED PRIVATE KEY`.
 //!
-//! Known misses: raw key material without armor (e.g. bare base64 or JWK JSON), PuTTY `.ppk`.
+//! Known misses: raw key material without armor (e.g. bare base64 or JWK JSON), PuTTY `.ppk`,
+//! armor lines with lowercase or extra punctuation.
 
 use super::{Detector, Hit};
 use crate::model::SensitiveCategory;
 
 pub(crate) struct PrivateKeyDetector;
 
-const BEGIN: &str = "-----BEGIN ";
-const DASHES: &[u8] = b"-----";
 /// Longest armor label considered (real ones are under 30 bytes).
 const MAX_LABEL: usize = 64;
 
-/// Length of the label after `BEGIN ` if it is followed by `-----` and names a private key.
-fn private_label_len(rest: &[u8]) -> Option<usize> {
-    let len = rest
+struct Armor {
+    begin: &'static str,
+    /// Bytes that must follow the label.
+    close: &'static [u8],
+}
+
+const ARMORS: [Armor; 2] = [
+    Armor {
+        begin: "-----BEGIN ",
+        close: b"-----",
+    },
+    Armor {
+        begin: "---- BEGIN ",
+        close: b" ----",
+    },
+];
+
+/// Length of the label after `BEGIN ` if `close` follows it and it names a private key.
+fn private_label_len(rest: &[u8], close: &[u8]) -> Option<usize> {
+    let run = rest
         .iter()
         .take(MAX_LABEL + 1)
-        .position(|&b| !(b.is_ascii_uppercase() || b == b' '))?;
+        .position(|&b| !(b.is_ascii_uppercase() || b.is_ascii_digit() || b == b' '))?;
+    // `close` may start with a space that the label run swallowed.
+    let len = (0..=run)
+        .rev()
+        .take(2)
+        .find(|&l| rest.get(l..).is_some_and(|r| r.starts_with(close)))?;
     let label = rest.get(..len)?;
-    let names_private_key =
-        label.ends_with(b"PRIVATE KEY") || label.ends_with(b"PRIVATE KEY BLOCK");
-    (names_private_key && rest.get(len..)?.starts_with(DASHES)).then_some(len)
+    (label.ends_with(b"PRIVATE KEY") || label.ends_with(b"PRIVATE KEY BLOCK")).then_some(len)
 }
 
 impl Detector for PrivateKeyDetector {
-    /// Non-overlapping substring search for `-----BEGIN ` (linear), then a bounded label check.
-    /// The hit covers the BEGIN line only, so no unbounded search for the END line is needed.
+    /// Non-overlapping substring search for each armor's BEGIN marker (linear), then a bounded
+    /// label check. The hit covers the BEGIN line only, so no unbounded search for the END
+    /// line is needed.
     fn scan(&self, text: &str, out: &mut Vec<Hit>) {
         let bytes = text.as_bytes();
-        for (start, _) in text.match_indices(BEGIN) {
-            let label_start = start + BEGIN.len();
-            let Some(rest) = bytes.get(label_start..) else {
-                continue;
-            };
-            if let Some(len) = private_label_len(rest) {
-                out.push(Hit {
-                    category: SensitiveCategory::PrivateKey,
-                    start,
-                    end: label_start + len + DASHES.len(),
-                });
+        for armor in &ARMORS {
+            for (start, _) in text.match_indices(armor.begin) {
+                let label_start = start + armor.begin.len();
+                let Some(rest) = bytes.get(label_start..) else {
+                    continue;
+                };
+                if let Some(len) = private_label_len(rest, armor.close) {
+                    out.push(Hit {
+                        category: SensitiveCategory::PrivateKey,
+                        start,
+                        end: label_start + len + armor.close.len(),
+                    });
+                }
             }
         }
     }
@@ -75,6 +99,16 @@ mod tests {
             "key:\n  {}",
             armor(concat!("OPENSSH ", "PRIVATE KEY"))
         )));
+    }
+
+    #[test]
+    fn rfc4716_ssh2_private_key() {
+        assert!(hit(concat!(
+            "---- BEGIN SSH2 ENCRYPTED ",
+            "PRIVATE KEY ----\nabc\n"
+        )));
+        assert!(!hit("---- BEGIN SSH2 PUBLIC KEY ----\nabc\n"));
+        assert!(!hit("---- BEGIN SSH2 ENCRYPTED PRIVATE KEY"));
     }
 
     #[test]

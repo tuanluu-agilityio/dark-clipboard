@@ -1,7 +1,13 @@
-//! JSON Web Tokens: `header.payload[.signature]` where the header base64url-decodes
-//! to a JSON object with an `"alg"` member.
+//! JSON Web Tokens in compact form:
+//! - JWS `header.payload[.signature]`: the header base64url-decodes to a JSON object with an
+//!   `"alg"` member and the payload decodes;
+//! - JWE `header.key.iv.ciphertext.tag`: the header decodes to a JSON object with `"enc"`.
 //!
-//! Known misses: opaque bearer tokens, JWE with unusual headers, tokens split across lines.
+//! A token may follow other dot-separated segments in the same run (`id.eyJ…`); the starts of
+//! the last five segments are tried.
+//!
+//! Known misses: opaque bearer tokens, headers that do not start with `{"` (`eyJ`), tokens
+//! glued to preceding characters inside a segment, tokens split across lines.
 
 use super::{is_alnum, wipe_bytes, Detector, Hit};
 use crate::model::SensitiveCategory;
@@ -10,6 +16,8 @@ pub(crate) struct JwtDetector;
 
 /// Real JOSE headers are tiny; longer first segments are not decoded.
 const MAX_HEADER_LEN: usize = 4096;
+/// A JWE compact token has five segments, the most of any form.
+const MAX_SEGMENTS: usize = 5;
 
 fn is_b64url_byte(b: u8) -> bool {
     is_alnum(b) || b == b'_' || b == b'-'
@@ -19,52 +27,111 @@ fn is_token_byte(b: u8) -> bool {
     is_b64url_byte(b) || b == b'.'
 }
 
-/// `{` (after optional whitespace) and an `"alg"` member name somewhere in the object.
-fn is_jose_header(decoded: &[u8]) -> bool {
+/// `{` (after optional whitespace) and the quoted `member` name somewhere in the object.
+fn is_json_object_with(decoded: &[u8], member: &[u8]) -> bool {
     let trimmed = decoded
         .iter()
         .position(|b| !b.is_ascii_whitespace())
         .and_then(|p| decoded.get(p..))
         .unwrap_or(&[]);
-    trimmed.first() == Some(&b'{') && trimmed.windows(5).any(|w| w == b"\"alg\"")
+    trimmed.first() == Some(&b'{')
+        && trimmed.windows(member.len() + 2).any(|w| {
+            w.first() == Some(&b'"')
+                && w.last() == Some(&b'"')
+                && w.get(1..=member.len()) == Some(member)
+        })
 }
 
-fn is_jwt(run: &[u8]) -> bool {
-    // A sentence may end right after the token; an unsigned JWT also ends in '.'.
-    let end = run.iter().rposition(|&b| b != b'.').map_or(0, |p| p + 1);
-    let core = run.get(..end).unwrap_or(&[]);
-    let mut parts = core.split(|&b| b == b'.');
-    let (Some(header), Some(payload)) = (parts.next(), parts.next()) else {
-        return false;
-    };
-    let signature = parts.next();
-    if parts.next().is_some()
-        || header.len() > MAX_HEADER_LEN
-        || !header.starts_with(b"eyJ")
-        || payload.is_empty()
-        || signature.is_some_and(<[u8]>::is_empty)
-    {
+/// Decodes `header` and checks it for `member`; the decoded bytes are wiped.
+fn header_has(header: &[u8], member: &[u8]) -> bool {
+    if header.len() > MAX_HEADER_LEN || !header.starts_with(b"eyJ") {
         return false;
     }
     let Some(mut h) = decode_base64url(header) else {
         return false;
     };
-    let header_ok = is_jose_header(&h);
+    let ok = is_json_object_with(&h, member);
     wipe_bytes(&mut h);
-    if !header_ok {
-        return false;
-    }
-    match decode_base64url(payload) {
-        Some(mut p) => {
-            wipe_bytes(&mut p);
-            true
+    ok
+}
+
+/// Base64url segment of a possible length (`4n + 1` is impossible).
+fn valid_len(seg: &[u8]) -> bool {
+    seg.len() % 4 != 1
+}
+
+/// `core` is one candidate token without trailing dots.
+fn is_compact_token(core: &[u8]) -> bool {
+    let mut parts: [&[u8]; MAX_SEGMENTS] = [&[]; MAX_SEGMENTS];
+    let mut count = 0;
+    for seg in core.split(|&b| b == b'.') {
+        match parts.get_mut(count) {
+            Some(slot) => *slot = seg,
+            None => return false,
         }
-        None => false,
+        count += 1;
+    }
+    match (count, parts) {
+        (2 | 3, [header, payload, signature, _, _]) => {
+            if payload.is_empty() || (count == 3 && signature.is_empty()) {
+                return false;
+            }
+            if !header_has(header, b"alg") {
+                return false;
+            }
+            match decode_base64url(payload) {
+                Some(mut p) => {
+                    wipe_bytes(&mut p);
+                    true
+                }
+                None => false,
+            }
+        }
+        (5, [header, key, iv, ciphertext, tag]) => {
+            // The encrypted key is empty for direct encryption.
+            valid_len(key)
+                && [iv, ciphertext, tag]
+                    .iter()
+                    .all(|s| !s.is_empty() && valid_len(s))
+                && header_has(header, b"enc")
+        }
+        _ => false,
     }
 }
 
+/// Byte offset (into `run`) of a compact token ending the run, if any. Tries the starts of
+/// the last [`MAX_SEGMENTS`] segments, leftmost first: at most five linear checks.
+fn token_start(run: &[u8]) -> Option<usize> {
+    // A sentence may end right after the token; an unsigned JWT also ends in '.'.
+    let end = run.iter().rposition(|&b| b != b'.').map_or(0, |p| p + 1);
+    let core = run.get(..end)?;
+    let mut starts = [0usize; MAX_SEGMENTS];
+    let mut n = 0;
+    let mut pos = end;
+    while n < MAX_SEGMENTS {
+        let seg_start = core
+            .get(..pos)?
+            .iter()
+            .rposition(|&b| b == b'.')
+            .map_or(0, |p| p + 1);
+        if let Some(slot) = starts.get_mut(n) {
+            *slot = seg_start;
+        }
+        n += 1;
+        if seg_start == 0 {
+            break;
+        }
+        pos = seg_start - 1;
+    }
+    starts.get(..n)?.iter().rev().copied().find(|&s| {
+        core.get(s..)
+            .is_some_and(|c| c.starts_with(b"eyJ") && is_compact_token(c))
+    })
+}
+
 impl Detector for JwtDetector {
-    /// One pass over maximal runs of `[A-Za-z0-9_.-]`; each run is checked once.
+    /// One pass over maximal runs of `[A-Za-z0-9_.-]`; each run is checked a bounded number
+    /// of times.
     fn scan(&self, text: &str, out: &mut Vec<Hit>) {
         let bytes = text.as_bytes();
         let mut i = 0;
@@ -77,10 +144,10 @@ impl Detector for JwtDetector {
             while bytes.get(i).is_some_and(|&b| is_token_byte(b)) {
                 i += 1;
             }
-            if bytes.get(start..i).is_some_and(is_jwt) {
+            if let Some(offset) = bytes.get(start..i).and_then(token_start) {
                 out.push(Hit {
                     category: SensitiveCategory::Token,
-                    start,
+                    start: start + offset,
                     end: i,
                 });
             }
@@ -171,6 +238,51 @@ mod tests {
         for g in &garbage {
             assert!(!hit(g));
         }
+    }
+
+    #[test]
+    fn jwt_after_other_segments() {
+        assert!(hit(&format!("id.{}", jwt())));
+        assert!(hit(&format!("a.b.c.{}", jwt())));
+        let mut out = Vec::new();
+        let text = format!("x id.{}", jwt());
+        super::Detector::scan(&JwtDetector, &text, &mut out);
+        assert_eq!(out.len(), 1);
+        assert_eq!((out[0].start, out[0].end), (5, text.len()));
+    }
+
+    #[test]
+    fn jwe_compact_with_enc_header() {
+        let header = concat!("eyJhbGciOiJkaXIiLCJl", "bmMiOiJBMjU2R0NNIn0");
+        assert!(hit(&format!(
+            "{header}..{}.{}.{}",
+            body(16),
+            body(40),
+            body(22)
+        )));
+        assert!(hit(&format!(
+            "{header}.{}.{}.{}.{}",
+            body(43),
+            body(16),
+            body(40),
+            body(22)
+        )));
+        // 5 parts but no "enc" member
+        assert!(!hit(&format!(
+            "{}.{}.{}.{}.{}",
+            "eyJ6aXAiOiJERUYifQ",
+            body(43),
+            body(16),
+            body(40),
+            body(22)
+        )));
+        // 4 parts
+        assert!(!hit(&format!(
+            "{header}.{}.{}.{}",
+            body(16),
+            body(40),
+            body(22)
+        )));
     }
 
     #[test]

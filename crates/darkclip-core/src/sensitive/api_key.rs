@@ -1,6 +1,9 @@
 //! API keys with well-known vendor prefixes.
 //!
-//! Known misses: keys without a vendor prefix, prefixes not listed here, keys split across lines.
+//! Known misses: keys without a vendor prefix, prefixes not listed here, keys split across lines,
+//! fixed-length keys glued to more token characters (`ghp_…-x`, `AKIA…_suffix`), and `sk-`/`glpat-`
+//! values with fewer than 10 distinct characters. Long kebab-case names after `sk-` with a digit
+//! and 10 distinct characters can be false positives.
 
 use super::{is_alnum, Detector, Hit};
 use crate::model::SensitiveCategory;
@@ -12,32 +15,45 @@ fn is_token_byte(b: u8) -> bool {
     is_alnum(b) || b == b'_' || b == b'-'
 }
 
-struct Classes {
-    upper: bool,
-    lower: bool,
-    digit: bool,
+const MIN_RANDOM_LEN: usize = 20;
+const MIN_DISTINCT: u32 = 10;
+
+fn has_digit(s: &[u8]) -> bool {
+    s.iter().any(u8::is_ascii_digit)
 }
 
-fn classes(s: &[u8]) -> Classes {
-    Classes {
-        upper: s.iter().any(u8::is_ascii_uppercase),
-        lower: s.iter().any(u8::is_ascii_lowercase),
-        digit: s.iter().any(u8::is_ascii_digit),
-    }
+/// Number of distinct ASCII bytes in `s` (token bytes are always ASCII).
+fn distinct(s: &[u8]) -> u32 {
+    let seen = s
+        .iter()
+        .filter(|b| b.is_ascii())
+        .fold(0u128, |acc, &b| acc | 1u128 << b);
+    seen.count_ones()
 }
 
-/// Mixed-case alphanumeric body: real keys are random, kebab-case identifiers are not.
-fn random_looking(body: &[u8], min_len: usize) -> bool {
-    let c = classes(body);
-    body.len() >= min_len && c.upper && c.lower && c.digit
+/// Random-looking body: long enough, letters and digits, and varied enough that
+/// kebab-case identifiers and repeated patterns do not qualify.
+fn random_looking(body: &[u8]) -> bool {
+    body.len() >= MIN_RANDOM_LEN
+        && has_digit(body)
+        && body.iter().any(u8::is_ascii_alphabetic)
+        && distinct(body) >= MIN_DISTINCT
 }
 
 fn is_key(tok: &[u8]) -> bool {
     if let Some(body) = tok.strip_prefix(b"sk-") {
-        return random_looking(body, 20);
+        return random_looking(body);
     }
     if let Some(body) = tok.strip_prefix(b"glpat-") {
-        return random_looking(body, 20);
+        return random_looking(body);
+    }
+    for p in [b"sk_live_", b"rk_live_"] {
+        if let Some(body) = tok.strip_prefix(p) {
+            return body.len() >= 16 && body.iter().all(|&b| is_alnum(b));
+        }
+    }
+    if let Some(body) = tok.strip_prefix(b"xapp-") {
+        return body.len() >= 10 && has_digit(body);
     }
     for p in [b"ghp_", b"gho_", b"ghu_", b"ghs_", b"ghr_"] {
         if let Some(body) = tok.strip_prefix(p) {
@@ -47,11 +63,11 @@ fn is_key(tok: &[u8]) -> bool {
     if let Some(body) = tok.strip_prefix(b"github_pat_") {
         return body.len() >= 40
             && body.iter().all(|&b| is_alnum(b) || b == b'_')
-            && classes(body).digit;
+            && has_digit(body);
     }
     for p in [b"xoxa-", b"xoxb-", b"xoxo-", b"xoxp-", b"xoxr-", b"xoxs-"] {
         if let Some(body) = tok.strip_prefix(p) {
-            return body.len() >= 10 && classes(body).digit;
+            return body.len() >= 10 && has_digit(body);
         }
     }
     for p in [b"AKIA", b"ASIA"] {
@@ -144,6 +160,45 @@ mod tests {
             "github_pat_".to_string(),
         ];
         for t in &texts {
+            assert!(!hit(t));
+        }
+    }
+
+    /// `n` lowercase hex characters.
+    fn hex(n: usize) -> String {
+        (0..n)
+            .map(|i| char::from(b"0123456789abcdef"[(i * 7 + 3) % 16]))
+            .collect()
+    }
+
+    #[test]
+    fn api_key_review_gaps() {
+        let keys = [
+            format!("{}{}", concat!("s", "k-"), hex(32)),
+            format!("{}{}", concat!("s", "k-or-v1-"), hex(64)),
+            format!("{}{}", concat!("gl", "pat-"), "abcdefghijklmnopqrs7"),
+            format!("{}{}", concat!("sk", "_live_"), body(24)),
+            format!("{}{}", concat!("rk", "_live_"), body(24)),
+            format!(
+                "{}{}-{}-{}",
+                concat!("xa", "pp-1-"),
+                "A0123456789",
+                "1234567890123",
+                hex(64)
+            ),
+        ];
+        for key in &keys {
+            assert!(hit(key));
+        }
+        let negatives = [
+            "sk-learn".to_string(),
+            "risk-free".to_string(),
+            "sk-fading-circle-2".to_string(),
+            format!("{}{}", concat!("s", "k-"), "ab1".repeat(10)),
+            format!("{}{}", concat!("sk", "_live_"), body(15)),
+            format!("{}{}", concat!("xa", "pp-"), "hello-world"),
+        ];
+        for t in &negatives {
             assert!(!hit(t));
         }
     }

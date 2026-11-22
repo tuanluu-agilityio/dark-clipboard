@@ -1,7 +1,10 @@
-//! Payment cards: 13 to 19 digits, optionally grouped by single spaces or by single dashes,
-//! passing the Luhn check, first digit 2 to 6.
+//! Payment cards: 13 to 19 digits, optionally grouped by one kind of single separator
+//! (space, dash, no-break space or another Unicode space) used throughout, passing the Luhn
+//! check, first digit 2 to 6. Group-aligned prefixes of a longer run are also tried, so a
+//! card followed by an expiry date or CVV is found.
 //!
-//! Known misses: cards starting with other digits, numbers with mixed or doubled separators.
+//! Known misses: cards starting with other digits, numbers with mixed or doubled separators,
+//! groups split at positions that do not align with the card number.
 
 use super::{boundary_after, boundary_before, wipe_slice, Detector, Hit};
 use crate::model::SensitiveCategory;
@@ -15,13 +18,38 @@ fn is_digit_at(bytes: &[u8], i: usize) -> bool {
     bytes.get(i).is_some_and(u8::is_ascii_digit)
 }
 
-/// A decimal or thousands mark glued to a digit (`1.4111…`, `…1111,5`) means a larger number.
-fn number_continues_before(bytes: &[u8], start: usize) -> bool {
-    start >= 2 && matches!(bytes.get(start - 1), Some(b'.' | b',')) && is_digit_at(bytes, start - 2)
+/// Group separator starting at byte `i`, if any.
+fn separator_at(text: &str, i: usize) -> Option<char> {
+    let c = text.get(i..)?.chars().next()?;
+    matches!(
+        c,
+        ' ' | '-' | '\u{a0}' | '\u{2000}'..='\u{200a}' | '\u{202f}'
+    )
+    .then_some(c)
+}
+
+/// Exactly three digits at `i`, not followed by a fourth: a thousands group.
+fn thousands_group_at(bytes: &[u8], i: usize) -> bool {
+    (i..i + 3).all(|k| is_digit_at(bytes, k)) && !is_digit_at(bytes, i + 3)
+}
+
+/// A decimal point glued to digits, or a thousands comma, means a larger number.
+fn number_continues_before(bytes: &[u8], start: usize, first_group_len: usize) -> bool {
+    start >= 2
+        && is_digit_at(bytes, start - 2)
+        && match bytes.get(start - 1) {
+            Some(b'.') => true,
+            Some(b',') => first_group_len == 3,
+            _ => false,
+        }
 }
 
 fn number_continues_after(bytes: &[u8], end: usize) -> bool {
-    matches!(bytes.get(end), Some(b'.' | b',')) && is_digit_at(bytes, end + 1)
+    match bytes.get(end) {
+        Some(b'.') => is_digit_at(bytes, end + 1),
+        Some(b',') => thousands_group_at(bytes, end + 1),
+        _ => false,
+    }
 }
 
 fn plausible(digits: &[u8]) -> bool {
@@ -35,8 +63,8 @@ fn plausible(digits: &[u8]) -> bool {
 }
 
 impl Detector for CardDetector {
-    /// One pass: each maximal digit group run (single `' '` or single `'-'` between groups,
-    /// the same separator throughout) is examined once, then skipped.
+    /// One pass: each maximal digit-group run is read once, then skipped. Prefixes ending at a
+    /// group boundary with 13 to 19 digits are checked; there are at most 7 per run.
     fn scan(&self, text: &str, out: &mut Vec<Hit>) {
         let bytes = text.as_bytes();
         let mut digits = [0u8; MAX_DIGITS];
@@ -48,8 +76,11 @@ impl Detector for CardDetector {
             }
             let start = i;
             let mut count = 0usize;
-            let mut sep: Option<u8> = None;
-            loop {
+            let mut first_group_len = None;
+            let mut sep: Option<char> = None;
+            // Latest passing prefix that is followed by a separator and more digits.
+            let mut inner_end: Option<usize> = None;
+            let final_passes = loop {
                 while let Some(&b) = bytes.get(i).filter(|b| b.is_ascii_digit()) {
                     if let Some(slot) = digits.get_mut(count) {
                         *slot = b - b'0';
@@ -57,24 +88,33 @@ impl Detector for CardDetector {
                     count += 1;
                     i += 1;
                 }
-                match bytes.get(i) {
-                    Some(&s @ (b' ' | b'-'))
-                        if sep.is_none_or(|x| x == s) && is_digit_at(bytes, i + 1) =>
+                first_group_len.get_or_insert(count);
+                let passes = count <= MAX_DIGITS && digits.get(..count).is_some_and(plausible);
+                match separator_at(text, i) {
+                    Some(c)
+                        if sep.is_none_or(|x| x == c) && is_digit_at(bytes, i + c.len_utf8()) =>
                     {
-                        sep = Some(s);
-                        i += 1;
+                        if passes {
+                            inner_end = Some(i);
+                        }
+                        sep = Some(c);
+                        i += c.len_utf8();
                     }
-                    _ => break,
+                    _ => break passes,
                 }
-            }
+            };
             let end = i;
-            let found = count <= MAX_DIGITS
-                && boundary_before(bytes, start)
+            let start_ok = boundary_before(bytes, start)
+                && !number_continues_before(bytes, start, first_group_len.unwrap_or(0));
+            let hit_end = if final_passes
                 && boundary_after(bytes, end)
-                && !number_continues_before(bytes, start)
                 && !number_continues_after(bytes, end)
-                && digits.get(..count).is_some_and(plausible);
-            if found {
+            {
+                Some(end)
+            } else {
+                inner_end
+            };
+            if let (true, Some(end)) = (start_ok, hit_end) {
                 out.push(Hit {
                     category: SensitiveCategory::PaymentCard,
                     start,
@@ -145,6 +185,28 @@ mod tests {
         for t in texts {
             assert!(!hit(t));
         }
+    }
+
+    #[test]
+    fn card_followed_by_expiry_or_cvv() {
+        assert!(hit(concat!("4111 1111 1111", " 1111 12/30 123")));
+        assert!(hit(concat!("4111 1111 1111", " 1111 123")));
+        assert!(hit(concat!("41111111", "11111111,12/30,123")));
+        assert!(!hit("1,234,567.89"));
+        // a comma followed by exactly three digits continues a number
+        assert!(!hit(concat!("41111111", "11111111,123")));
+    }
+
+    #[test]
+    fn card_unicode_space_separators() {
+        assert!(hit(concat!("4111\u{a0}1111", "\u{a0}1111\u{a0}1111")));
+        assert!(hit(concat!("4111\u{2009}1111", "\u{2009}1111\u{2009}1111")));
+        assert!(hit(concat!("4111\u{202f}1111", "\u{202f}1111\u{202f}1111")));
+        assert!(!hit(concat!("4111\u{a0}1111", " 1111 1111")));
+        assert!(!hit(concat!(
+            "4111\u{2009}1111",
+            "\u{2008}1111\u{2009}1111"
+        )));
     }
 
     #[test]

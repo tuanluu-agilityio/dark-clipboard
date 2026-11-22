@@ -1,7 +1,9 @@
 //! Passwords: the value after a label such as `password:`, `pwd=` or `mật khẩu:`.
 //!
-//! Known misses: passwords without a label, labels in other languages, Vietnamese text
-//! in decomposed (NFD) form, values on the line after the label.
+//! Known misses: passwords without a label; the short or ambiguous labels `pass:`, `pw:` and
+//! `secret:` (left out to avoid false positives); labels in other languages; Vietnamese text
+//! in decomposed (NFD) form; values of 1 or 2 characters; values on the line after the label;
+//! unquoted values containing spaces (only the first word is covered).
 
 use super::{Detector, Hit};
 use crate::model::SensitiveCategory;

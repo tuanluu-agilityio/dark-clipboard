@@ -114,12 +114,15 @@ pub fn scan(text: &str, enabled: &[SensitiveCategory]) -> ScanResult {
         }
     }
     let mask_hint = first.map(|h| MaskHint {
-        visible_prefix: text
-            .get(h.start..h.end)
-            .unwrap_or("")
-            .chars()
-            .take(MASK_PREFIX_CHARS)
-            .collect(),
+        visible_prefix: if shows_prefix(h.category) {
+            text.get(h.start..h.end)
+                .unwrap_or("")
+                .chars()
+                .take(MASK_PREFIX_CHARS)
+                .collect()
+        } else {
+            String::new()
+        },
         category: h.category,
     });
     ScanResult {
@@ -140,15 +143,24 @@ fn label(category: SensitiveCategory) -> Msg {
     }
 }
 
+/// Email previews show the category only: any local-part characters identify a person.
+fn shows_prefix(category: SensitiveCategory) -> bool {
+    category != SensitiveCategory::Email
+}
+
 /// Renders a masked preview such as `sk-…•••• (API key)`.
-/// Shows at most [`MASK_PREFIX_CHARS`] characters of the hint, whatever its length.
+/// Shows at most the first [`MASK_PREFIX_CHARS`] characters of the hint (control characters
+/// among them are dropped, never replaced by later ones), and none for Email.
 pub fn masked_preview(hint: &MaskHint, lang: Lang) -> String {
-    let mut prefix: String = hint
-        .visible_prefix
-        .chars()
-        .filter(|c| !c.is_control())
-        .take(MASK_PREFIX_CHARS)
-        .collect();
+    let mut prefix: String = if shows_prefix(hint.category) {
+        hint.visible_prefix
+            .chars()
+            .take(MASK_PREFIX_CHARS)
+            .filter(|c| !c.is_control())
+            .collect()
+    } else {
+        String::new()
+    };
     let preview = format!("{prefix}…•••• ({})", t(lang, label(hint.category)));
     wipe(&mut prefix);
     preview
@@ -292,6 +304,32 @@ mod tests {
     }
 
     #[test]
+    fn masked_preview_takes_three_chars_before_filtering() {
+        let hint = MaskHint {
+            visible_prefix: "\u{7}\u{7}\u{7}def".to_string(),
+            category: C::Password,
+        };
+        let p = masked_preview(&hint, Lang::En);
+        assert!(!p.contains("def"));
+        assert!(!p.contains('\u{7}'));
+        assert_eq!(p, "…•••• (Password)");
+    }
+
+    #[test]
+    fn email_mask_shows_label_only() {
+        let text = concat!("mail ", "someone", "@example.com");
+        let hint = scan(text, &all()).mask_hint.unwrap();
+        assert_eq!(hint.category, C::Email);
+        assert_eq!(hint.visible_prefix, "");
+        assert_eq!(masked_preview(&hint, Lang::En), "…•••• (Email)");
+        let forged = MaskHint {
+            visible_prefix: "som".to_string(),
+            category: C::Email,
+        };
+        assert_eq!(masked_preview(&forged, Lang::En), "…•••• (Email)");
+    }
+
+    #[test]
     fn mask_hint_for_password_shows_label_not_value() {
         let text = concat!("pass", "word: ", "hunter2");
         let hint = scan(text, &all()).mask_hint.unwrap();
@@ -387,7 +425,11 @@ mod tests {
             };
             for lang in [Lang::En, Lang::Vi] {
                 let p = masked_preview(&hint, lang);
-                assert!(p.starts_with("abc…•••• ("));
+                if cat == C::Email {
+                    assert!(p.starts_with("…•••• ("));
+                } else {
+                    assert!(p.starts_with("abc…•••• ("));
+                }
                 assert!(p.ends_with(')'));
             }
         }
