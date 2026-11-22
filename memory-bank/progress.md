@@ -50,7 +50,7 @@ Phase 2 complete 2026-11-23 (Bitwarden/1Password rows n/a on the test machine; s
 
 | Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
 |---|---|---|---|---|---|---|---|---|
-| 200 Split capture.rs | task/200-split-capture | specialist | opus | next | | | | |
+| 200 Split capture.rs | task/200-split-capture | specialist | opus | in progress | | | | |
 
 ## Totals by model
 

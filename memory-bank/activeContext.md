@@ -7,7 +7,7 @@ Updated: 2026-11-22
 - **Phase 0 (discovery and architecture): complete**, pending owner approval of the blueprint.
 - **Phase 1 Foundation: COMPLETE (2026-11-22).** Tasks 001–011 and 013 merged; phase review 012 done (its one blocker, the bench, was a measurement artifact; fixed and re-measured in 013). Workspace: 263 tests pass, 2 benches ignored (median p95 17.5 ms worst-case corpus, 15.7 ms realistic).
 - **Phase 2 Windows capture: COMPLETE (2026-11-23).** Tasks 101–107, 103b, 109, 110 merged (PRs #1–#6); phase review 108 → fixes 110 (D-043), security-reviewer APPROVED. Real capture on Windows works headless (`dark-clipboard --headless`); markers verified with Darkshot 0.6.0 (end to end) and KeePassXC 2.8.0 (not stored); Bitwarden/1Password not available on the test machine (R-02 open for them). Real-clipboard rechecks pending for F-14 (Notepad) and the Task 110 image fixes (4K DIB, over-cap copy-back): owner manual rows in Phase 3.
-- **Next: Phase 3 Desktop shell (Slint).** Packages `docs/tasks/200…211` written at phase start (D-044). Order: 200 (split capture.rs) → 201 → 202 → 203 → 204 → 205 → 206 → 211 → 207 → 208 → 209 → 210. First demo for the owner after 204 (popup + search).
+- **Phase 3 Desktop shell (Slint): IN PROGRESS. Current: Task 200** (`task/200-split-capture`). Packages `docs/tasks/200…211` written at phase start (D-044). Order: 200 (split capture.rs) → 201 → 202 → 203 → 204 → 205 → 206 → 211 → 207 → 208 → 209 → 210. First demo for the owner after 204 (popup + search).
 - Git: remote `origin` = `github.com/tuanluu-agilityio/dark-clipboard` (public), pushed 2026-11-22 as is (owner, D-035). From Task 103b on, tasks merge via PR (`gh pr create` / `gh pr merge --merge --delete-branch`).
 
 ## Waiting on owner
