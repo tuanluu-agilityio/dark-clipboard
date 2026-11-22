@@ -27,4 +27,4 @@ pub use ids::{ClipId, CollectionId, TagId};
 pub use model::*;
 pub use preview::{image_preview, make_preview};
 pub use redact::Redacted;
-pub use time::{Clock, Timestamp};
+pub use time::{Clock, Timestamp, FAR_FUTURE};

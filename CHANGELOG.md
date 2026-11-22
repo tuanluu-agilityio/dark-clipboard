@@ -30,6 +30,7 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 - A clipboard change that replaced another before capture looked at it is no longer stored with the earlier app as its source.
 
 ### Known issues
+- Windows build uses the GUI subsystem (no console window). Interactive cmd and PowerShell do not wait for `dark-clipboard --toggle`, `--quit` or `--help`: output may appear after the prompt and `%ERRORLEVEL%` / `$LASTEXITCODE` are not the real exit code (use `start /wait` or `Start-Process -Wait`). `--headless` started from Explorer has no console or tray and stops only via `--quit` or Task Manager.
 - Windows verification covered KeePassXC 2.8.0 and Darkshot; Bitwarden, 1Password, Office and RDP are untested.
 - No UI yet: only the Windows developer binary (`dark-clipboard --headless`).
 - macOS and Linux behaviour is untested.

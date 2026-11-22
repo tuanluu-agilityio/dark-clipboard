@@ -99,6 +99,25 @@ messages! {
     UiCapturePrivate => ("Private mode: nothing is saved", "Chế độ riêng tư: không lưu gì"),
     UiCaptureUnavailable => ("Capture is unavailable", "Không thể ghi nhớ"),
     UiStarting => ("Starting...", "Đang khởi động..."),
+    // Tray icon and menu (Task 202)
+    TrayOpen => ("Open", "Mở"),
+    TrayPause => ("Pause capture", "Tạm dừng ghi nhớ"),
+    TrayPause5Min => ("5 minutes", "5 phút"),
+    TrayPause1Hour => ("1 hour", "1 giờ"),
+    TrayPauseUntilResumed => ("Until resumed", "Đến khi bật lại"),
+    TrayResume => ("Resume capture", "Tiếp tục ghi nhớ"),
+    TrayPrivate => ("Private mode", "Chế độ riêng tư"),
+    TraySettings => ("Settings...", "Cài đặt..."),
+    TrayQuit => ("Quit", "Thoát"),
+    TrayTipActive => ("Dark Clipboard: capturing", "Dark Clipboard: đang ghi nhớ"),
+    TrayTipPaused => ("Dark Clipboard: paused", "Dark Clipboard: đã tạm dừng"),
+    TrayTipPausedUntil => ("Dark Clipboard: paused until", "Dark Clipboard: tạm dừng đến"),
+    TrayTipPrivate => ("Dark Clipboard: private", "Dark Clipboard: riêng tư"),
+    TrayTipOff => ("Dark Clipboard: capture is off", "Dark Clipboard: chưa bật ghi nhớ"),
+    TrayTipFailed => (
+        "Dark Clipboard: capture unavailable",
+        "Dark Clipboard: không thể ghi nhớ"
+    ),
 }
 
 /// Messages allowed to read the same in both languages.

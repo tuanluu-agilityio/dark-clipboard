@@ -10,6 +10,13 @@ const MS_PER_DAY: i64 = 86_400_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Timestamp(pub i64);
 
+/// The last time that can be written and read back as RFC 3339 (`9999-12-31T23:59:59.999Z`).
+/// Use it for "until resumed" style open-ended times instead of `i64::MAX`.
+pub const FAR_FUTURE: Timestamp = Timestamp(253_402_300_799_999);
+
+/// `0000-01-01T00:00:00.000Z`: the first time with a four-digit year.
+const MIN_SERIALIZABLE_MS: i64 = -62_167_219_200_000;
+
 /// Source of the current time, injected so the core stays pure.
 pub trait Clock: Send + Sync {
     fn now(&self) -> Timestamp;
@@ -123,6 +130,13 @@ impl Timestamp {
 
 impl Serialize for Timestamp {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        // Text outside years 0000-9999 could not be read back, so refuse it: a failed save is
+        // better than a settings file that looks corrupt on the next start.
+        if !(MIN_SERIALIZABLE_MS..=FAR_FUTURE.0).contains(&self.0) {
+            return Err(serde::ser::Error::custom(
+                "timestamp outside years 0000-9999",
+            ));
+        }
         s.serialize_str(&self.to_rfc3339())
     }
 }
@@ -215,5 +229,36 @@ mod tests {
                 .0,
             base.0 + 123
         );
+    }
+
+    #[test]
+    fn far_future_round_trips_rfc3339_and_serde() {
+        assert_eq!(FAR_FUTURE, Timestamp(253_402_300_799_999));
+        assert_eq!(FAR_FUTURE.to_rfc3339(), "9999-12-31T23:59:59.999Z");
+        assert_eq!(
+            Timestamp::parse_rfc3339("9999-12-31T23:59:59.999Z"),
+            Ok(FAR_FUTURE)
+        );
+        let json = serde_json::to_string(&FAR_FUTURE).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Timestamp>(&json).unwrap(),
+            FAR_FUTURE
+        );
+        let first = Timestamp(MIN_SERIALIZABLE_MS);
+        assert_eq!(first.to_rfc3339(), "0000-01-01T00:00:00.000Z");
+        let json = serde_json::to_string(&first).unwrap();
+        assert_eq!(serde_json::from_str::<Timestamp>(&json).unwrap(), first);
+    }
+
+    #[test]
+    fn out_of_range_timestamp_does_not_serialize() {
+        for ms in [
+            i64::MAX,
+            FAR_FUTURE.0 + 1,
+            MIN_SERIALIZABLE_MS - 1,
+            i64::MIN,
+        ] {
+            assert!(serde_json::to_string(&Timestamp(ms)).is_err(), "{ms}");
+        }
     }
 }

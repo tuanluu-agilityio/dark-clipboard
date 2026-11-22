@@ -43,6 +43,8 @@ const KNOWN_EVENTS: &[&str] = &[
     "ipc_command",
     "ipc_dropped",
     "ipc_stopped",
+    "tray_failed",
+    "tray_quit",
 ];
 
 #[cfg(windows)]

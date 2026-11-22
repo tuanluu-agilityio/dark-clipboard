@@ -40,6 +40,29 @@ First run: 9 passed, 1 failed. `real_clipboard_write_text_roundtrip_vietnamese` 
 - KeePassXC 2.8.0 on Windows set all three Windows markers on at least one copy and is also on the built-in excluded list: risk R-02 is **mitigated** for KeePassXC; re-verify with skip-reason output (Phase 3 diagnostics). Still open for Bitwarden and 1Password (not tested).
 - Darkshot's Copy link is marked as well, so Dark Clipboard never stores Darkshot links.
 
+## Windows: tray and console (Task 202)
+
+All rows **untested** until the owner runs them (Windows 11, `cargo build`, run `target\debug\dark-clipboard.exe`).
+
+| Row | Expected | Result |
+|---|---|---|
+| Start the app from Explorer (double-click) | No console window; a tray icon appears | **untested** |
+| Start from a terminal | No new console window; the terminal prompt returns at once; `--help` and errors still print in that terminal | **untested** |
+| `--headless` in a terminal, then Ctrl+C | "running" line shows; Ctrl+C stops it cleanly | **untested** |
+| Tray icon at 100% and 150% display scale, dark and light taskbar | Glyph readable (clipboard outline) | **untested** |
+| Tooltip on hover | "Dark Clipboard: capturing" (or "capture is off" before the first-run Start) | **untested** |
+| Menu: Pause > 5 minutes | Icon shows pause bars; tooltip "paused until HH:MM" (local time, +5 min); Resume enabled | **untested** |
+| Wait for a 5 minute pause to end | Icon and tooltip return to normal by themselves | **untested** |
+| Menu: Pause > Until resumed, then Resume | Tooltip "paused"; Resume returns to normal | **untested** |
+| Menu: Private mode (check item) | Checked, icon changes, tooltip "private"; click again unchecks | **untested** |
+| Left-click the tray icon | Window toggles; right-click opens the menu | **untested** |
+| Menu: Settings... | Window shows (settings content arrives in Task 207) | **untested** |
+| Menu: Quit | Icon disappears at once; process ends within 2 s | **untested** |
+| Vietnamese Windows UI language (first run) | Menu and tooltip in Vietnamese | **untested** |
+| `dark-clipboard --toggle`, `--quit`, `--help` from interactive cmd or PowerShell | Known limit (GUI subsystem): the shell does not wait, so output may appear after the next prompt and `%ERRORLEVEL%` / `$LASTEXITCODE` are not the real exit code. Use `start /wait` or `Start-Process -Wait -PassThru` to get it | **untested** |
+| `--headless` started from Explorer or a shortcut | Known limit: no console and no tray; it stops only with `--quit` (from another start) or Task Manager | **untested** |
+| Explorer restarts (taskbar crash) | Known limit: the icon may vanish until the app restarts (not handled in this task) | **untested** |
+
 ## macOS
 
 All rows **untested** (no hardware, Q-04).

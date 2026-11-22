@@ -1261,6 +1261,21 @@ mod tests {
     }
 
     #[test]
+    fn indefinite_pause_is_saved_and_loads_back() {
+        let h = start(&[], None);
+        let a = h.app();
+        let mode = CaptureMode::Paused {
+            until: darkclip_core::FAR_FUTURE,
+        };
+        a.set_capture_mode(&Caller::Ui, mode).unwrap();
+        assert_eq!(a.status().capture, CaptureStatus::Paused);
+        let (loaded, outcome) =
+            crate::settings::Settings::load(&h.dir.path().join("settings.json"));
+        assert_eq!(outcome, crate::settings::LoadOutcome::Loaded);
+        assert_eq!(loaded.privacy.mode, mode);
+    }
+
+    #[test]
     fn newer_settings_file_is_never_overwritten() {
         let mut newer = String::new();
         let h = start_with_file(&[], |p| {

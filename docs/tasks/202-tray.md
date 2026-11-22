@@ -12,6 +12,8 @@
 3. Mode changes go through `App` (actor commands) on the worker thread; the tray updates from `AppEvent::ModeChanged` and status.
 4. Quit performs the same orderly shutdown as Task 106 (≤ 2 s) and removes the tray icon.
 
+5. **No console window for the UI app** (Task 201 open issue): build with `#![windows_subsystem = "windows"]`; for `--headless`, `--help`, `--toggle`, `--quit` and errors, attach to the parent console (`AttachConsole(ATTACH_PARENT_PROCESS)`) so CLI output and Ctrl+C still work from a terminal. Integration tests that read stdout/exit codes must keep passing.
+
 ## Tests
 View-model unit tests: state → icon id + tooltip key; menu item enabled/checked states per mode. Manual checklist rows added to `docs/testing/platform-checklist.md` (Windows, untested until the owner runs them).
 
