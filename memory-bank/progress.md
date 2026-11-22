@@ -52,7 +52,7 @@ Phase 2 complete 2026-11-23 (Bitwarden/1Password rows n/a on the test machine; s
 |---|---|---|---|---|---|---|---|---|
 | 200 Split capture.rs | task/200-split-capture | specialist | opus | done | 132,555 | 50,869 (security-reviewer opus: APPROVED, mechanical equivalence check) | 0 | 183,424 |
 | 201 Desktop skeleton | task/201-desktop-skeleton | builder | sonnet | done | 147,056 | 116,203 (reviewer opus ×2: CR (2 blocking: shutdown hang, CI) → APPROVED) | 32,543 | 295,802 |
-| 202 Tray | task/202-tray | builder | sonnet | next | | | | |
+| 202 Tray | task/202-tray | builder | sonnet | in progress | | | | |
 
 ## Totals by model
 
