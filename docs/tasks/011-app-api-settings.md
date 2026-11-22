@@ -38,5 +38,14 @@ pub enum LoadOutcome { Loaded, Defaulted, RecoveredFromCorrupt { backup: PathBuf
 - `pin_clip` on a masked clip returns `InvalidArgument("masked clips cannot be pinned")` (pinning would not extend its expiry). Test `pin_masked_clip_rejected`.
 - Text searches return `next_cursor: null` in the envelope; the API passes the clamped limit (MCP ≤ 50 enforced here, storage ≤ 200).
 
+## Added from Task 010 reviews (D-027)
+- `ApiError` already exists in `crates/darkclip-app/src/events.rs` with the exact variants above (Display only). Add `code()` there (or move it to `api.rs` and re-export); keep the variants.
+- The masked preview language is fixed to `MASK_LANG = Lang::En` in `capture.rs`. Pass the UI language from `Settings` into the actor (a `CaptureConfig`/`UpdatePolicy` field) and remove the constant. Test `masked_preview_uses_settings_language` (vi).
+- S1: in `capture.rs` `run_retention`, when `storage.next_expiry()` returns `Err` after a successful retention, set `next_expiry = None` (fall back to the 10-minute timer). Test via the existing retention hooks if feasible; otherwise state why.
+- S2: in `excluded_app_after_other_copy_in_window_is_skipped`, assert on every attempt that no stored clip has the excluded preview.
+- S3: make `RetentionHooks.attempts` `cfg(test)`-only.
+- Map `AppEvent::Unavailable` to an `App` status the UI can show (`App::status() -> AppStatus { capture: Active | Paused | Private | Unavailable(&'static str) }`).
+Files added for these: `crates/darkclip-app/src/capture.rs`, `config.rs`, `events.rs`.
+
 ## Not doing
 CLI binary, MCP server, IPC (P2).

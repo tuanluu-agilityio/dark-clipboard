@@ -18,6 +18,15 @@ Updated: 2026-11-22
 | Q-04 | Test hardware for Phase 4: Mac (macOS 26), Linux with KDE, GNOME and a wlroots compositor | Phase 4 |
 | Q-05 | Is GNOME Wayland a must for 0.1.0? (affects whether to build a Shell extension) | Phase 4 scope |
 
+## Follow-ups recorded (not yet scheduled to a task)
+- F-01: put `source` into `ChangeSignal`, resolved on the monitor thread at OS-signal time (Phase 2 Task 101/105; platform interface change). Closes the dequeue-time race for excluded apps.
+- F-02: StorageFull → retention then retry once (system-overview §3) is not implemented.
+- F-03: a `sequence()` error at resume leaves the current seq unmarked (possible backfill if a stale signal follows).
+- F-04: `upsert_clip` takes `NewClip` by value and cannot wipe the reps on error; consider `&NewClip` or a zeroize-on-drop byte type in core.
+- F-05: images are hashed without decoded RGBA and without thumbnails (no `png` decode in app yet); DIB vs PNG copies of one image do not dedupe. Phase 2 Task 103 should decode in the adapter or app.
+- F-06: unix-only permission and fsync paths in storage have never run (no Unix machine).
+- F-07: search bench p95 ≈ 24–25 ms against a 30 ms budget.
+
 ## Top risks (full list: `docs/plans/roadmap.md`)
 
 R-01 GNOME data-control unknown · R-02 password managers without markers · R-03 macOS pasteboard privacy prompt · R-04 Slint latency/IME · R-08 licence.
