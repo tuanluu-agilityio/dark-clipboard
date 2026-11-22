@@ -84,7 +84,7 @@ if ($bad) { exit 1 }
 
 Write-Host '== no window-title capture (SR-11)'
 foreach ($f in $rs) {
-    foreach ($h in @(Select-String -LiteralPath $f.FullName -Pattern '\bGetWindowText(W|A|Length\w*)?\b|_NET_WM_NAME|\bkCGWindowName\b')) {
+    foreach ($h in @(Select-String -LiteralPath $f.FullName -Pattern '\b(GetWindowText(W|A|Length\w*)?|InternalGetWindowText)\b|_NET_WM_NAME|\bkCGWindowName\b')) {
         Write-Host "CHECK FAILED: window title API in $(Rel $f):$($h.LineNumber)"; $bad = $true
     }
 }

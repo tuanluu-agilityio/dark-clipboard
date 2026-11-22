@@ -7,7 +7,6 @@
 use crate::win::{self, MessageWindow, RawWindow};
 use darkclip_core::{ClipboardSource, Timestamp};
 use darkclip_platform::{ChangeSignal, ClipboardMonitor, PlatformError};
-use std::rc::Rc;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
@@ -31,22 +30,25 @@ fn now() -> Timestamp {
     Timestamp(ms)
 }
 
+/// The resolver is shared with the monitor thread, so a restart keeps it even when a failed
+/// stop left the old thread detached (F-08).
+type SharedResolver = Arc<Mutex<SignalSourceFn>>;
+
 struct Running {
     window: WindowSlot,
-    /// Returns the resolver so the monitor can be started again.
-    thread: JoinHandle<Option<SignalSourceFn>>,
+    thread: JoinHandle<()>,
 }
 
 /// Win32 clipboard monitor (ADR-0002).
 pub struct WinMonitor {
-    resolver: Option<SignalSourceFn>,
+    resolver: SharedResolver,
     running: Option<Running>,
 }
 
 impl WinMonitor {
     pub fn new(resolver: SignalSourceFn) -> Self {
         Self {
-            resolver: Some(resolver),
+            resolver: Arc::new(Mutex::new(resolver)),
             running: None,
         }
     }
@@ -57,21 +59,24 @@ impl WinMonitor {
     }
 }
 
-/// Body of the monitor thread. Returns the resolver for a later restart.
+/// Body of the monitor thread.
 fn monitor_thread(
-    resolver: SignalSourceFn,
+    resolver: &SharedResolver,
     tx: Sender<ChangeSignal>,
     slot: &WindowSlot,
     ready: &Sender<Result<(), PlatformError>>,
-) -> Option<SignalSourceFn> {
-    let resolver = Rc::new(resolver);
+) {
     let on_update: win::UpdateHandler = {
-        let resolver = Rc::clone(&resolver);
+        let resolver = Arc::clone(resolver);
         Box::new(move || {
+            let source = {
+                let f = resolver.lock().unwrap_or_else(PoisonError::into_inner);
+                f()
+            };
             let signal = ChangeSignal {
                 seq: u64::from(win::clipboard_sequence()),
                 at: now(),
-                source: resolver(),
+                source,
             };
             // A dropped receiver ends the loop cleanly.
             tx.send(signal).is_ok()
@@ -90,7 +95,6 @@ fn monitor_thread(
             drop(window);
         }
     }
-    Rc::into_inner(resolver)
 }
 
 impl ClipboardMonitor for WinMonitor {
@@ -99,13 +103,13 @@ impl ClipboardMonitor for WinMonitor {
         if self.running.is_some() {
             return Ok(());
         }
-        let resolver = self.resolver.take().unwrap_or_else(|| Box::new(|| None));
+        let resolver = Arc::clone(&self.resolver);
         let slot: WindowSlot = Arc::new(Mutex::new(None));
         let (ready_tx, ready_rx) = mpsc::channel();
         let thread_slot = Arc::clone(&slot);
         let thread = std::thread::Builder::new()
             .name("darkclip-win-monitor".into())
-            .spawn(move || monitor_thread(resolver, tx, &thread_slot, &ready_tx))
+            .spawn(move || monitor_thread(&resolver, tx, &thread_slot, &ready_tx))
             .map_err(|_| PlatformError::Unsupported("cannot start monitor thread"))?;
         match ready_rx.recv() {
             Ok(Ok(())) => {
@@ -116,11 +120,11 @@ impl ClipboardMonitor for WinMonitor {
                 Ok(())
             }
             Ok(Err(e)) => {
-                self.resolver = thread.join().ok().flatten();
+                let _ = thread.join();
                 Err(e)
             }
             Err(_) => {
-                self.resolver = thread.join().ok().flatten();
+                let _ = thread.join();
                 Err(PlatformError::Unsupported("monitor thread ended"))
             }
         }
@@ -137,7 +141,7 @@ impl ClipboardMonitor for WinMonitor {
             w.is_none_or(|w| w.post_stop())
         };
         if posted {
-            self.resolver = running.thread.join().ok().flatten();
+            let _ = running.thread.join();
         }
         // A failed post (message queue full) leaves the thread detached rather than blocking
         // the caller; its window is released when the thread ends or the process exits.
