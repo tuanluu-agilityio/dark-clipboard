@@ -273,6 +273,127 @@ fn encode_png(rgba: &[u8], w: u32, h: u32) -> Result<Zeroizing<Vec<u8>>, DibErro
     Ok(out)
 }
 
+/// `CF_DIBV5` and `CF_DIB` renderings of one PNG (Task 104 copy-back), wiped on drop.
+pub(crate) struct DibPair {
+    /// Packed DIB: `BITMAPV5HEADER`, 32-bit `BI_BITFIELDS` BGRA with an alpha mask.
+    pub v5: Zeroizing<Vec<u8>>,
+    /// Packed DIB: `BITMAPINFOHEADER`, 32-bit `BI_RGB` BGRA (alpha in the reserved byte).
+    pub dib: Zeroizing<Vec<u8>>,
+}
+
+/// Working memory the PNG decoder may use besides the output (D-035).
+const DECODER_WORKING_BYTES: usize = 8 * 1024 * 1024;
+const BITMAPV5HEADER_LEN: u32 = 124;
+const BITMAPINFOHEADER_LEN: u32 = 40;
+/// `LCS_sRGB` ('sRGB').
+const LCS_SRGB: u32 = 0x7352_4742;
+/// `LCS_GM_IMAGES`.
+const LCS_GM_IMAGES: u32 = 4;
+
+/// Decodes a PNG and renders it as `CF_DIBV5` + `CF_DIB` (copy-back). Not capped here beyond
+/// [`MAX_DIMENSION`] and a DIB that fits a `u32` size: the clip was capped at capture.
+/// Metadata chunks (iCCP, text) are ignored. Every pixel buffer is wiped on drop. Never panics
+/// on a malformed PNG (GC-10); errors carry no pixel data (GC-06).
+pub(crate) fn png_to_dibs(png_bytes: &[u8]) -> Result<DibPair, DibError> {
+    const CORRUPT: DibError = DibError::Malformed("not a decodable PNG");
+    let mut decoder = png::Decoder::new_with_limits(
+        std::io::Cursor::new(png_bytes),
+        png::Limits {
+            bytes: DECODER_WORKING_BYTES,
+        },
+    );
+    decoder.set_ignore_iccp_chunk(true);
+    decoder.set_ignore_text_chunk(true);
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let info = decoder.read_header_info().map_err(|_| CORRUPT)?;
+    let (w, h) = (info.width, info.height);
+    if w == 0 || h == 0 || w > MAX_DIMENSION || h > MAX_DIMENSION {
+        return Err(DibError::Malformed("dimension out of range"));
+    }
+    let pixel_bytes = u64::from(w) * u64::from(h) * 4;
+    // The DIB header stores the image size as a u32.
+    let size_image =
+        u32::try_from(pixel_bytes).map_err(|_| DibError::TooLarge { bytes: pixel_bytes })?;
+    let px_len =
+        usize::try_from(pixel_bytes).map_err(|_| DibError::TooLarge { bytes: pixel_bytes })?;
+    let mut reader = decoder.read_info().map_err(|_| CORRUPT)?;
+    let (color, depth) = reader.output_color_type();
+    if depth != png::BitDepth::Eight {
+        return Err(CORRUPT);
+    }
+    let channels: usize = match color {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        png::ColorType::Indexed => return Err(CORRUPT),
+    };
+    // At most 4 bytes per pixel: bounded by `pixel_bytes`.
+    let size = reader.output_buffer_size().ok_or(CORRUPT)?;
+    let mut buf = Zeroizing::new(vec![0u8; size]);
+    let frame = reader.next_frame(&mut buf).map_err(|_| CORRUPT)?;
+    let line = frame.line_size;
+    let (wu, hu) = (w as usize, h as usize);
+    if line < wu.saturating_mul(channels) {
+        return Err(CORRUPT);
+    }
+
+    let mut v5 = Zeroizing::new(Vec::with_capacity(
+        (BITMAPV5HEADER_LEN as usize).saturating_add(px_len),
+    ));
+    let mut dib = Zeroizing::new(Vec::with_capacity(
+        (BITMAPINFOHEADER_LEN as usize).saturating_add(px_len),
+    ));
+    push_header(&mut v5, BITMAPV5HEADER_LEN, w, h, BI_BITFIELDS, size_image);
+    for v in [
+        0x00FF_0000u32,
+        0x0000_FF00,
+        0x0000_00FF,
+        0xFF00_0000,
+        LCS_SRGB,
+    ] {
+        v5.extend_from_slice(&v.to_le_bytes());
+    }
+    v5.extend_from_slice(&[0u8; 36 + 12]); // bV5Endpoints, bV5Gamma{Red,Green,Blue}
+    v5.extend_from_slice(&LCS_GM_IMAGES.to_le_bytes());
+    v5.extend_from_slice(&[0u8; 12]); // bV5ProfileData, bV5ProfileSize, bV5Reserved
+    push_header(&mut dib, BITMAPINFOHEADER_LEN, w, h, BI_RGB, size_image);
+
+    // Bottom-up rows, BGRA (straight alpha). 32-bit rows need no padding.
+    for y in (0..hu).rev() {
+        let start = y.checked_mul(line).ok_or(CORRUPT)?;
+        let row = buf
+            .get(start..start.saturating_add(wu * channels))
+            .ok_or(CORRUPT)?;
+        for p in row.chunks_exact(channels) {
+            let px = match *p {
+                [g] => [g, g, g, 255],
+                [g, a] => [g, g, g, a],
+                [r, g, b] => [b, g, r, 255],
+                [r, g, b, a] => [b, g, r, a],
+                _ => return Err(CORRUPT),
+            };
+            v5.extend_from_slice(&px);
+            dib.extend_from_slice(&px);
+        }
+    }
+    Ok(DibPair { v5, dib })
+}
+
+/// The 40 bytes shared by `BITMAPINFOHEADER` and `BITMAPV5HEADER`: size, width, height
+/// (positive: bottom-up), 1 plane, 32 bits, compression, image size, no resolution, no
+/// colour table.
+fn push_header(out: &mut Vec<u8>, header: u32, w: u32, h: u32, compression: u32, size: u32) {
+    out.extend_from_slice(&header.to_le_bytes());
+    out.extend_from_slice(&w.to_le_bytes());
+    out.extend_from_slice(&h.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&32u16.to_le_bytes());
+    out.extend_from_slice(&compression.to_le_bytes());
+    out.extend_from_slice(&size.to_le_bytes());
+    out.extend_from_slice(&[0u8; 16]); // X/Y pixels per metre, colours used, important
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -585,5 +706,100 @@ mod tests {
         }
         let d = dib(40, 1, 1, 24, BI_BITFIELDS, Some([1, 2, 4, 0]), &[0; 4]);
         assert!(matches!(dib_to_png(&d, BIG), Err(DibError::Unsupported(_))));
+    }
+
+    /// A PNG of `w` x `h` RGBA pixels.
+    fn png_rgba(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut out, w, h);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_depth(png::BitDepth::Eight);
+            let mut wr = enc.write_header().unwrap();
+            wr.write_image_data(rgba).unwrap();
+        }
+        out
+    }
+
+    #[test]
+    fn png_to_dibv5_roundtrip() {
+        // 3x2, distinct pixels, varied alpha (straight, not premultiplied).
+        let rgba: Vec<u8> = vec![
+            255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 0, //
+            10, 20, 30, 40, 50, 60, 70, 255, 200, 100, 50, 1,
+        ];
+        let pair = png_to_dibs(&png_rgba(3, 2, &rgba)).unwrap();
+
+        // CF_DIBV5: 124-byte header, 32-bit BI_BITFIELDS with an alpha mask, sRGB.
+        let v5 = &pair.v5[..];
+        assert_eq!(u32_at(v5, 0), Some(124));
+        assert_eq!(i32_at(v5, 4), Some(3));
+        assert_eq!(i32_at(v5, 8), Some(2), "bottom-up");
+        assert_eq!(u16_at(v5, 12), Some(1));
+        assert_eq!(u16_at(v5, 14), Some(32));
+        assert_eq!(u32_at(v5, 16), Some(BI_BITFIELDS));
+        assert_eq!(u32_at(v5, 20), Some(3 * 2 * 4));
+        assert_eq!(u32_at(v5, 52), Some(0xFF00_0000));
+        assert_eq!(u32_at(v5, 56), Some(0x7352_4742), "LCS_sRGB");
+        assert_eq!(v5.len(), 124 + 3 * 2 * 4);
+        let img = dib_to_png(v5, BIG).unwrap();
+        assert_eq!((img.width, img.height), (3, 2));
+        let (_, _, back) = decode(&img.png);
+        assert_eq!(back, rgba);
+
+        // CF_DIB: 40-byte header, 32-bit BI_RGB; read back as opaque with equal colours.
+        let d = &pair.dib[..];
+        assert_eq!(u32_at(d, 0), Some(40));
+        assert_eq!(u16_at(d, 14), Some(32));
+        assert_eq!(u32_at(d, 16), Some(BI_RGB));
+        assert_eq!(d.len(), 40 + 3 * 2 * 4);
+        let img = dib_to_png(d, BIG).unwrap();
+        let (_, _, back) = decode(&img.png);
+        let opaque: Vec<u8> = rgba
+            .chunks(4)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect();
+        assert_eq!(back, opaque);
+    }
+
+    #[test]
+    fn png_to_dibs_converts_rgb_and_gray16() {
+        // RGB without alpha: opaque.
+        let mut out = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut out, 1, 1);
+            enc.set_color(png::ColorType::Rgb);
+            enc.set_depth(png::BitDepth::Eight);
+            enc.write_header()
+                .unwrap()
+                .write_image_data(&[1, 2, 3])
+                .unwrap();
+        }
+        let pair = png_to_dibs(&out).unwrap();
+        let (_, _, back) = decode(&dib_to_png(&pair.v5, BIG).unwrap().png);
+        assert_eq!(back, vec![1, 2, 3, 255]);
+        // 16-bit grayscale with alpha: stripped to 8 bits.
+        let mut out = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut out, 1, 1);
+            enc.set_color(png::ColorType::GrayscaleAlpha);
+            enc.set_depth(png::BitDepth::Sixteen);
+            enc.write_header()
+                .unwrap()
+                .write_image_data(&[0x80, 0, 0x40, 0])
+                .unwrap();
+        }
+        let pair = png_to_dibs(&out).unwrap();
+        let (_, _, back) = decode(&dib_to_png(&pair.v5, BIG).unwrap().png);
+        assert_eq!(back, vec![0x80, 0x80, 0x80, 0x40]);
+    }
+
+    #[test]
+    fn png_to_dibs_rejects_garbage() {
+        assert!(png_to_dibs(b"not a png").is_err());
+        assert!(png_to_dibs(&[]).is_err());
+        let mut cut = png_rgba(2, 2, &[7; 16]);
+        cut.truncate(cut.len() - 20);
+        assert!(png_to_dibs(&cut).is_err());
     }
 }
