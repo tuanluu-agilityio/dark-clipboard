@@ -63,12 +63,14 @@ fn now() -> Timestamp {
     Timestamp(ms)
 }
 
+/// Sends a signal carrying the current owner, as a monitor resolving at signal time does.
 fn emit(st: &State) {
     if let Some(tx) = &st.tx {
         // A closed receiver is a normal shutdown.
         let _ = tx.send(ChangeSignal {
             seq: st.seq,
             at: now(),
+            source: st.source.clone(),
         });
     }
 }
@@ -147,6 +149,20 @@ impl FakeHandle {
         st.markers = c.markers;
         st.source = c.source;
         emit(&st);
+        st.seq
+    }
+
+    /// Like `copy`, then atomically sets the owner to `later`: the signal carries the copy's
+    /// source, while every later `resolve` or `snapshot_meta` sees `later` (the owner changed
+    /// between the notification and the actor's dequeue).
+    pub fn copy_then_set_source(&self, c: FakeCopy, later: Option<ClipboardSource>) -> u64 {
+        let mut st = lock(&self.state);
+        st.seq += 1;
+        st.formats = c.formats;
+        st.markers = c.markers;
+        st.source = c.source;
+        emit(&st);
+        st.source = later;
         st.seq
     }
 
@@ -395,6 +411,29 @@ mod tests {
         let sig = rx.try_recv().unwrap();
         assert_eq!(sig.seq, seq);
         assert!(rx.try_recv().is_err(), "exactly one signal");
+    }
+
+    #[test]
+    fn fake_copy_signal_carries_source() {
+        let (b, h, rx) = started();
+        let a = darkclip_core::ClipboardSource {
+            app_id: "a.exe".to_string(),
+            app_name: None,
+            platform: darkclip_core::Platform::Windows,
+            confidence: darkclip_core::SourceConfidence::Owner,
+        };
+        let mut c = text_copy("x");
+        c.source = Some(a.clone());
+        h.copy(c);
+        assert_eq!(rx.try_recv().unwrap().source, Some(a.clone()));
+        // The owner changes after the signal: the signal keeps the copy's source.
+        let mut c = text_copy("y");
+        c.source = Some(a.clone());
+        h.copy_then_set_source(c, None);
+        assert_eq!(rx.try_recv().unwrap().source, Some(a));
+        assert!(b.source.resolve().is_none());
+        h.copy(text_copy("z"));
+        assert_eq!(rx.try_recv().unwrap().source, None);
     }
 
     #[test]

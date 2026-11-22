@@ -8,10 +8,16 @@ use darkclip_core::{ClipboardSource, Mime, RawRepresentation, Timestamp};
 use std::sync::mpsc::Sender;
 
 /// One change notification from the platform event source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `source` is the app that owned the clipboard when the change was observed, resolved on
+/// the monitor thread at notification time (it is more reliable then than at dequeue).
+/// `None` when the backend cannot resolve at signal time; the actor then falls back to
+/// `SourceResolver::resolve()` (D-031). Sources are app ids, never content.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangeSignal {
     pub seq: u64,
     pub at: Timestamp,
+    pub source: Option<ClipboardSource>,
 }
 
 /// An offered format: platform name, normalized MIME if known, size if known.

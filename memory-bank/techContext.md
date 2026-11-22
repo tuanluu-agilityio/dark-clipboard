@@ -28,7 +28,7 @@ Updated: 2026-11-22
 | `sha2` | core | content hashing |
 | `rusqlite` 0.43 (bundled SQLite 3.54.1) | storage | SQLite + FTS5 |
 | `png` | storage/app | thumbnails, DIB→PNG |
-| `windows` 0.62 | darkclip-windows | Win32 clipboard (spike-proven) |
+| `windows` 0.62.2 (cfg(windows) only, default features off; added Task 101) | darkclip-windows | Win32 clipboard (spike-proven) |
 | `objc2-app-kit` | darkclip-macos | NSPasteboard (Phase 4) |
 | `x11rb`, `wayland-client`, `wayland-protocols(-wlr)` | darkclip-linux | X11/Wayland (Phase 4) |
 | `slint` 1.x, `global-hotkey`, `tray-icon` (Win/macOS), `ksni` (Linux) | apps/desktop | UI shell (ADR-0001) |

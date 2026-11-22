@@ -32,8 +32,8 @@ Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers sub
 
 | Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
 |---|---|---|---|---|---|---|---|---|
-| 101 Windows monitor | task/101-windows-monitor | specialist | opus | in progress | | | | |
-| 105 Windows source | task/105-windows-source | builder | sonnet | pending | | | | |
+| 101 Windows monitor | task/101-windows-monitor | specialist | opus | done | 144,728 | 58,984 (reviewer opus: APPROVED, 3 nits) | 0 | 203,712 |
+| 105 Windows source | task/105-windows-source | builder | sonnet | in progress | | | | |
 | 102 Windows snapshot_meta | task/102-windows-snapshot-meta | specialist | opus | pending | | | | |
 | 103 Windows read | task/103-windows-read | specialist | opus | pending | | | | |
 | 103b App image decode | task/103b-app-image-decode | builder | sonnet | pending | | | | |
@@ -46,7 +46,7 @@ Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers sub
 
 | Model | Tokens |
 |---|---|
-| opus | 3,370,393 |
+| opus | 3,574,105 |
 | sonnet | 1,751,949 |
 | haiku | 0 |
-| **Total** | **5,122,342** (subagents only; orchestrator not measured) |
+| **Total** | **5,326,054** (subagents only; orchestrator not measured) |

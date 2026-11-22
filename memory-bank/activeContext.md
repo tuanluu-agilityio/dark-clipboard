@@ -6,7 +6,7 @@ Updated: 2026-11-22
 
 - **Phase 0 (discovery and architecture): complete**, pending owner approval of the blueprint.
 - **Phase 1 Foundation: COMPLETE (2026-11-22).** Tasks 001–011 and 013 merged; phase review 012 done (its one blocker, the bench, was a measurement artifact; fixed and re-measured in 013). Workspace: 263 tests pass, 2 benches ignored (median p95 17.5 ms worst-case corpus, 15.7 ms realistic).
-- **Phase 2 Windows capture: IN PROGRESS.** Task packages `docs/tasks/101…108` + `103b` written (D-031). Order: 101 → 105 → 102 → 103 → 103b → 104 → 106 → 107 → 108. **Current: Task 101** (`task/101-windows-monitor`). Task 107 needs the owner at the machine. Real-clipboard-writing tests are `#[ignore]` and not run by agents.
+- **Phase 2 Windows capture: IN PROGRESS.** Task packages `docs/tasks/101…108` + `103b` written (D-031). Order: 101 → 105 → 102 → 103 → 103b → 104 → 106 → 107 → 108. Task 101 done (monitor thread, `ChangeSignal.source`). **Current: Task 105** (`task/105-windows-source`). Task 107 needs the owner at the machine. Real-clipboard-writing tests are `#[ignore]` and not run by agents.
 - Git: local only (D-013). Branch `main`; Phase 0 is the first commit. No remote yet: tasks merge locally with `git merge --no-ff`.
 
 ## Waiting on owner
@@ -20,7 +20,8 @@ Updated: 2026-11-22
 | Q-05 | Is GNOME Wayland a must for 0.1.0? (affects whether to build a Shell extension) | Phase 4 scope |
 
 ## Follow-ups recorded (not yet scheduled to a task)
-- F-01: put `source` into `ChangeSignal`, resolved on the monitor thread at OS-signal time (Phase 2 Task 101/105; platform interface change). Closes the dequeue-time race for excluded apps.
+- F-08 (Task 101 review nits, for 105/106): if `post_stop` fails the monitor thread is detached with its listener and a restart uses a `|| None` resolver; `start()` while running silently drops the new `tx`; `Win32_System_Memory` feature only used by test code. Non-Windows build of `darkclip-windows` unverified (no other target installed).
+- F-01 (done in 101): put `source` into `ChangeSignal`, resolved on the monitor thread at OS-signal time (Phase 2 Task 101/105; platform interface change). Closes the dequeue-time race for excluded apps.
 - F-02: StorageFull → retention then retry once (system-overview §3) is not implemented.
 - F-03: a `sequence()` error at resume leaves the current seq unmarked (possible backfill if a stale signal follows).
 - F-04: `upsert_clip` takes `NewClip` by value and cannot wipe the reps on error; consider `&NewClip` or a zeroize-on-drop byte type in core.

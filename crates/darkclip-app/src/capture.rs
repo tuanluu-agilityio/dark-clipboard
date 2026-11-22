@@ -375,8 +375,9 @@ fn wipe_reps(reps: &mut [RawRepresentation]) {
 /// A burst of change signals that is waiting for its quiet period.
 struct Pending {
     seq: u64,
-    /// Source at the first signal for `seq` (the owner may be gone by the last one).
-    source: Option<ClipboardSource>,
+    /// Every distinct source the signals for `seq` carried, in order; the first is the
+    /// primary (the owner may be gone by the last signal).
+    sources: Vec<ClipboardSource>,
     /// First signal of the burst, for the `max_burst_wait` cap.
     first_at: Instant,
     due: Instant,
@@ -552,6 +553,13 @@ impl Actor {
                 let due = self.due_at(now, p.first_at);
                 if let Some(p) = &mut self.pending {
                     p.due = due;
+                    // A later signal of the same change may name another owner: it is
+                    // checked too (`decide_all_sources`), never made primary.
+                    if let Some(src) = s.source {
+                        if !p.sources.contains(&src) {
+                            p.sources.push(src);
+                        }
+                    }
                 }
                 return;
             }
@@ -563,9 +571,12 @@ impl Actor {
         // A different change: never carry the previous change's source over to it. The
         // burst start is kept so the cap still bounds the wait.
         let first_at = self.pending.take().map_or(now, |p| p.first_at);
+        // The signal's source (resolved at notification time) is primary; resolving now is
+        // only the fallback for backends that cannot resolve at signal time (D-031).
+        let source = s.source.or_else(|| self.source.resolve());
         self.pending = Some(Pending {
             seq: s.seq,
-            source: self.source.resolve(),
+            sources: source.into_iter().collect(),
             first_at,
             due: self.due_at(now, first_at),
         });
@@ -644,7 +655,7 @@ impl Actor {
         };
         // Every source seen for this change; the first one seen is the primary.
         let mut seen: Vec<ClipboardSource> = Vec::new();
-        for s in [carried, p.source, meta.source].into_iter().flatten() {
+        for s in carried.into_iter().chain(p.sources).chain(meta.source) {
             if !seen.contains(&s) {
                 seen.push(s);
             }
@@ -1628,15 +1639,6 @@ mod tests {
         }
     }
 
-    /// Waits until the actor has resolved the source `n` times (it has dequeued a signal).
-    fn wait_resolved(h: &H, n: u32) {
-        let deadline = Instant::now() + WAIT;
-        while h.fake.resolve_calls() < n {
-            assert!(Instant::now() < deadline, "source never resolved");
-            std::thread::yield_now();
-        }
-    }
-
     fn excluded_copy(s: &str) -> FakeCopy {
         let mut c = text_copy(s);
         // In the default exclusion list; case differs on purpose (Windows match is insensitive).
@@ -1669,8 +1671,8 @@ mod tests {
             let mut c = text_copy("notepad text");
             c.source = Some(src("notepad.exe"));
             h.fake.copy(c);
-            // The actor has taken the first signal and resolved notepad.exe; the window is open.
-            wait_resolved(&h, 1);
+            // The signal carries notepad.exe (resolved at signal time, F-01), so no sync with
+            // the actor's dequeue is needed before the next copy.
             h.fake.copy(excluded_copy("vault entry"));
             let seen = h.wait_skip(SkipReason::ExcludedApp);
             // Every attempt, also one whose window closed early: the excluded copy is never stored.
@@ -1694,8 +1696,8 @@ mod tests {
                 slow_cfg(),
                 |_| {},
             );
+            // The signal carries the excluded owner; no sync with the dequeue is needed.
             h.fake.copy(excluded_copy("vault entry"));
-            wait_resolved(&h, 1);
             let mut c = text_copy("notepad text");
             c.source = Some(src("notepad.exe"));
             h.fake.copy(c);
@@ -1772,12 +1774,67 @@ mod tests {
     fn excluded_source_seen_at_any_point_of_the_change_skips() {
         // The first-signal source is excluded, the snapshot's owner is not (or is gone).
         let h = start(PrivacyPolicy::default());
+        // The signal carries the excluded owner (F-01); the owner may be gone at dequeue.
         h.fake.copy(excluded_copy("vault entry"));
-        wait_resolved(&h, 1);
         h.fake.clear_source();
         let seen = h.wait_skip(SkipReason::ExcludedApp);
         assert!(no_store_events(&seen), "{seen:?}");
         assert_eq!(h.fake.read_calls(), 0);
+    }
+
+    #[test]
+    fn signal_source_is_primary_over_dequeue_resolve() {
+        // The signal carries A (resolved on the monitor thread); the owner is B by the
+        // time the actor dequeues and snapshots.
+        let h = start(PrivacyPolicy::default());
+        let mut c = text_copy("from app a");
+        c.source = Some(src("a.exe"));
+        h.fake.copy_then_set_source(c, Some(src("b.exe")));
+        let (id, _) = h.wait_added();
+        let clip = h.ro().get_clip(&id).unwrap().unwrap();
+        assert_eq!(
+            clip.source.as_ref().map(|s| s.app_id.as_str()),
+            Some("a.exe")
+        );
+        // The signal had a source: no resolve at dequeue.
+        assert_eq!(h.fake.resolve_calls(), 0);
+        // B is still checked against excluded apps.
+        let mut c = text_copy("vault entry");
+        c.source = Some(src("a.exe"));
+        h.fake.copy_then_set_source(c, Some(src("KeePassXC.exe")));
+        let seen = h.wait_skip(SkipReason::ExcludedApp);
+        assert!(no_store_events(&seen), "{seen:?}");
+        assert_eq!(h.fake.read_calls(), 1);
+        assert_eq!(h.fake.resolve_calls(), 0);
+        assert_eq!(h.clip_count(), 1);
+    }
+
+    #[test]
+    fn excluded_source_in_signal_skips() {
+        // Only the signal knows the excluded owner; it is gone at dequeue and snapshot.
+        let h = start(PrivacyPolicy::default());
+        h.fake
+            .copy_then_set_source(excluded_copy("vault entry"), None);
+        let seen = h.wait_skip(SkipReason::ExcludedApp);
+        assert!(no_store_events(&seen), "{seen:?}");
+        assert_eq!(h.fake.read_calls(), 0);
+        assert_eq!(h.fake.resolve_calls(), 0);
+        assert_eq!(h.clip_count(), 0);
+    }
+
+    #[test]
+    fn signal_without_source_falls_back_to_dequeue_resolve() {
+        // Backends that cannot resolve at signal time: the actor resolves at dequeue.
+        let h = start(PrivacyPolicy::default());
+        h.fake
+            .copy_then_set_source(text_copy("late owner"), Some(src("excel.exe")));
+        let (id, _) = h.wait_added();
+        assert!(h.fake.resolve_calls() >= 1);
+        let clip = h.ro().get_clip(&id).unwrap().unwrap();
+        assert_eq!(
+            clip.source.as_ref().map(|s| s.app_id.as_str()),
+            Some("excel.exe")
+        );
     }
 
     #[test]
@@ -2191,8 +2248,8 @@ mod tests {
                 markers: Vec::new(),
                 source: Some(src("winword.exe")),
             });
-            // The actor has taken the first signal (and resolved the owner); the window is open.
-            wait_resolved(&h, 1);
+            // The first signal carries winword.exe (F-01): phases 2 and 3 may land before
+            // or after the actor dequeues it.
             h.fake.render(vec![
                 (pf("DataObject", None, 8), Vec::new()),
                 (
