@@ -8,13 +8,11 @@ use png::{BitDepth, ColorType, Decoder, Limits, Transformations};
 use std::io::Cursor;
 use zeroize::Zeroizing;
 
-/// Decoded-size caps used by capture: 64 megapixels, 256 MiB of RGBA.
-pub const MAX_PIXELS: u64 = 64 * 1024 * 1024;
-pub const MAX_RGBA_BYTES: u64 = 256 * 1024 * 1024;
+/// Decoded-size caps used by capture (64 megapixels, 256 MiB of RGBA, side 32 768), shared
+/// with the adapters (D-043).
+pub use darkclip_core::limits::{MAX_PIXELS, MAX_RGBA_BYTES, MAX_SIDE};
 /// Thumbnail bound (ADR-0003).
 pub const THUMB_MAX_SIDE: u32 = 256;
-/// Longest accepted side in pixels.
-pub const MAX_SIDE: u32 = 32_768;
 /// `png` working-memory limit (decoder internals only, not the output buffer).
 const DECODER_WORKING_BYTES: usize = 8 * 1024 * 1024;
 

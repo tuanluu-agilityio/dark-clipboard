@@ -39,8 +39,8 @@ use darkclip_platform::{
 const NOT_YET: Support = Support::Unsupported { reason: "not yet" };
 
 /// What exists in this build: monitor, read, write and marker detection (Tasks 101-105; the
-/// real-clipboard tests are still unrun until Task 107). The rest is reported as not
-/// available.
+/// real-clipboard tests ran in Task 107, `docs/testing/platform-checklist.md`). The rest is
+/// reported as not available.
 #[cfg(windows)]
 fn capabilities() -> Capabilities {
     Capabilities {

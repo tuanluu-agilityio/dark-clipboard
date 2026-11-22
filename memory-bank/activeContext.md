@@ -6,7 +6,8 @@ Updated: 2026-11-22
 
 - **Phase 0 (discovery and architecture): complete**, pending owner approval of the blueprint.
 - **Phase 1 Foundation: COMPLETE (2026-11-22).** Tasks 001–011 and 013 merged; phase review 012 done (its one blocker, the bench, was a measurement artifact; fixed and re-measured in 013). Workspace: 263 tests pass, 2 benches ignored (median p95 17.5 ms worst-case corpus, 15.7 ms realistic).
-- **Phase 2 Windows capture: IN PROGRESS.** Task packages `docs/tasks/101…108` + `103b` written (D-031). Order: 101 → 105 → 102 → 103 → 103b → 104 → 106 → 107 → 108. Tasks 101 (monitor thread, `ChangeSignal.source`), 105 (owner → exe name source) and 102 (`snapshot_meta`: formats + markers by id) 103 (`read` with caps; DIB→PNG; own DROPFILES parser) 103b (PNG decode → pixel hash, thumbnails, bomb caps) and 104 (copy-back write; post-close seq + owner check; per-write owner window, D-038) done. 106 (`dark-clipboard --headless`, content-free log, StorageFull retry, caps Native) done. 107 (Windows verification with the owner: Darkshot excluded by markers, KeePassXC not stored; Chrome/Explorer/Snipping Tool/Notepad captured; 10/10 real-clipboard tests) done. 109 (F-14 fixed: rules 1–3, D-042) done. **Next: Task 108** (Phase 2 review, specialist opus). CI on GitHub (Windows, Linux, macOS, deny) green since the first push: the Unix permission/fsync paths now run in CI tests (F-06 partly closed). Real-clipboard-writing tests are `#[ignore]` and not run by agents.
+- **Phase 2 Windows capture: COMPLETE (2026-11-23).** Tasks 101–107, 103b, 109, 110 merged (PRs #1–#6); phase review 108 → fixes 110 (D-043), security-reviewer APPROVED. Real capture on Windows works headless (`dark-clipboard --headless`); markers verified with Darkshot 0.6.0 (end to end) and KeePassXC 2.8.0 (not stored); Bitwarden/1Password not available on the test machine (R-02 open for them). Real-clipboard rechecks pending for F-14 (Notepad) and the Task 110 image fixes (4K DIB, over-cap copy-back): owner manual rows in Phase 3.
+- **Next: Phase 3 Desktop shell (Slint).** Packages `docs/tasks/200…211` written at phase start (D-044). Order: 200 (split capture.rs) → 201 → 202 → 203 → 204 → 205 → 206 → 211 → 207 → 208 → 209 → 210. First demo for the owner after 204 (popup + search).
 - Git: remote `origin` = `github.com/tuanluu-agilityio/dark-clipboard` (public), pushed 2026-11-22 as is (owner, D-035). From Task 103b on, tasks merge via PR (`gh pr create` / `gh pr merge --merge --delete-branch`).
 
 ## Waiting on owner
@@ -26,12 +27,12 @@ Q-07 done by the owner 2026-11-22: ruleset "Protect main" (no deletion, no force
 - F-13 (Task 106): real Ctrl+C in a console untested (owner); log-rotation reopen failure path untested; S-10 word list may false-positive on future harmless lines (safe direction). Idle measurement included owner copies; scratch data dirs deleted and verified.
 - F-14 (Task 107; fixed in 109, D-042; real-clipboard re-check with Notepad/PowerShell pending in Phase 3 manual tests): OLE writers with a flush (Notepad, PowerShell) bump the seq per phase and the final phase has no owner, so the clip is stored with source None and (privacy gap) an unmarked excluded app writing this way would not match the excluded list. Fix in Task 109 (actor; security review). Untested rows: Bitwarden, 1Password, Office, RDP, elevated source, manual Win+V/copy-back stall check (Phase 3 UI), real console Ctrl+C.
 - F-01 (done in 101): put `source` into `ChangeSignal`, resolved on the monitor thread at OS-signal time (Phase 2 Task 101/105; platform interface change). Closes the dequeue-time race for excluded apps.
-- F-02: StorageFull → retention then retry once (system-overview §3) is not implemented.
-- F-03: a `sequence()` error at resume leaves the current seq unmarked (possible backfill if a stale signal follows).
+- F-02 (done in 106): StorageFull → retention then retry once.
+- F-03 (done in 101: `sequence()` never fails on Windows): a `sequence()` error at resume leaves the current seq unmarked (possible backfill if a stale signal follows).
 - F-04 (done in 106): `upsert_clip` took `NewClip` by value and cannot wipe the reps on error; consider `&NewClip` or a zeroize-on-drop byte type in core.
-- F-05: images are hashed without decoded RGBA and without thumbnails (no `png` decode in app yet); DIB vs PNG copies of one image do not dedupe. Phase 2 Task 103 should decode in the adapter or app.
-- F-06: unix-only permission and fsync paths in storage have never run (no Unix machine).
-- F-07: search bench p95 ≈ 24–25 ms against a 30 ms budget.
+- F-05 (done in 103b): images were hashed without decoded RGBA and without thumbnails (no `png` decode in app yet); DIB vs PNG copies of one image do not dedupe. Phase 2 Task 103 should decode in the adapter or app.
+- F-06 (partly closed): unix-only permission and fsync paths now run in CI tests on Linux and macOS (green since the first push); no manual run on a real Unix machine.
+- F-07 (resolved in 013): search bench p95 ≈ 24–25 ms against a 30 ms budget.
 
 ## Top risks (full list: `docs/plans/roadmap.md`)
 

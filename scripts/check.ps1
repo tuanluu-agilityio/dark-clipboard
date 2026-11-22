@@ -45,7 +45,8 @@ function Rel($f) { $f.FullName.Substring($root.Length + 1).Replace('\', '/') }
 
 Write-Host '== no logging in privacy-critical modules (GC-06)'
 $logPattern = '\b(e?println|e?print|dbg)!|\b(log|tracing)::(trace|debug|info|warn|error)!|\b(trace|debug|info|warn|error)!\s*\('
-$quiet = '^(crates/darkclip-app/src/capture\.rs|crates/darkclip-core/src/policy\.rs|crates/darkclip-core/src/sensitive/.*\.rs)$'
+# Also the platform adapters and the app's image decoder (Task 110).
+$quiet = '^(crates/darkclip-app/src/capture\.rs|crates/darkclip-app/src/image\.rs|crates/darkclip-core/src/policy\.rs|crates/darkclip-core/src/sensitive/.*\.rs|crates/darkclip-(windows|macos|linux)/src/.*\.rs)$'
 $bad = $false
 foreach ($f in $rs) {
     $rel = Rel $f

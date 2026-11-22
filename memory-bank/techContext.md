@@ -25,7 +25,7 @@ Updated: 2026-11-22
 |---|---|---|
 | `serde`, `serde_json`, `thiserror` | core and up | models, JSON, errors |
 | `uuid` (v7) | core | sortable ids |
-| `sha2` | core | content hashing |
+| `sha2` | core; darkclip-windows (copy-back block cache key, Task 110) | content hashing |
 | `rusqlite` 0.43 (bundled SQLite 3.54.1) | storage | SQLite + FTS5 |
 | `flate2` 1.1 (dev only) | darkclip-app tests (iCCP fixture) | test data |
 | `png` 0.18 | storage, darkclip-windows (DIB→PNG, Task 103), app (103b) | thumbnails, DIB→PNG |

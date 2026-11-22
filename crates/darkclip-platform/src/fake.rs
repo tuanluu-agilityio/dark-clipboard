@@ -33,6 +33,7 @@ struct State {
     busy: u32,
     read_calls: u32,
     write_calls: u32,
+    discard_calls: u32,
     snapshot_meta_calls: u32,
     resolve_calls: u32,
     /// Test hook: the next `read` bumps `seq` (a change whose signal is not delivered yet).
@@ -171,6 +172,23 @@ impl FakeHandle {
         st.seq
     }
 
+    /// `first` is copied and signalled; then, atomically, `second` replaces it with a new seq
+    /// whose signal is not delivered (yet): the actor's snapshot for `first`'s signal sees
+    /// `second`, with a newer seq and `second`'s owner. Returns the seq of `second`.
+    pub fn copy_then_replace_silently(&self, first: FakeCopy, second: FakeCopy) -> u64 {
+        let mut st = lock(&self.state);
+        st.seq += 1;
+        st.formats = first.formats;
+        st.markers = first.markers;
+        st.source = first.source;
+        emit(&st);
+        st.seq += 1;
+        st.formats = second.formats;
+        st.markers = second.markers;
+        st.source = second.source;
+        st.seq
+    }
+
     /// Several copies applied atomically, one new seq and one signal each (signal time now):
     /// e.g. an OLE writer's copy with an owner, then its ownerless flush. The actor can never
     /// inspect the clipboard between them; it sees the last copy. Returns the last seq.
@@ -247,6 +265,11 @@ impl FakeHandle {
     /// How many times `write` was invoked (a skipped command must not reach the clipboard).
     pub fn write_calls(&self) -> u32 {
         lock(&self.state).write_calls
+    }
+
+    /// How many times `discard_prepared` was invoked (a failed copy-back drops its blocks).
+    pub fn discard_calls(&self) -> u32 {
+        lock(&self.state).discard_calls
     }
 
     /// How many times `SourceResolver::resolve` was invoked (sync point for timing tests).
@@ -373,6 +396,10 @@ impl ClipboardAccess for FakeAccess {
         st.source = None;
         emit(&st);
         Ok(st.seq)
+    }
+
+    fn discard_prepared(&mut self) {
+        lock(&self.state).discard_calls += 1;
     }
 }
 

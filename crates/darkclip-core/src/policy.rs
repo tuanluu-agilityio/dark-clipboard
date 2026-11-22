@@ -83,7 +83,9 @@ pub struct ReadPlan {
     pub formats: Vec<AvailableFormat>,
     /// Cap for every non-image format (plain, HTML, RTF, uri-list): truncated on a UTF-8 boundary.
     pub truncate_text_at: u64,
-    /// Cap for every image: over-cap images are rejected, never truncated.
+    /// Cap for every **stored** image (the encoded PNG, D-043): over-cap images are rejected,
+    /// never truncated. Image input an adapter converts (for example a Windows DIB) is bounded
+    /// by the decode caps in `crate::limits` instead, and the PNG it produces by this cap.
     pub image_max_bytes: u64,
 }
 

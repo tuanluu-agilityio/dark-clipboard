@@ -897,9 +897,14 @@ impl Actor {
             Some(c) if c.seq == seq => (c.primary, c.others),
             _ => (None, Vec::new()),
         };
+        // The snapshot may be newer than the signalled change (D-043): then the pending
+        // change's sources (and its superseded chain) belong to an older change. They are
+        // checked for exclusion below, never stored as this change's source.
+        let newer = seq != p.seq;
         // Every source seen for this change; the first one seen is the primary.
+        let own: &[ClipboardSource] = if newer { &[] } else { &p.sources };
         let mut seen: Vec<ClipboardSource> = Vec::new();
-        for s in carried.iter().chain(&p.sources).chain(meta.source.as_ref()) {
+        for s in carried.iter().chain(own).chain(meta.source.as_ref()) {
             if !seen.contains(s) {
                 seen.push(s.clone());
             }
@@ -921,6 +926,14 @@ impl Actor {
                 .iter()
                 .chain(self.recent_excluded(seq, p.signal_at))
             {
+                if source.as_ref() != Some(s) && !others.contains(s) {
+                    others.push(s.clone());
+                }
+            }
+        }
+        // A newer snapshot: the older change's own sources and chain are checked only.
+        if newer {
+            for s in p.sources.iter().chain(&p.superseded) {
                 if source.as_ref() != Some(s) && !others.contains(s) {
                     others.push(s.clone());
                 }
@@ -1379,6 +1392,11 @@ impl Actor {
         }
         let written = self.with_retries(|a| a.write(&reps));
         wipe_reps(&mut reps);
+        if written.is_err() {
+            // Whatever the adapter kept for the retries (converted blocks) goes now: nothing
+            // of a failed copy-back may wait in memory for a later clipboard event.
+            self.access.discard_prepared();
+        }
         let seq = written.map_err(|e| map_platform(&e))?;
         // Rule 5: exactly this change is ours and must not be captured again.
         self.last_self_write_seq = Some(seq);
@@ -1856,6 +1874,22 @@ mod tests {
         h.copy_back(id, false).unwrap();
         h.wait_skip(SkipReason::SelfWrite);
         assert_eq!(h.fake.current().len(), 2);
+    }
+
+    #[test]
+    fn failed_copy_back_discards_prepared_blocks() {
+        // Busy on every attempt (1 + open_retries): the copy-back fails, and the adapter is
+        // told once to drop what it prepared for the retries (Task 110 security review).
+        let h = start(PrivacyPolicy::default());
+        h.fake.copy(text_copy("stored earlier"));
+        let (id, _) = h.wait_added();
+        h.fake.set_busy(test_cfg().open_retries + 1);
+        assert_eq!(h.copy_back(id, false), Err(ApiError::ClipboardBusy));
+        assert_eq!(h.fake.write_calls(), test_cfg().open_retries + 1);
+        assert_eq!(h.fake.discard_calls(), 1);
+        // A successful copy-back keeps nothing, so nothing is discarded.
+        h.copy_back(id, false).unwrap();
+        assert_eq!(h.fake.discard_calls(), 1);
     }
 
     #[test]
@@ -3282,6 +3316,53 @@ mod tests {
         h.fake.render(ole_flush("rendered text").formats);
         h.fake.signal_again(1);
         // The retry of the carried seq still checks B.
+        let seen = h.wait_skip(SkipReason::ExcludedApp);
+        assert!(no_store_events(&seen), "{seen:?}");
+        assert_eq!(h.fake.read_calls(), 0);
+        assert_eq!(h.clip_count(), 0);
+    }
+
+    // Phase 2 review (Task 110, D-043).
+
+    #[test]
+    fn newer_snapshot_seq_does_not_inherit_old_owner() {
+        // Owner A's change is signalled; before the actor looks, owner B's copy replaces it
+        // with a higher seq (B's signal not delivered yet). The snapshot is B's: stored with
+        // B as source, never A.
+        let h = start(PrivacyPolicy::default());
+        let seq = h.fake.copy_then_replace_silently(
+            ole_owned("tool-a.exe", "text of a"),
+            ole_owned("tool-b.exe", "text of b"),
+        );
+        assert_eq!(seq, 2);
+        let (id, before) = h.wait_added();
+        assert!(no_store_events(&before), "{before:?}");
+        let clip = h.ro().get_clip(&id).unwrap().unwrap();
+        assert_eq!(clip.preview, "text of b");
+        assert_eq!(app_of(&h, &id).as_deref(), Some("tool-b.exe"));
+
+        // B has no owner at snapshot time: stored without a source, never A (even in the
+        // OLE flush shape, since the snapshot's seq is not the signalled one).
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            ole_cfg(),
+            |_| {},
+        );
+        h.fake.copy_then_replace_silently(
+            ole_owned("tool-a.exe", "text of a"),
+            ole_flush("text of b"),
+        );
+        let (id, before) = h.wait_added();
+        assert!(no_store_events(&before), "{before:?}");
+        assert_eq!(app_of(&h, &id), None);
+
+        // A is still checked for exclusion: an excluded A skips the change, nothing read.
+        let h = start(PrivacyPolicy::default());
+        h.fake.copy_then_replace_silently(
+            ole_owned("KeePassXC.exe", "vault entry"),
+            ole_owned("tool-b.exe", "text of b"),
+        );
         let seen = h.wait_skip(SkipReason::ExcludedApp);
         assert!(no_store_events(&seen), "{seen:?}");
         assert_eq!(h.fake.read_calls(), 0);

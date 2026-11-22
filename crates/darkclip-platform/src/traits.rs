@@ -58,7 +58,10 @@ pub trait ClipboardAccess: Send {
 
     /// Reads only the formats in the plan (never a format absent from it), enforcing caps:
     /// every non-image format (plain, HTML, RTF, uri-list) is capped at
-    /// `plan.truncate_text_at` bytes and every image at `plan.image_max_bytes`.
+    /// `plan.truncate_text_at` bytes and every image at `plan.image_max_bytes`. The image cap
+    /// applies to the PNG that is returned (D-043): an adapter that converts another image
+    /// format bounds that input by the decode caps (`darkclip_core::limits`, checked from its
+    /// header and size before allocating) and the PNG it produces by `image_max_bytes`.
     ///
     /// Over-cap text is truncated on a UTF-8 boundary and the adapter must set
     /// `RawRepresentation::truncated`. An over-cap image returns `PlatformError::TooLarge`,
@@ -69,6 +72,12 @@ pub trait ClipboardAccess: Send {
 
     /// Writes representations; returns the sequence number after the write (self-write suppression).
     fn write(&mut self, reps: &[RawRepresentation]) -> Result<u64, PlatformError>;
+
+    /// Drops anything `write` kept for a retry of the same representations (for example
+    /// converted blocks kept across `Busy`). The actor calls it when a copy-back ends with an
+    /// error after its retries, so no prepared content outlives the failed copy-back. Must
+    /// not touch the clipboard. Default: nothing is kept.
+    fn discard_prepared(&mut self) {}
 }
 
 pub trait PasteInjector: Send {
