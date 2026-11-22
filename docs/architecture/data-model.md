@@ -147,14 +147,14 @@ CREATE TRIGGER clip_rowid_ad AFTER DELETE ON clip_rowid BEGIN DELETE FROM clips_
 FTS notes:
 - `body` indexes up to the first 32 KiB of the plain text representation. Contentless FTS keeps no copy of text beyond the index, so the index holds only tokens.
 - `remove_diacritics 2` makes Vietnamese search work without accents ("tieng viet" finds "tiếng Việt"). This is a Darkshot-ecosystem requirement, unit-tested.
-- Substring fallback: for queries < 3 chars, or when FTS returns < N results, run `LIKE` on `preview` limited to the 2,000 most recent rows. Trigram tokenizer was considered; it was rejected for P0 because it roughly triples index size.
+- Substring fallback: for queries < 3 chars, or queries with no letter or digit, run `LIKE` on `preview` limited to the 2,000 most recent rows. Trigram tokenizer was considered; it was rejected for P0 because it roughly triples index size.
 - Sensitive-masked clips index only their masked preview, never the body.
 
 ## 5. Hashing and deduplication
 
 - `content_hash = SHA-256( "dc1\0" || kind || "\0" || canonical_primary )` where `canonical_primary` is:
   - text kinds: the plain text, with CRLF and lone CR normalized to LF (lone CR added by D-020) and the trailing newline kept (a copied line with and without a final newline counts as different on purpose);
-  - image: the decoded RGBA pixels plus width/height (so the same image copied as DIB or PNG dedupes). Without decoded pixels, a fallback hashes the encoded bytes behind an `enc ` tag (degraded dedupe; callers should always pass RGBA, D-020);
+  - image: the decoded RGBA pixels plus width/height (so the same image copied as DIB or PNG dedupes). Without decoded pixels, a fallback hashes the encoded bytes behind an `enc\0` tag (degraded dedupe; callers should always pass RGBA, D-020);
   - files: the sorted, newline-joined absolute paths.
 - Rich text dedupes by its plain text: copying the same paragraph from Word and from a browser yields one clip. The latest representations replace the older ones (`last_copied_at` updated).
 - On duplicate: update `last_copied_at`, `copy_count += 1`, and the source; never create a second row.
@@ -172,7 +172,7 @@ Deletion is real deletion: `DELETE` plus `PRAGMA secure_delete = ON` for the cli
 
 - Embedded SQL files `migrations/NNNN_name.sql`, applied in a transaction, guarded by `user_version`. No migration framework dependency.
 - Before any migration, copy `history.db` to `history.db.pre-vN.bak` (deleted after a successful first run of version N+1).
-- Downgrade is not supported: a DB with a newer `user_version` opens read-only with a UI message.
+- Downgrade is not supported: a DB with a newer `user_version` is refused (`SchemaTooNew`) in both modes and is never modified; the desktop shows a message and does not start capture (Phase 3).
 
 ## 8. Backup and restore (P1)
 
