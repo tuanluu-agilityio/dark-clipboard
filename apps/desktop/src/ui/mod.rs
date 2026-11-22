@@ -24,19 +24,24 @@ mod generated {
 }
 pub use generated::{MainWindow, Strings, Theme};
 
+mod tray_host;
+
 use crate::log::{Log, Val};
 use crate::single_instance::Command;
 use crate::theme;
-use darkclip_app::api::CaptureStatus;
+use crate::tray::{mode_for, tray_state, MenuAction, TrayState, TrayUpdate, UNTIL_RESUMED};
+use darkclip_app::api::{Caller, CaptureStatus};
 use darkclip_app::settings::LoadOutcome;
-use darkclip_app::{App, AppEvent, CaptureConfig};
+use darkclip_app::{App, AppEvent, CaptureConfig, ClipApi};
 use darkclip_core::i18n::{t, Lang, Msg};
+use darkclip_core::Clock;
 use slint::{ComponentHandle, Weak};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 /// What the event loop does for a command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +120,16 @@ enum WorkerMsg {
     Stop,
 }
 
+/// Queues `App` calls on the worker thread (storage never runs on the UI thread).
+#[derive(Clone)]
+pub struct Poster(Sender<WorkerMsg>);
+
+impl Poster {
+    pub fn post(&self, job: impl FnOnce(&App) + Send + 'static) {
+        let _ = self.0.send(WorkerMsg::Run(Box::new(job)));
+    }
+}
+
 /// The thread that owns `App`.
 pub struct Worker {
     tx: Sender<WorkerMsg>,
@@ -135,10 +150,42 @@ fn quit_soon() {
     });
 }
 
-/// Reads status and language on the worker, then updates the window on the event loop.
-fn push_status(app: &App, ui: &Weak<MainWindow>) {
-    let (status, lang) = (app.status().capture, app.lang());
+/// Longest wait before a refresh when a timed pause is running (it re-arms itself).
+const MAX_WAKE: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// How long until a timed pause ends, or `None` when no pause timer is needed.
+fn wake_after(state: TrayState, now: darkclip_core::Timestamp) -> Option<Duration> {
+    match state {
+        TrayState::Paused(until) if until != UNTIL_RESUMED => {
+            let ms = u64::try_from(until.0.saturating_sub(now.0)).unwrap_or(0);
+            // A little past the end, so the refresh sees the pause as over.
+            Some(Duration::from_millis(ms.saturating_add(50)).min(MAX_WAKE))
+        }
+        _ => None,
+    }
+}
+
+/// Reads status, mode and language on the worker, then updates the window and the tray on the
+/// event loop. Returns when the worker should refresh again by itself (a timed pause ends).
+fn push_status(app: &App, ui: &Weak<MainWindow>) -> Option<Duration> {
+    let status = app.status().capture;
+    let settings = app.settings();
+    let lang = settings.ui.language;
+    let now = crate::SystemClock.now();
+    let state = tray_state(
+        matches!(status, CaptureStatus::Unavailable(_)),
+        settings.privacy.capture_enabled,
+        settings.privacy.mode,
+        now,
+    );
+    let update = TrayUpdate {
+        state,
+        lang,
+        utc_offset_min: tray_host::local_utc_offset_minutes(),
+    };
+    let _ = slint::invoke_from_event_loop(move || tray_host::update(update));
     let _ = ui.upgrade_in_event_loop(move |w| set_strings(&w, lang, Some(status)));
+    wake_after(state, now)
 }
 
 /// Joins the event forwarder only after a clean shutdown (same rule as `App::shutdown`: after a
@@ -207,11 +254,26 @@ impl Worker {
                         }
                     });
                 log.event("running", &[]);
-                push_status(&app, &ui);
-                for m in rx {
-                    match m {
-                        WorkerMsg::Refresh => push_status(&app, &ui),
-                        WorkerMsg::Run(job) => job(&app),
+                let mut wake = push_status(&app, &ui);
+                loop {
+                    // Blocks on the channel; wakes by itself only to end a timed pause.
+                    let msg = match wake {
+                        Some(d) => match rx.recv_timeout(d) {
+                            Ok(m) => m,
+                            Err(mpsc::RecvTimeoutError::Timeout) => WorkerMsg::Refresh,
+                            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                        },
+                        None => match rx.recv() {
+                            Ok(m) => m,
+                            Err(_) => break,
+                        },
+                    };
+                    match msg {
+                        WorkerMsg::Refresh => wake = push_status(&app, &ui),
+                        WorkerMsg::Run(job) => {
+                            job(&app);
+                            wake = push_status(&app, &ui);
+                        }
                         WorkerMsg::Stop => break,
                     }
                 }
@@ -230,10 +292,9 @@ impl Worker {
         })
     }
 
-    /// Queues an `App` call on the worker thread.
-    #[allow(dead_code)] // first user arrives with the popup content (Task 204)
-    pub fn post(&self, job: impl FnOnce(&App) + Send + 'static) {
-        let _ = self.tx.send(WorkerMsg::Run(Box::new(job)));
+    /// A cloneable handle that queues `App` calls on the worker thread.
+    pub fn poster(&self) -> Poster {
+        Poster(self.tx.clone())
     }
 
     /// True when the worker could not start the app.
@@ -265,6 +326,38 @@ fn apply_command(w: &MainWindow, cmd: Command) {
     }
 }
 
+/// What a tray menu choice does; runs on the event loop thread. Mode changes go to the worker.
+fn handle_tray_action(action: MenuAction, window: &Weak<MainWindow>, poster: &Poster, log: &Log) {
+    match action {
+        MenuAction::Open | MenuAction::Settings => {
+            let cmd = if action == MenuAction::Open {
+                Command::Toggle
+            } else {
+                Command::ShowSettings
+            };
+            if let Some(w) = window.upgrade() {
+                apply_command(&w, cmd);
+            }
+        }
+        MenuAction::Quit => {
+            log.event("tray_quit", &[]);
+            let _ = slint::quit_event_loop();
+        }
+        _ => {
+            let Some(current) = tray_host::current_state() else {
+                return;
+            };
+            if let Some(mode) = mode_for(action, current, crate::SystemClock.now()) {
+                // The mode is applied even if saving it fails (privacy choice wins); the worker
+                // refreshes the tray afterwards either way.
+                poster.post(move |app| {
+                    let _ = app.set_capture_mode(&Caller::Ui, mode);
+                });
+            }
+        }
+    }
+}
+
 /// Everything `run` needs; built by `main`.
 pub struct RunArgs {
     pub start: StartArgs,
@@ -285,8 +378,9 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
         return false;
     };
     theme::apply(&window);
-    set_strings(&window, args.start.os_lang, None);
-    // Closing the window only hides it; the app keeps running (tray arrives in Task 202).
+    let args_lang = args.start.os_lang;
+    set_strings(&window, args_lang, None);
+    // Closing the window only hides it; the app keeps running (the tray is the way back).
 
     let weak = window.as_weak();
     let ipc_log = Arc::clone(&log);
@@ -314,7 +408,29 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
     }
     let _ = ctrlc::set_handler(quit_soon);
 
+    // The tray lives on this (the main) thread; its handlers hop onto the event loop.
+    let (tray_window, tray_poster, tray_log) =
+        (window.as_weak(), worker.poster(), Arc::clone(&log));
+    let on_action: tray_host::OnAction = Arc::new(move |action| {
+        let (w, p, l) = (
+            tray_window.clone(),
+            tray_poster.clone(),
+            Arc::clone(&tray_log),
+        );
+        let _ = slint::invoke_from_event_loop(move || handle_tray_action(action, &w, &p, &l));
+    });
+    let first = TrayUpdate {
+        state: TrayState::Off,
+        lang: args_lang,
+        utc_offset_min: tray_host::local_utc_offset_minutes(),
+    };
+    if !tray_host::create(first, on_action) {
+        log.event("tray_failed", &[]);
+    }
+
     let looped = slint::run_event_loop_until_quit();
+    // Remove the icon first, so it does not linger while the app shuts down.
+    tray_host::destroy();
     let failed = worker.failed();
     log.event("stop_requested", &[]);
     worker.stop();
@@ -342,6 +458,28 @@ mod tests {
         let fwd = std::thread::spawn(move || for _ in rx {});
         drop(tx);
         finish_shutdown(Ok::<(), ()>(()), Some(fwd)); // returns because the thread ended
+    }
+
+    #[test]
+    fn only_a_timed_pause_needs_a_wake_up() {
+        use darkclip_core::Timestamp;
+        let now = Timestamp(1_000);
+        assert_eq!(wake_after(TrayState::Active, now), None);
+        assert_eq!(wake_after(TrayState::Private, now), None);
+        assert_eq!(wake_after(TrayState::Paused(UNTIL_RESUMED), now), None);
+        assert_eq!(
+            wake_after(TrayState::Paused(Timestamp(6_000)), now),
+            Some(Duration::from_millis(5_050))
+        );
+        // Never longer than a day; never negative.
+        assert_eq!(
+            wake_after(TrayState::Paused(Timestamp(i64::MAX - 1)), now),
+            Some(MAX_WAKE)
+        );
+        assert_eq!(
+            wake_after(TrayState::Paused(Timestamp(0)), now),
+            Some(Duration::from_millis(50))
+        );
     }
 
     #[test]

@@ -8,12 +8,18 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 // The only unsafe code is in `single_instance::win`, which opts in explicitly.
 #![deny(unsafe_code)]
+// No console window of its own on Windows; `winsys::attach_parent_console` reconnects to the
+// terminal the app was started from (Task 202).
+#![cfg_attr(not(test), windows_subsystem = "windows")]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod log;
 mod single_instance;
 mod theme;
+mod tray;
 mod ui;
+#[cfg(windows)]
+mod winsys;
 
 use darkclip_app::events::{UNAVAILABLE_READ, UNAVAILABLE_RETENTION, UNAVAILABLE_STORAGE_WRITE};
 use darkclip_app::{App, AppEvent, CaptureConfig};
@@ -206,6 +212,8 @@ fn platform() -> Result<darkclip_platform::PlatformBundle, darkclip_platform::Pl
 }
 
 fn main() -> ExitCode {
+    #[cfg(windows)]
+    winsys::attach_parent_console();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Until the settings are read, messages follow the OS language.
     let lang = ui::os_lang();
