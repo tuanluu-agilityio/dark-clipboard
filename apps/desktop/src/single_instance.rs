@@ -1,7 +1,9 @@
 //! Single instance and the local IPC base (ADR-0006).
 //!
 //! * The wire protocol is fixed and versioned: exactly 2 bytes, `[version, command]`. Anything
-//!   else (other length, other version, unknown command) is dropped without a reply.
+//!   else (other length, other version, unknown command) is dropped without a reply. After a
+//!   valid command the server answers with one acknowledgement byte; a client that gets none
+//!   within about a second reports failure, so a command is never lost silently.
 //! * `start_or_forward` holds the decision logic behind the small [`Transport`] trait, so it is
 //!   tested without a second process.
 //! * The Windows transport (and the OS UI-language lookup, one more FFI call) (per-user mutex plus a named pipe whose DACL grants the current
@@ -42,6 +44,13 @@ impl Command {
             Command::Quit => "quit",
         }
     }
+}
+
+/// The one-byte reply of the server to a valid command.
+pub const ACK: u8 = 0x06;
+
+pub fn is_ack(reply: &[u8]) -> bool {
+    reply == [ACK]
 }
 
 pub fn encode(c: Command) -> [u8; MESSAGE_LEN] {
@@ -102,6 +111,21 @@ pub fn start_or_forward<T: Transport>(t: &T, cmd: Command, start_if_free: bool) 
     }
 }
 
+/// The scope that separates a `--data-dir` run from the normal per-user instance. The
+/// directory is canonicalized when it exists, and a directory equal to the default data
+/// directory is no scope at all.
+pub fn scope_for(
+    data_dir: Option<&std::path::Path>,
+    default_dir: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let dir = canon(data_dir?);
+    if default_dir.is_some_and(|d| canon(d) == dir) {
+        return None;
+    }
+    Some(dir)
+}
+
 /// FNV-1a, 64 bit, as 16 hex digits. A name component, not a security primitive.
 pub fn name_hash(parts: &[&str]) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -121,13 +145,13 @@ pub use win::{ui_language_id, WinTransport};
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod win {
-    use super::{decode, encode, name_hash, Command, Transport, MESSAGE_LEN};
+    use super::{decode, encode, is_ack, name_hash, Command, Transport, ACK, MESSAGE_LEN};
     use crate::log::Log;
     use std::ffi::c_void;
     use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use windows::core::{HRESULT, PCWSTR, PWSTR};
     use windows::Win32::Foundation::{
         CloseHandle, GetLastError, LocalFree, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND,
@@ -143,18 +167,23 @@ mod win {
         TOKEN_USER,
     };
     use windows::Win32::Storage::FileSystem::{
-        CreateFileW, ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_FIRST_PIPE_INSTANCE,
-        FILE_SHARE_NONE, OPEN_EXISTING, PIPE_ACCESS_INBOUND, SECURITY_IDENTIFICATION,
-        SECURITY_SQOS_PRESENT,
+        CreateFileW, FlushFileBuffers, ReadFile, WriteFile, FILE_FLAGS_AND_ATTRIBUTES,
+        FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_SHARE_NONE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
+        SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
     };
     use windows::Win32::System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, WaitNamedPipeW,
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PeekNamedPipe, WaitNamedPipeW,
         PIPE_READMODE_MESSAGE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_MESSAGE, PIPE_WAIT,
     };
-    use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcess, OpenProcessToken};
+    use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+    use windows::Win32::System::Threading::{
+        CreateMutexW, GetCurrentProcess, GetCurrentProcessId, OpenProcessToken,
+    };
 
-    /// `GENERIC_WRITE`.
-    const GENERIC_WRITE: u32 = 0x4000_0000;
+    /// `GENERIC_READ | GENERIC_WRITE`.
+    const GENERIC_READ_WRITE: u32 = 0x8000_0000 | 0x4000_0000;
+    /// How long a client waits for the acknowledgement.
+    const ACK_TIMEOUT: Duration = Duration::from_secs(1);
     const MAX_INSTANCES: u32 = 255;
     /// Handler threads alive at once; extra connections are closed unread.
     const MAX_HANDLERS: usize = 4;
@@ -211,6 +240,14 @@ mod win {
         }
     }
 
+    /// The Windows session of this process (one instance per user and session).
+    fn session_id() -> Option<u32> {
+        let mut session = 0u32;
+        // SAFETY: `session` is a live local that receives the result.
+        unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut session) }.ok()?;
+        Some(session)
+    }
+
     /// The user's Windows display language id (LANGID).
     pub fn ui_language_id() -> u16 {
         // SAFETY: takes no arguments and reads no memory of ours.
@@ -241,8 +278,11 @@ mod win {
                     .as_deref()
                     .map_or(String::new(), |h| format!("-{h}"))
             );
+            // The raw SID appears only in the SDDL below, never in a name.
             let pipe = format!(
-                "\\\\.\\pipe\\dark-clipboard-{sid}{}",
+                "\\\\.\\pipe\\dark-clipboard-{}-s{}{}",
+                name_hash(&["sid", &sid]),
+                session_id()?,
                 scope_hash
                     .as_deref()
                     .map_or(String::new(), |h| format!("-{h}"))
@@ -259,7 +299,7 @@ mod win {
         /// Creates one pipe instance restricted to the current user. `first` makes creation
         /// fail when the name already exists (somebody else created the pipe first).
         fn create_instance(&self, first: bool) -> Option<HANDLE> {
-            let mut open = PIPE_ACCESS_INBOUND;
+            let mut open = PIPE_ACCESS_DUPLEX;
             if first {
                 open |= FILE_FLAG_FIRST_PIPE_INSTANCE;
             }
@@ -288,7 +328,7 @@ mod win {
                         | PIPE_WAIT
                         | PIPE_REJECT_REMOTE_CLIENTS,
                     MAX_INSTANCES,
-                    0,
+                    READ_BUF as u32,
                     READ_BUF as u32,
                     0,
                     Some(&sa),
@@ -310,7 +350,8 @@ mod win {
             log: Arc<Log>,
             on_command: impl Fn(Command) + Send + Sync + 'static,
         ) -> Result<(), ()> {
-            let first = self.create_instance(true).ok_or(())?;
+            // Owned until the thread has it, so a failed spawn closes the pipe.
+            let first = Owned(self.create_instance(true).ok_or(())?);
             let server = Server {
                 t: WinTransport {
                     mutex_name: Vec::new(),
@@ -320,12 +361,18 @@ mod win {
                 on_command: Arc::new(on_command),
                 log,
             };
-            let handle = first.0 as isize;
-            std::thread::Builder::new()
+            let handle = first.0 .0 as isize;
+            match std::thread::Builder::new()
                 .name("darkclip-ipc".into())
                 .spawn(move || server.run(handle))
-                .map(|_| ())
-                .map_err(|_| ())
+            {
+                Ok(_) => {
+                    // The server thread owns the handle now.
+                    std::mem::forget(first);
+                    Ok(())
+                }
+                Err(_) => Err(()),
+            }
         }
     }
 
@@ -349,7 +396,16 @@ mod win {
         // An oversize message makes ReadFile fail with ERROR_MORE_DATA: that is a drop too.
         let msg = read.ok().and_then(|()| buf.get(..got as usize));
         match msg.and_then(decode) {
-            Some(cmd) => on_command(cmd),
+            Some(cmd) => {
+                on_command(cmd);
+                // SAFETY: the buffers are live; the flush makes the client read the reply
+                // before the instance is disconnected (disconnecting drops unread data).
+                unsafe {
+                    let mut sent = 0u32;
+                    let _ = WriteFile(conn.0, Some(&[ACK]), Some(&mut sent), None);
+                    let _ = FlushFileBuffers(conn.0);
+                }
+            }
             None => log.event("ipc_dropped", &[]),
         }
         // SAFETY: the handle is the connected instance; it is closed by `conn` right after.
@@ -407,6 +463,35 @@ mod win {
         }
     }
 
+    /// Waits up to `ACK_TIMEOUT` for the server's acknowledgement byte.
+    fn wait_for_ack(conn: &Owned) -> Result<(), ()> {
+        let deadline = Instant::now() + ACK_TIMEOUT;
+        loop {
+            let mut avail = 0u32;
+            // SAFETY: `avail` is a live local; `conn` is an open pipe handle. A closed pipe
+            // (the server dropped the message) is an error here.
+            let peeked = unsafe { PeekNamedPipe(conn.0, None, 0, None, Some(&mut avail), None) };
+            if peeked.is_err() {
+                return Err(());
+            }
+            if avail > 0 {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err(());
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let mut reply = [0u8; 4];
+        let mut got = 0u32;
+        // SAFETY: `reply` and `got` are live locals; data is available, so this does not block.
+        let read = unsafe { ReadFile(conn.0, Some(&mut reply), Some(&mut got), None) };
+        match reply.get(..got as usize) {
+            Some(r) if read.is_ok() && is_ack(r) => Ok(()),
+            _ => Err(()),
+        }
+    }
+
     impl Transport for WinTransport {
         type Guard = LockGuard;
 
@@ -433,7 +518,7 @@ mod win {
                 let opened = unsafe {
                     CreateFileW(
                         PCWSTR(self.pipe_name.as_ptr()),
-                        GENERIC_WRITE,
+                        GENERIC_READ_WRITE,
                         FILE_SHARE_NONE,
                         None,
                         OPEN_EXISTING,
@@ -450,7 +535,7 @@ mod win {
                         // SAFETY: `msg` and `written` are live locals; `conn` is an open handle.
                         let r = unsafe { WriteFile(conn.0, Some(&msg), Some(&mut written), None) };
                         return if r.is_ok() && written as usize == msg.len() {
-                            Ok(())
+                            wait_for_ack(&conn)
                         } else {
                             Err(())
                         };
@@ -583,6 +668,35 @@ mod tests {
             start_or_forward(&t, Command::Quit, true),
             Start::Failed
         ));
+    }
+
+    #[test]
+    fn ack_is_exactly_one_known_byte() {
+        assert!(is_ack(&[ACK]));
+        assert!(!is_ack(&[]));
+        assert!(!is_ack(&[0]));
+        assert!(!is_ack(&[ACK, ACK]));
+    }
+
+    #[test]
+    fn scope_is_canonical_and_default_dir_means_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let default = tmp.path().join("default");
+        let other = tmp.path().join("other");
+        std::fs::create_dir_all(&default).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        assert_eq!(scope_for(None, Some(&default)), None);
+        // The default directory, spelled differently, is no scope.
+        let roundabout = other.join("..").join("default");
+        assert_eq!(scope_for(Some(&roundabout), Some(&default)), None);
+        assert_eq!(scope_for(Some(&default), Some(&default)), None);
+        // Another directory is a scope, and two spellings of it are the same scope.
+        let a = scope_for(Some(&other), Some(&default));
+        let b = scope_for(Some(&default.join("..").join("other")), Some(&default));
+        assert!(a.is_some());
+        assert_eq!(a, b);
+        // No default known: still a scope.
+        assert!(scope_for(Some(&other), None).is_some());
     }
 
     #[test]

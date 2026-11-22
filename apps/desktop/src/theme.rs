@@ -1,105 +1,94 @@
-//! Dark palette (D-037: dark only). Values follow the Darkshot dark theme (read-only reference,
-//! numbers only); the code is new. `apply` copies them into the Slint `Theme` global so this
-//! file is the single source of truth. Text colours must keep WCAG 4.5:1 on their backgrounds
-//! (tested).
+//! Dark palette (D-037: dark only). The colour values follow the Darkshot dark theme (numbers
+//! only, read from its repo); the code is new. `apply` copies them into the Slint `Theme`
+//! global, so this file is the single source of truth. Text colours must keep WCAG 4.5:1 on
+//! their backgrounds (tested).
+// The palette is only used by the Windows app for now (the UI runs on Windows first).
+#![cfg_attr(not(windows), allow(dead_code))]
 
 use crate::ui::{MainWindow, Theme};
 use slint::{Color, ComponentHandle};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Rgb(pub u8, pub u8, pub u8);
-
-impl Rgb {
-    /// `0xRRGGBB`.
-    pub const fn hex(v: u32) -> Rgb {
-        Rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
-    }
-
-    fn color(self) -> Color {
-        Color::from_rgb_u8(self.0, self.1, self.2)
-    }
-}
-
-pub const BG: Rgb = Rgb::hex(0x1C1E22);
-pub const SURFACE: Rgb = Rgb::hex(0x24272C);
-pub const LINE: Rgb = Rgb::hex(0x383C43);
-pub const TEXT: Rgb = Rgb::hex(0xE7E9EC);
-pub const TEXT_MUTED: Rgb = Rgb::hex(0xA3A9B2);
-pub const ACCENT: Rgb = Rgb::hex(0x4C8DFF);
-pub const DANGER: Rgb = Rgb::hex(0xFF7B72);
-pub const SUCCESS: Rgb = Rgb::hex(0x4ADE80);
-pub const WARNING: Rgb = Rgb::hex(0xF5C04A);
-
-/// (text, background) pairs in use; each must reach 4.5:1.
-#[cfg(test)]
-pub const TEXT_PAIRS: &[(Rgb, Rgb)] = &[
-    (TEXT, BG),
-    (TEXT, SURFACE),
-    (TEXT_MUTED, BG),
-    (TEXT_MUTED, SURFACE),
-    (ACCENT, BG),
-    (ACCENT, SURFACE),
-    (DANGER, BG),
-    (SUCCESS, BG),
-    (WARNING, BG),
-];
-
-#[cfg(test)]
-fn linear(c: u8) -> f64 {
-    let s = f64::from(c) / 255.0;
-    if s <= 0.039_28 {
-        s / 12.92
-    } else {
-        ((s + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-#[cfg(test)]
-fn luminance(c: Rgb) -> f64 {
-    0.2126 * linear(c.0) + 0.7152 * linear(c.1) + 0.0722 * linear(c.2)
-}
-
-/// WCAG 2.x contrast ratio.
-#[cfg(test)]
-pub fn contrast_ratio(a: Rgb, b: Rgb) -> f64 {
-    let (la, lb) = (luminance(a), luminance(b));
-    let (hi, lo) = if la >= lb { (la, lb) } else { (lb, la) };
-    (hi + 0.05) / (lo + 0.05)
-}
+pub const BG: Color = Color::from_rgb_u8(0x1C, 0x1E, 0x22);
+pub const SURFACE: Color = Color::from_rgb_u8(0x24, 0x27, 0x2C);
+pub const LINE: Color = Color::from_rgb_u8(0x38, 0x3C, 0x43);
+pub const TEXT: Color = Color::from_rgb_u8(0xE7, 0xE9, 0xEC);
+pub const TEXT_MUTED: Color = Color::from_rgb_u8(0xA3, 0xA9, 0xB2);
+pub const ACCENT: Color = Color::from_rgb_u8(0x4C, 0x8D, 0xFF);
+pub const DANGER: Color = Color::from_rgb_u8(0xFF, 0x7B, 0x72);
+pub const SUCCESS: Color = Color::from_rgb_u8(0x4A, 0xDE, 0x80);
+pub const WARNING: Color = Color::from_rgb_u8(0xF5, 0xC0, 0x4A);
 
 /// Sets the Slint `Theme` global of `window`.
 pub fn apply(window: &MainWindow) {
     let t = window.global::<Theme>();
-    t.set_bg(BG.color());
-    t.set_surface(SURFACE.color());
-    t.set_line(LINE.color());
-    t.set_text(TEXT.color());
-    t.set_text_muted(TEXT_MUTED.color());
-    t.set_accent(ACCENT.color());
-    t.set_danger(DANGER.color());
-    t.set_success(SUCCESS.color());
-    t.set_warning(WARNING.color());
+    t.set_bg(BG);
+    t.set_surface(SURFACE);
+    t.set_line(LINE);
+    t.set_text(TEXT);
+    t.set_text_muted(TEXT_MUTED);
+    t.set_accent(ACCENT);
+    t.set_danger(DANGER);
+    t.set_success(SUCCESS);
+    t.set_warning(WARNING);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Linearised value of one sRGB channel, from the WCAG 2.x definition.
+    fn channel_linear(v: u8) -> f64 {
+        let c = f64::from(v) / 255.0;
+        if c > 0.03928 {
+            ((c + 0.055) / 1.055).powf(2.4)
+        } else {
+            c / 12.92
+        }
+    }
+
+    /// Relative luminance: weighted sum of the linearised channels.
+    fn relative_luminance(c: Color) -> f64 {
+        [(c.red(), 0.2126), (c.green(), 0.7152), (c.blue(), 0.0722)]
+            .iter()
+            .map(|&(v, w)| w * channel_linear(v))
+            .sum()
+    }
+
+    /// Contrast ratio: (lighter + 0.05) / (darker + 0.05).
+    fn contrast(a: Color, b: Color) -> f64 {
+        let (x, y) = (relative_luminance(a), relative_luminance(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
     #[test]
-    fn hex_splits_channels() {
-        assert_eq!(Rgb::hex(0x1C1E22), Rgb(0x1C, 0x1E, 0x22));
+    fn contrast_function_matches_the_wcag_extremes() {
+        let black = Color::from_rgb_u8(0, 0, 0);
+        let white = Color::from_rgb_u8(255, 255, 255);
+        assert!((contrast(black, white) - 21.0).abs() < 1e-9);
+        assert!((contrast(white, white) - 1.0).abs() < 1e-9);
     }
 
     #[test]
     fn every_text_pair_reaches_wcag_aa() {
-        for (fg, bg) in TEXT_PAIRS {
-            let r = contrast_ratio(*fg, *bg);
+        let pairs = [
+            (TEXT, BG),
+            (TEXT, SURFACE),
+            (TEXT_MUTED, BG),
+            (TEXT_MUTED, SURFACE),
+            (ACCENT, BG),
+            (ACCENT, SURFACE),
+            (DANGER, BG),
+            (SUCCESS, BG),
+            (WARNING, BG),
+        ];
+        for (fg, bg) in pairs {
+            let r = contrast(fg, bg);
             assert!(r >= 4.5, "{fg:?} on {bg:?} is {r:.2}");
         }
     }
 
     #[test]
     fn theme_is_dark() {
-        assert!(luminance(BG) < 0.05);
+        assert!(relative_luminance(BG) < 0.05);
     }
 }

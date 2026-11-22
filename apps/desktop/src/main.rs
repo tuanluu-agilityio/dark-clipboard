@@ -247,7 +247,8 @@ fn run_app(cli: &Cli, lang: Lang) -> ExitCode {
     }
     let log = Arc::new(Log::open(&data_dir));
     // A `--data-dir` run gets its own instance scope, so a test never talks to the user's app.
-    let Some(transport) = WinTransport::new(cli.data_dir.as_deref()) else {
+    let scope = single_instance::scope_for(cli.data_dir.as_deref(), default_data_dir().as_deref());
+    let Some(transport) = WinTransport::new(scope.as_deref()) else {
         log.event("start_failed", &[("stage", Val::Name("instance"))]);
         eprintln!("{}", t(lang, Msg::CliStartFailed));
         return ExitCode::from(1);
