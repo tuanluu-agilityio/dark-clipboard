@@ -145,8 +145,8 @@ Data dir is local (not roaming) on Windows on purpose: history must not roam via
 | Darkshot practice | Dark Clipboard form |
 |---|---|
 | `darkshot-core` OS-independent, enforced by `cargo tree` ban in `check.ps1` | Same, for core/platform/storage/app |
-| `privacy_gate` single choke point plus static check of sinks | `PolicyService::decide_pre_read` is the only path to `read()`; `check.ps1` greps that adapter `read` is called only from `darkclip-app/src/capture.rs` |
-| No logging in privacy modules (check enforced) | No `println!`/`dbg!`/`log::*!` with clip types in `capture.rs`, `sensitive/` |
+| `privacy_gate` single choke point plus static check of sinks | `PolicyService::decide_pre_read` is the only path to `read()`; `check.ps1` greps that adapter `read` is called only from `darkclip-app/src/capture/` (Changed by D-044, 2026-11-23: was `capture.rs`) |
+| No logging in privacy modules (check enforced) | No `println!`/`dbg!`/`log::*!` with clip types in `capture/`, `sensitive/` (Changed by D-044, 2026-11-23: was `capture.rs`) |
 | Manual `Debug` without content | Same for `Representation`, `Clip`, `ClipboardSnapshot` |
 | i18n table, compile-time complete | Same macro approach in core |
 | Atomic file writes, no panic on real paths | Same |
