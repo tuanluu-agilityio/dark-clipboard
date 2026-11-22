@@ -13,7 +13,7 @@ OLE writers that flush (Notepad sometimes, PowerShell `Set-Clipboard`) bump the 
 `crates/darkclip-app/src/capture.rs` (`on_signal`, `Pending`, `process`, `decide_all_sources`, `carried`), `crates/darkclip-core/src/policy.rs` (excluded-app step), D-027, D-031, spike answer 5 in `docs/spikes/windows-clipboard-monitor.md`.
 
 ## Requirements (two separate rules)
-1. **Exclusion check, always (fail safe):** keep the sources of every pending change superseded within the same burst (the chain bounded by the existing `max_burst_wait` / 500 ms cap from the first signal). Pass all of them to `decide_all_sources` as additional sources. This can only add skips.
+1. **Exclusion check, always (fail safe):** keep the sources of every pending change superseded within the same burst (the chain bounded by the existing `max_burst_wait` / 500 ms cap from the first signal). Pass all of them to `decide_all_sources` as additional sources. This can only add skips. Accepted consequence: a benign ownerless write that comes within the same burst right after an excluded app's copy is also skipped (over-skip is the safe direction; not a bug).
 2. **Stored primary source, narrowly:** promote a superseded change's source to the stored primary source only when **all** hold:
    - the final change has no source from its signal, from `resolve()`, or from the snapshot owner;
    - the superseded change was never processed (no snapshot/read completed for it);
