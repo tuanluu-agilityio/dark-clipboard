@@ -33,6 +33,7 @@ struct State {
     busy: u32,
     read_calls: u32,
     write_calls: u32,
+    discard_calls: u32,
     snapshot_meta_calls: u32,
     resolve_calls: u32,
     /// Test hook: the next `read` bumps `seq` (a change whose signal is not delivered yet).
@@ -266,6 +267,11 @@ impl FakeHandle {
         lock(&self.state).write_calls
     }
 
+    /// How many times `discard_prepared` was invoked (a failed copy-back drops its blocks).
+    pub fn discard_calls(&self) -> u32 {
+        lock(&self.state).discard_calls
+    }
+
     /// How many times `SourceResolver::resolve` was invoked (sync point for timing tests).
     pub fn resolve_calls(&self) -> u32 {
         lock(&self.state).resolve_calls
@@ -390,6 +396,10 @@ impl ClipboardAccess for FakeAccess {
         st.source = None;
         emit(&st);
         Ok(st.seq)
+    }
+
+    fn discard_prepared(&mut self) {
+        lock(&self.state).discard_calls += 1;
     }
 }
 

@@ -72,6 +72,12 @@ pub trait ClipboardAccess: Send {
 
     /// Writes representations; returns the sequence number after the write (self-write suppression).
     fn write(&mut self, reps: &[RawRepresentation]) -> Result<u64, PlatformError>;
+
+    /// Drops anything `write` kept for a retry of the same representations (for example
+    /// converted blocks kept across `Busy`). The actor calls it when a copy-back ends with an
+    /// error after its retries, so no prepared content outlives the failed copy-back. Must
+    /// not touch the clipboard. Default: nothing is kept.
+    fn discard_prepared(&mut self) {}
 }
 
 pub trait PasteInjector: Send {

@@ -1392,6 +1392,11 @@ impl Actor {
         }
         let written = self.with_retries(|a| a.write(&reps));
         wipe_reps(&mut reps);
+        if written.is_err() {
+            // Whatever the adapter kept for the retries (converted blocks) goes now: nothing
+            // of a failed copy-back may wait in memory for a later clipboard event.
+            self.access.discard_prepared();
+        }
         let seq = written.map_err(|e| map_platform(&e))?;
         // Rule 5: exactly this change is ours and must not be captured again.
         self.last_self_write_seq = Some(seq);
@@ -1869,6 +1874,22 @@ mod tests {
         h.copy_back(id, false).unwrap();
         h.wait_skip(SkipReason::SelfWrite);
         assert_eq!(h.fake.current().len(), 2);
+    }
+
+    #[test]
+    fn failed_copy_back_discards_prepared_blocks() {
+        // Busy on every attempt (1 + open_retries): the copy-back fails, and the adapter is
+        // told once to drop what it prepared for the retries (Task 110 security review).
+        let h = start(PrivacyPolicy::default());
+        h.fake.copy(text_copy("stored earlier"));
+        let (id, _) = h.wait_added();
+        h.fake.set_busy(test_cfg().open_retries + 1);
+        assert_eq!(h.copy_back(id, false), Err(ApiError::ClipboardBusy));
+        assert_eq!(h.fake.write_calls(), test_cfg().open_retries + 1);
+        assert_eq!(h.fake.discard_calls(), 1);
+        // A successful copy-back keeps nothing, so nothing is discarded.
+        h.copy_back(id, false).unwrap();
+        assert_eq!(h.fake.discard_calls(), 1);
     }
 
     #[test]

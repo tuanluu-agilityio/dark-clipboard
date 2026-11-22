@@ -22,8 +22,8 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ### Fixed
 - Windows: clipboard writes through OLE with a flush (for example Notepad) keep their source app, and an excluded app without privacy markers that writes this way is now skipped (F-14). Fixed in the capture actor; real-clipboard recheck pending.
-- Windows: a screenshot-sized bitmap copy (for example 4K, offered only as a DIB) is stored when its PNG fits the image size limit; the limit applies to the stored PNG, and bitmap input is bounded separately (64 megapixels, 256 MiB decoded).
-- Windows: copying back a stored image too large to decode safely now puts the PNG alone on the clipboard instead of decoding it; a copy-back retried while the clipboard is busy converts the image once.
+- Windows: a screenshot-sized bitmap copy (for example 4K, offered only as a DIB) is stored when its PNG fits the image size limit; the limit applies to the stored PNG, and bitmap input is bounded separately (64 megapixels, 256 MiB decoded). Real-clipboard recheck pending.
+- Windows: copying back a stored image too large to decode safely now puts the PNG alone on the clipboard instead of decoding it; a copy-back retried while the clipboard is busy converts the image once, and its converted data is dropped when the copy-back fails. Real-clipboard recheck pending.
 - A clipboard change that replaced another before capture looked at it is no longer stored with the earlier app as its source.
 
 ### Known issues

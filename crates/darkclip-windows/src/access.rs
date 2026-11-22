@@ -781,6 +781,11 @@ pub(crate) fn write_cached<O: ClipboardWriteOs>(
     result
 }
 
+/// Frees (and wipes) the blocks kept for a retry, if any (`ClipboardAccess::discard_prepared`).
+fn discard<B>(prepared: &mut Option<PreparedWrite<B>>) {
+    *prepared = None;
+}
+
 /// The sequence number the capture actor must ignore for our write (D-038, capture rule 5).
 ///
 /// `CloseClipboard` bumps the number (the system adds synthesized formats at close), and the
@@ -906,8 +911,8 @@ pub struct WinAccess {
     markers: MarkerCache,
     /// The blocks of a copy-back that found the clipboard `Busy`, for the actor's retry of
     /// the same content (`write_cached`). Dropped (wiped and freed) by the next `write` of
-    /// other content and by any `snapshot_meta` or `read`, so they do not outlive the retry
-    /// loop by more than the next clipboard event.
+    /// other content, by `discard_prepared` (the actor calls it when a copy-back fails after
+    /// its retries) and by any `snapshot_meta` or `read`.
     prepared: Option<PreparedWrite<win::GlobalBlock>>,
 }
 
@@ -941,6 +946,11 @@ impl ClipboardAccess for WinAccess {
     /// a `Busy` retry of the same `reps` reuses them (`write_cached`).
     fn write(&mut self, reps: &[RawRepresentation]) -> Result<u64, PlatformError> {
         write_cached(&mut self.os, &mut self.prepared, reps)
+    }
+
+    /// Frees the blocks kept for a `Busy` retry (the copy-back failed for good).
+    fn discard_prepared(&mut self) {
+        discard(&mut self.prepared);
     }
 }
 
@@ -2338,6 +2348,18 @@ mod tests {
             assert_eq!(os.allocs.get(), 4);
             assert_eq!(os.freed(), 3);
             assert_eq!(os.sets(), vec![CF_UNICODETEXT]);
+            // Busy on every retry, then the actor discards: the kept blocks are freed.
+            let mut os = FakeOs::new();
+            let mut prepared = None;
+            os.busy = true;
+            for _ in 0..3 {
+                let _ = write_cached(&mut os, &mut prepared, &reps);
+            }
+            assert_eq!(os.allocs.get(), 3, "never rebuilt across retries");
+            assert_eq!(os.freed(), 0);
+            discard(&mut prepared);
+            assert!(prepared.is_none());
+            assert_eq!(os.freed(), 3, "every kept block freed");
             // Any other failure keeps nothing.
             let mut os = FakeOs::new();
             let mut prepared = None;

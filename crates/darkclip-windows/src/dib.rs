@@ -284,7 +284,7 @@ impl Write for Bounded<'_> {
 /// Encodes RGBA as PNG into a buffer wiped on drop, reserved once for the smaller of the
 /// worst case (stored deflate blocks) and `max_bytes`, and never grown, so it does not
 /// reallocate and leave copies in freed memory. A PNG that would exceed `max_bytes` is
-/// `TooLarge` with `bytes` = `max_bytes + 1` (at least that many were needed). The encoder's
+/// `TooLarge` with `bytes` = the binding limit + 1 (at least that many were needed). The encoder's
 /// own internal buffers are outside this crate's control.
 fn encode_png(rgba: &[u8], w: u32, h: u32, max_bytes: u64) -> Result<Zeroizing<Vec<u8>>, DibError> {
     let rows = usize::try_from(h).unwrap_or(usize::MAX);
@@ -304,8 +304,10 @@ fn encode_png(rgba: &[u8], w: u32, h: u32, max_bytes: u64) -> Result<Zeroizing<V
     let over = sink.over;
     match result {
         Ok(()) => Ok(out),
+        // The binding limit + 1 is reported: a lower bound of the real size. It is `max_bytes + 1`
+        // unless the worst-case estimate was smaller (a valid encoding always fits that).
         Err(_) if over => Err(DibError::TooLarge {
-            bytes: max_bytes.saturating_add(1),
+            bytes: u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1),
         }),
         Err(_) => Err(DibError::Malformed("PNG encoder refused the image")),
     }
