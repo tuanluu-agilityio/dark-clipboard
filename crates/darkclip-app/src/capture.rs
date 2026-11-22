@@ -98,6 +98,10 @@ struct RetentionHooks {
     /// Tests: `next_expiry` fails after a successful retention.
     #[cfg(test)]
     expiry_fail: std::sync::atomic::AtomicBool,
+    /// Tests: the actor stalls this long when it dequeues the signal for this seq (as if
+    /// preempted), before it looks at the clock.
+    #[cfg(test)]
+    stall_on_signal: Mutex<Option<(u64, Duration)>>,
 }
 
 /// What the actor's queue carries.
@@ -474,6 +478,14 @@ struct Superseded {
     inspected: bool,
 }
 
+/// A seq that had nothing readable yet (OLE delayed rendering): its primary source and every
+/// other source it was checked against, so a retry of the same seq checks them again.
+struct Carried {
+    seq: u64,
+    primary: Option<ClipboardSource>,
+    others: Vec<ClipboardSource>,
+}
+
 /// F-14 rule 3 (D-042): the excluded sources of the last change skipped as `ExcludedApp`.
 /// A later ownerless change close to it is checked against them (skip only, never stored).
 struct ExcludedRecent {
@@ -498,6 +510,12 @@ fn has_ole_signature(meta: &ClipboardMeta) -> bool {
                 .iter()
                 .any(|n| f.name.eq_ignore_ascii_case(n))
     })
+}
+
+/// Skip-only checks: like `within_ms`, but a `later` before `earlier` (wall clock stepped
+/// back) counts as no gap, so a clock step cannot disable the check.
+fn within_ms_or_earlier(earlier: Timestamp, later: Timestamp, max_ms: u64) -> bool {
+    u64::try_from(later.0.saturating_sub(earlier.0).max(0)).is_ok_and(|d| d <= max_ms)
 }
 
 /// `later - earlier` in ms, if `later` is not before `earlier` and at most `max_ms` after it.
@@ -529,7 +547,7 @@ struct Actor {
     pending: Option<Pending>,
     /// Source of a change that had nothing readable yet (OLE delayed rendering), kept for a
     /// later burst with the same sequence number.
-    carried: Option<(u64, Option<ClipboardSource>)>,
+    carried: Option<Carried>,
     /// F-14 rule 3: the last excluded-app skip, for a following ownerless flush.
     excluded_recent: Option<ExcludedRecent>,
     next_retention: Instant,
@@ -670,6 +688,19 @@ impl Actor {
     }
 
     fn on_signal(&mut self, s: ChangeSignal) {
+        #[cfg(test)]
+        {
+            let stall = *self
+                .hooks
+                .stall_on_signal
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some((seq, d)) = stall {
+                if seq == s.seq {
+                    std::thread::sleep(d);
+                }
+            }
+        }
         // Paused, private, disabled or our own write: no clipboard access at all.
         if let Some(reason) = self.gate(s.seq) {
             self.drop_gated(s.seq, reason);
@@ -701,14 +732,13 @@ impl Actor {
         // sources. The burst start is kept so the cap still bounds the wait.
         let prev = self.pending.take();
         let first_at = prev.as_ref().map_or(now, |p| p.first_at);
-        // F-14: within the burst cap, the superseded change joins the chain (rule 1: its
-        // sources are checked for exclusion; rule 2: it may name an ownerless flush's source).
-        let in_cap = first_at
-            .checked_add(self.max_burst_wait)
-            .is_some_and(|cap| now <= cap);
+        // F-14: a replaced pending change was never processed, so it always joins the chain,
+        // whatever the actor's own timing (rule 1: its sources are checked for exclusion,
+        // which only adds skips; rule 2: it may name an ownerless flush's source, bounded by
+        // signal times in `heir_source`).
         let (superseded, heir, burst_signal_at) = match prev {
-            Some(p) if in_cap => self.supersede(p),
-            _ => (Vec::new(), None, s.at),
+            Some(p) => self.supersede(p),
+            None => (Vec::new(), None, s.at),
         };
         // The signal's source (resolved at notification time) is primary; resolving now is
         // only the fallback for backends that cannot resolve at signal time (D-031).
@@ -737,7 +767,7 @@ impl Actor {
             }
         }
         let inspected = self.last_processed_seq == Some(p.seq)
-            || self.carried.as_ref().is_some_and(|(s, _)| *s == p.seq);
+            || self.carried.as_ref().is_some_and(|c| c.seq == p.seq);
         let heir = match p.sources.into_iter().next() {
             Some(source) => Some(Superseded {
                 seq: p.seq,
@@ -765,7 +795,7 @@ impl Actor {
             && !self
                 .last_self_write_seq
                 .is_some_and(|w| w > r.seq && w <= seq)
-            && within_ms(r.signal_at, signal_at, cap_ms);
+            && within_ms_or_earlier(r.signal_at, signal_at, cap_ms);
         if applies {
             &r.sources
         } else {
@@ -863,9 +893,9 @@ impl Actor {
             self.drop_gated(seq, reason);
             return;
         }
-        let carried = match self.carried.take() {
-            Some((s, src)) if s == seq => src,
-            _ => None,
+        let (carried, carried_others) = match self.carried.take() {
+            Some(c) if c.seq == seq => (c.primary, c.others),
+            _ => (None, Vec::new()),
         };
         // Every source seen for this change; the first one seen is the primary.
         let mut seen: Vec<ClipboardSource> = Vec::new();
@@ -894,6 +924,12 @@ impl Actor {
                 if source.as_ref() != Some(s) && !others.contains(s) {
                     others.push(s.clone());
                 }
+            }
+        }
+        // A retry of a carried seq checks every source the earlier look checked.
+        for s in carried_others {
+            if source.as_ref() != Some(&s) && !others.contains(&s) {
+                others.push(s);
             }
         }
         let others: Vec<&ClipboardSource> = others.iter().collect();
@@ -932,8 +968,13 @@ impl Actor {
             Decision::Read(plan) => plan,
             Decision::Skip(SkipReason::NothingReadable) => {
                 // Delayed rendering: the same seq may get real formats later. Not marked
-                // processed; the first-signal source is kept for that later burst.
-                self.carried = Some((seq, source));
+                // processed; the primary source, and every other source checked, are kept
+                // for that later burst.
+                self.carried = Some(Carried {
+                    seq,
+                    primary: source,
+                    others: others.iter().map(|s| (*s).clone()).collect(),
+                });
                 self.skip(SkipReason::NothingReadable);
                 return;
             }
@@ -1354,7 +1395,7 @@ mod tests {
     use darkclip_core::policy::SkipReason;
     use darkclip_core::sensitive::{masked_preview, scan};
     use darkclip_core::{
-        canonical_hash, classify, ClipType, ClipboardSource, Lang, Mime, Platform,
+        canonical_hash, classify, ClipType, ClipboardSource, ExcludedApp, Lang, Mime, Platform,
         RawRepresentation, SensitiveCategory, SensitiveHandling, Sensitivity, SensitivityLevel,
         SourceConfidence,
     };
@@ -3092,11 +3133,16 @@ mod tests {
     #[test]
     fn excluded_app_processed_then_ownerless_flush_is_skipped() {
         let h = start(PrivacyPolicy::default());
-        h.fake.copy(ole_owned("KeePassXC.exe", "vault entry"));
+        h.fake.copy_burst_at(vec![(
+            Timestamp(T0),
+            ole_owned("KeePassXC.exe", "vault entry"),
+        )]);
         let seen = h.wait_skip(SkipReason::ExcludedApp);
         assert!(no_store_events(&seen), "{seen:?}");
-        // The excluded change was inspected and skipped; then the ownerless flush comes.
-        h.fake.copy(ole_flush("vault entry"));
+        // The excluded change was inspected and skipped; then the ownerless flush comes,
+        // 20 ms later by signal time.
+        h.fake
+            .copy_burst_at(vec![(Timestamp(T0 + 20), ole_flush("vault entry"))]);
         let seen = h.wait_skip(SkipReason::ExcludedApp);
         assert!(no_store_events(&seen), "{seen:?}");
         assert_eq!(h.fake.read_calls(), 0);
@@ -3144,5 +3190,114 @@ mod tests {
         let (id, before) = h.wait_added();
         assert!(no_store_events(&before), "{before:?}");
         assert_eq!(app_of(&h, &id).as_deref(), Some("notepad.exe"));
+    }
+
+    // Security review of Task 109.
+
+    #[test]
+    fn excluded_owner_then_flush_across_actor_stall_is_skipped() {
+        let h = start(PrivacyPolicy::default());
+        // The actor is preempted for longer than the burst cap when it dequeues the flush.
+        *h.cap().hooks.stall_on_signal.lock().unwrap() = Some((2, Duration::from_millis(700)));
+        let last = h.fake.copy_burst_at(vec![
+            (Timestamp(T0), ole_owned("KeePassXC.exe", "vault entry")),
+            (Timestamp(T0 + 20), ole_flush("vault entry")),
+        ]);
+        assert_eq!(last, 2);
+        let seen = h.wait_skip(SkipReason::ExcludedApp);
+        assert!(no_store_events(&seen), "{seen:?}");
+        assert_eq!(h.fake.read_calls(), 0);
+        assert_eq!(h.fake.snapshot_meta_calls(), 1);
+        assert_eq!(h.clip_count(), 0);
+    }
+
+    #[test]
+    fn inspected_change_is_never_heir() {
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            ole_cfg(),
+            |_| {},
+        );
+        // Phase 1: placeholders only, owner known: snapshotted, nothing readable (carried).
+        h.fake.copy(FakeCopy {
+            formats: vec![
+                (pf("DataObject", None, 8), Vec::new()),
+                (pf("Ole Private Data", None, 8), Vec::new()),
+            ],
+            markers: Vec::new(),
+            source: Some(src("notepad.exe")),
+        });
+        h.wait_skip(SkipReason::NothingReadable);
+        // Signalled again (same seq, new pending), then replaced by an ownerless OLE flush
+        // in the same burst: the replaced change was inspected, so it is not the heir.
+        h.fake.signal_again(1);
+        h.fake.copy(ole_flush("flushed text"));
+        let (id, before) = h.wait_added();
+        assert!(no_store_events(&before), "{before:?}");
+        assert_eq!(h.fake.snapshot_meta_calls(), 2);
+        let clip = h.ro().get_clip(&id).unwrap().unwrap();
+        assert_eq!(clip.preview, "flushed text");
+        assert!(clip.source.is_none());
+    }
+
+    #[test]
+    fn carried_retry_still_checks_superseded_sources() {
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            ole_cfg(),
+            |_| {},
+        );
+        let placeholders = |source: Option<ClipboardSource>| FakeCopy {
+            formats: vec![
+                (pf("DataObject", None, 8), Vec::new()),
+                (pf("Ole Private Data", None, 8), Vec::new()),
+            ],
+            markers: Vec::new(),
+            source,
+        };
+        // Owner B is superseded in the burst by an ownerless, placeholder-only change that
+        // cannot inherit B (600 ms apart by signal time, beyond the cap): B is only checked
+        // (rule 1). Nothing readable yet, so the seq is carried.
+        h.fake.copy_burst_at(vec![
+            (Timestamp(T0), placeholders(Some(src("tool.exe")))),
+            (Timestamp(T0 + 600), placeholders(None)),
+        ]);
+        h.wait_skip(SkipReason::NothingReadable);
+        // B becomes excluded before the same seq renders real formats.
+        let mut policy = PrivacyPolicy::default();
+        policy.excluded_apps.push(ExcludedApp {
+            app_id: "tool.exe".into(),
+            platform: Platform::Windows,
+            name: None,
+            builtin: false,
+        });
+        h.cap()
+            .send(ActorCommand::UpdatePolicy(
+                policy,
+                RetentionPolicy::default(),
+            ))
+            .unwrap();
+        h.fake.render(ole_flush("rendered text").formats);
+        h.fake.signal_again(1);
+        // The retry of the carried seq still checks B.
+        let seen = h.wait_skip(SkipReason::ExcludedApp);
+        assert!(no_store_events(&seen), "{seen:?}");
+        assert_eq!(h.fake.read_calls(), 0);
+        assert_eq!(h.clip_count(), 0);
+    }
+
+    #[test]
+    fn clock_step_back_disables_rule_two_but_not_rule_three() {
+        let (t, back) = (Timestamp(T0), Timestamp(T0 - 5_000));
+        // Rule 2 (promotion): a negative gap is never "within".
+        assert!(!within_ms(t, back, 500));
+        assert!(within_ms(t, Timestamp(T0 + 500), 500));
+        assert!(!within_ms(t, Timestamp(T0 + 501), 500));
+        // Rule 3 (skip only): a negative gap counts as none.
+        assert!(within_ms_or_earlier(t, back, 500));
+        assert!(within_ms_or_earlier(t, Timestamp(T0 + 500), 500));
+        assert!(!within_ms_or_earlier(t, Timestamp(T0 + 501), 500));
     }
 }
