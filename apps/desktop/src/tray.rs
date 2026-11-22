@@ -552,6 +552,43 @@ Shortcut in use by another app"
     }
 
     #[test]
+    fn every_tooltip_fits_the_windows_limit() {
+        let warnings = [
+            None,
+            Some(Msg::ShortcutInUse),
+            Some(Msg::ShortcutRegisterFailed),
+            Some(Msg::ShortcutErrEmpty),
+            Some(Msg::ShortcutErrNoKey),
+            Some(Msg::ShortcutErrManyKeys),
+            Some(Msg::ShortcutErrNoModifier),
+            Some(Msg::ShortcutErrDuplicate),
+            Some(Msg::ShortcutErrUnknownKey),
+        ];
+        let states = [
+            TrayState::Active,
+            TrayState::Paused(Timestamp(60_000)),
+            TrayState::Paused(UNTIL_RESUMED),
+            TrayState::Private,
+            TrayState::Off,
+            TrayState::Failed,
+        ];
+        for lang in [Lang::En, Lang::Vi] {
+            for state in states {
+                for warning in warnings {
+                    let u = TrayUpdate {
+                        state,
+                        lang,
+                        utc_offset_min: 0,
+                        warning,
+                    };
+                    let n = tooltip_for(&u).encode_utf16().count();
+                    assert!(n <= 127, "{lang:?} {state:?} {warning:?}: {n}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn tooltips_name_the_state_in_both_languages() {
         let until = Timestamp((14 * 60 + 5) * 60_000);
         assert_eq!(

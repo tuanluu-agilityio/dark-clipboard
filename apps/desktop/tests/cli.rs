@@ -201,7 +201,8 @@ fn run_with_shortcut(shortcut: &str, extra: &[&str]) -> String {
 }
 
 /// Task 203: the configured shortcut is registered with the OS (an unusual combination, so no
-/// real app shortcut is taken); nothing is pressed.
+/// real app shortcut is taken); nothing is pressed. Fails if another app already holds
+/// Ctrl+Alt+Shift+F24 (the registration then reports `in_use`).
 #[cfg(windows)]
 #[test]
 fn configured_shortcut_is_registered() {

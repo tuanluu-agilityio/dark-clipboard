@@ -1,7 +1,8 @@
 //! Holds the OS registration of the global popup shortcut on the Slint main thread (the
 //! `global-hotkey` manager owns a window handle, so it lives in a thread-local like the tray).
-//! Every function must be called on the main thread. Presses arrive on another thread; they are
-//! debounced there and handed to the event loop with `slint::invoke_from_event_loop`. Non-Windows
+//! Every function must be called on the main thread. On Windows presses arrive on the main thread
+//! too (the manager's hidden window procedure); they are debounced and handed to the event loop
+//! with `slint::invoke_from_event_loop`. Non-Windows
 //! builds get no-ops (Task 203 is Windows first).
 
 use crate::shortcut::Status;
@@ -65,6 +66,8 @@ mod imp {
         let Ok(manager) = GlobalHotKeyManager::new() else {
             return false;
         };
+        // The handler is installed once per process and stays for its lifetime (the crate does
+        // not allow removing it); `release` only unregisters the shortcut.
         let origin = Instant::now();
         let debounce = Mutex::new(Debounce::default());
         GlobalHotKeyEvent::set_event_handler(Some(move |e: GlobalHotKeyEvent| {
@@ -95,7 +98,6 @@ mod imp {
                 reg.release();
             }
         });
-        GlobalHotKeyEvent::set_event_handler(None::<fn(GlobalHotKeyEvent)>);
     }
 }
 
@@ -119,7 +121,7 @@ pub use imp::init;
 pub fn apply(wanted: &str) -> Status {
     imp::apply(wanted)
 }
-/// Unregisters the shortcut and removes the press handler.
+/// Unregisters the shortcut (the press handler stays for the process lifetime).
 pub fn release() {
     imp::release();
 }
