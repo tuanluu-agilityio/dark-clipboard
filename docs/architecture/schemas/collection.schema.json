@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://darkclipboard.dev/schemas/collection.schema.json",
+  "title": "Collection",
+  "description": "User or system collection. Favorites is the system collection with system_key = favorites.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "kind",
+    "created_at",
+    "updated_at",
+    "clip_count",
+    "sort"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "$ref": "common.schema.json#/$defs/uuid"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "kind": {
+      "enum": [
+        "user",
+        "system"
+      ]
+    },
+    "system_key": {
+      "enum": [
+        "favorites"
+      ]
+    },
+    "color": {
+      "type": "string",
+      "pattern": "^#[0-9a-f]{6}$"
+    },
+    "created_at": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "updated_at": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "clip_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sort": {
+      "enum": [
+        "manual",
+        "recent"
+      ]
+    }
+  },
+  "if": {
+    "properties": {
+      "kind": {
+        "const": "system"
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "system_key"
+    ]
+  },
+  "else": {
+    "not": {
+      "required": [
+        "system_key"
+      ]
+    }
+  }
+}

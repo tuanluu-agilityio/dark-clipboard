@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://darkclipboard.dev/schemas/clip.schema.json",
+  "title": "Clip",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "kind",
+    "preview",
+    "representations",
+    "content_hash",
+    "size_bytes",
+    "created_at",
+    "last_copied_at",
+    "copy_count",
+    "use_count",
+    "pinned",
+    "sensitivity",
+    "metadata"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "$ref": "common.schema.json#/$defs/uuid"
+    },
+    "kind": {
+      "$ref": "common.schema.json#/$defs/clipType"
+    },
+    "preview": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "representations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/representation"
+      }
+    },
+    "content_hash": {
+      "$ref": "common.schema.json#/$defs/sha256"
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "created_at": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "last_copied_at": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "last_used_at": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "copy_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "use_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "pinned": {
+      "type": "boolean"
+    },
+    "pin_order": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "source": {
+      "$ref": "clipboard-source.schema.json"
+    },
+    "sensitivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "categories"
+      ],
+      "properties": {
+        "level": {
+          "enum": [
+            "none",
+            "masked"
+          ]
+        },
+        "categories": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "common.schema.json#/$defs/sensitiveCategory"
+          }
+        }
+      }
+    },
+    "note": {
+      "type": "string",
+      "maxLength": 4000
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/ref"
+      }
+    },
+    "collections": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/ref"
+      }
+    },
+    "expires_at": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "description": "Present only when requested by a caller holding clips:read-content. Text only; images and files are referenced, never inlined. Never present for masked clips."
+    }
+  },
+  "if": {
+    "properties": {
+      "sensitivity": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "const": "masked"
+          }
+        }
+      }
+    }
+  },
+  "then": {
+    "not": {
+      "required": [
+        "content"
+      ]
+    },
+    "required": [
+      "expires_at"
+    ]
+  },
+  "$defs": {
+    "representation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mime",
+        "size_bytes",
+        "storage"
+      ],
+      "properties": {
+        "mime": {
+          "enum": [
+            "text/plain;charset=utf-8",
+            "text/html",
+            "text/rtf",
+            "image/png",
+            "text/uri-list"
+          ]
+        },
+        "platform_format": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "storage": {
+          "enum": [
+            "inline",
+            "blob"
+          ]
+        },
+        "blob_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256"
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "if": {
+        "properties": {
+          "storage": {
+            "const": "blob"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "blob_sha256"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "blob_sha256"
+          ]
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "char_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "line_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "file_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "language_hint": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "image_thumb_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

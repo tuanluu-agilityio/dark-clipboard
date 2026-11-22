@@ -1,0 +1,8 @@
+<!doctype html><html><head><meta charset="utf-8"><title>spike</title>
+<style>body{margin:0;background:#16181d;color:#e6e6e6;font:13px system-ui}input{width:100%;box-sizing:border-box;background:#20232a;color:#e6e6e6;border:0;padding:10px}li{padding:6px 10px}li.sel{background:#2b3340}</style>
+</head><body><input id="q" placeholder="Search clips" autofocus><ul id="l"></ul>
+<script>
+const items=[...Array(200).keys()].map(i=>"clip "+i);let sel=0;const l=document.getElementById('l');
+function r(){const q=document.getElementById('q').value;l.innerHTML='';items.filter(x=>x.includes(q)).slice(0,12).forEach((x,i)=>{const e=document.createElement('li');e.textContent=x;if(i===sel)e.className='sel';l.appendChild(e)})}
+document.addEventListener('keydown',e=>{if(e.key==='ArrowDown')sel++;if(e.key==='ArrowUp')sel=Math.max(0,sel-1);r()});document.getElementById('q').oninput=()=>{sel=0;r()};r();
+</script></body></html>

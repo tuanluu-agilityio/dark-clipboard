@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "019a8f55-0000-7000-8000-00000000a0d2",
+  "at": "2026-11-22T06:06:00.000Z",
+  "actor": "mcp:claude-code",
+  "operation": "copy_clip_to_clipboard",
+  "result": "denied",
+  "items": 0,
+  "error_code": "PERMISSION_DENIED"
+}

@@ -1,0 +1,17 @@
+{
+  "api_version": 1,
+  "ok": true,
+  "data": [
+    {
+      "id": "019a8f3b-7e21-7c4d-9a10-3f2b6c1d8e90",
+      "kind": "code",
+      "preview": "SELECT id, title FROM invoices WHERE paid = 0 ORDER BY due_at;",
+      "pinned": true,
+      "last_copied_at": "2026-11-22T04:01:44.903Z"
+    }
+  ],
+  "page": {
+    "limit": 20,
+    "returned": 1
+  }
+}

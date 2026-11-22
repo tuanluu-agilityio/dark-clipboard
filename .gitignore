@@ -1,0 +1,10 @@
+/target/
+**/target/
+node_modules/
+spikes/**/build.log
+*.tmp
+.DS_Store
+Thumbs.db
+# Local Claude Code settings and worktrees
+.claude/settings.local.json
+.claude/worktrees/

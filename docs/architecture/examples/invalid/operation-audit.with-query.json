@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "019a8f55-0000-7000-8000-00000000a0d1",
+  "at": "2026-11-22T06:05:12.300Z",
+  "actor": "mcp:claude-code",
+  "operation": "search_clips",
+  "result": "ok",
+  "items": 3,
+  "clip_ids": [
+    "019a8f3b-7e21-7c4d-9a10-3f2b6c1d8e90"
+  ],
+  "query": "password"
+}

@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://darkclipboard.dev/schemas/api-envelope.schema.json",
+  "title": "Application API / CLI JSON envelope",
+  "description": "Every CLI --json output and every Application API response serializes to this envelope.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "ok"
+  ],
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "data": {},
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "limit",
+        "returned"
+      ],
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "returned": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "next_cursor": {
+          "type": "string",
+          "maxLength": 128
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "NOT_FOUND",
+            "INVALID_ARGUMENT",
+            "PERMISSION_DENIED",
+            "UNSUPPORTED_PLATFORM",
+            "CLIPBOARD_BUSY",
+            "STORAGE_ERROR",
+            "APP_NOT_RUNNING",
+            "SCHEMA_TOO_NEW",
+            "INTERNAL"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "Never contains clip content"
+        }
+      }
+    }
+  },
+  "if": {
+    "properties": {
+      "ok": {
+        "const": true
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "data"
+    ],
+    "not": {
+      "required": [
+        "error"
+      ]
+    }
+  },
+  "else": {
+    "required": [
+      "error"
+    ],
+    "not": {
+      "required": [
+        "data"
+      ]
+    }
+  }
+}

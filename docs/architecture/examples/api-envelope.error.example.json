@@ -1,0 +1,8 @@
+{
+  "api_version": 1,
+  "ok": false,
+  "error": {
+    "code": "PERMISSION_DENIED",
+    "message": "Scope clipboard:write is not granted to client claude-code"
+  }
+}

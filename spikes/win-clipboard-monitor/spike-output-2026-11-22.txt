@@ -1,0 +1,29 @@
+--- S1 plain text, same process: 1 event(s)
+  seq=3427 latency=4.67 ms open_attempts=1 owner=Some("win-clipboard-monitor-spike.exe") foreground=Some("WindowsTerminal.exe") excluded_by=[] text_len=Some(27)
+  formats=["CF_UNICODETEXT", "CF_LOCALE", "CF_TEXT", "CF_OEMTEXT"]
+--- S2 darkshot exclusion set: 1 event(s)
+  seq=3435 latency=0.49 ms open_attempts=1 owner=Some("win-clipboard-monitor-spike.exe") foreground=Some("WindowsTerminal.exe") excluded_by=["ExcludeClipboardContentFromMonitorProcessing", "CanIncludeInClipboardHistory=0", "CanUploadToCloudClipboard=0"] text_len=None
+  formats=["CF_UNICODETEXT", "ExcludeClipboardContentFromMonitorProcessing", "CanIncludeInClipboardHistory", "CanUploadToCloudClipboard", "CF_LOCALE", "CF_TEXT", "CF_OEMTEXT"]
+--- S3 CanIncludeInClipboardHistory=0 only: 1 event(s)
+  seq=3441 latency=1.03 ms open_attempts=1 owner=Some("win-clipboard-monitor-spike.exe") foreground=Some("WindowsTerminal.exe") excluded_by=["CanIncludeInClipboardHistory=0"] text_len=None
+  formats=["CF_UNICODETEXT", "CanIncludeInClipboardHistory", "CF_LOCALE", "CF_TEXT", "CF_OEMTEXT"]
+--- S4 CF_DIB image: 1 event(s)
+  seq=3445 latency=0.35 ms open_attempts=1 owner=Some("win-clipboard-monitor-spike.exe") foreground=Some("WindowsTerminal.exe") excluded_by=[] text_len=None
+  formats=["CF_DIB", "CF_BITMAP", "CF_DIBV5"]
+--- S5 burst of 20 writes in 239.4 ms: 20 event(s), sequence advanced by 100, distinct seqs seen 2
+--- S6 text from another process (PowerShell): 3 event(s)
+  seq=3548 latency=6446.32 ms open_attempts=1 owner=Some("powershell.exe") foreground=Some("WindowsTerminal.exe") excluded_by=[] text_len=None
+  formats=["DataObject", "Ole Private Data"]
+  seq=3555 latency=6450.98 ms open_attempts=4 owner=Some("powershell.exe") foreground=Some("WindowsTerminal.exe") excluded_by=[] text_len=Some(37)
+  formats=["DataObject", "CF_UNICODETEXT", "Ole Private Data", "CF_LOCALE", "CF_TEXT", "CF_OEMTEXT"]
+  seq=3557 latency=6514.75 ms open_attempts=1 owner=None foreground=Some("WindowsTerminal.exe") excluded_by=[] text_len=Some(37)
+  formats=["DataObject", "CF_UNICODETEXT", "Ole Private Data", "CF_LOCALE", "CF_TEXT", "CF_OEMTEXT"]
+--- S7 file list from another process: 3 event(s)
+  seq=3560 latency=1279.71 ms open_attempts=1 owner=Some("powershell.exe") foreground=Some("WindowsTerminal.exe") excluded_by=[] text_len=None
+  formats=["DataObject", "Ole Private Data"]
+  seq=3566 latency=1399.52 ms open_attempts=2 owner=Some("powershell.exe") foreground=Some("WindowsTerminal.exe") excluded_by=[] text_len=None
+  formats=["DataObject", "CF_HDROP", "FileNameW", "FileName", "Ole Private Data"]
+  seq=3568 latency=1421.66 ms open_attempts=1 owner=None foreground=Some("WindowsTerminal.exe") excluded_by=[] text_len=None
+  formats=["DataObject", "CF_HDROP", "FileNameW", "FileName", "Ole Private Data"]
+--- S8 self-write suppression via sequence number: own_seq=3573, event seqs=[3573], suppressible=true
+SPIKE DONE

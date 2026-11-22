@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://darkclipboard.dev/schemas/privacy-policy.schema.json",
+  "title": "PrivacyPolicy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "capture_enabled",
+    "mode",
+    "excluded_apps",
+    "capture_kinds",
+    "sensitive_handling",
+    "sensitive_categories_enabled",
+    "respect_os_markers",
+    "capture_primary_selection"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "capture_enabled": {
+      "type": "boolean"
+    },
+    "mode": {
+      "enum": [
+        "normal",
+        "paused",
+        "private"
+      ]
+    },
+    "paused_until": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "excluded_apps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "app_id",
+          "platform"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "platform": {
+            "$ref": "common.schema.json#/$defs/platform"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "builtin": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "capture_kinds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/clipType"
+      }
+    },
+    "sensitive_handling": {
+      "enum": [
+        "drop",
+        "store_masked",
+        "store"
+      ]
+    },
+    "sensitive_categories_enabled": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/sensitiveCategory"
+      }
+    },
+    "respect_os_markers": {
+      "const": true,
+      "description": "Mandatory. OS-concealed and Darkshot-excluded content is never captured."
+    },
+    "capture_primary_selection": {
+      "type": "boolean",
+      "description": "Linux only"
+    }
+  },
+  "if": {
+    "properties": {
+      "mode": {
+        "const": "paused"
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "paused_until"
+    ]
+  }
+}

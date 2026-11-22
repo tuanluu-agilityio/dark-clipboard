@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "client_id": "claude-code",
+  "display_name": "Claude Code",
+  "granted_at": "2026-11-22T06:00:00.000Z",
+  "scopes": [
+    "clips:read-metadata",
+    "clips:read-content",
+    "collections:read"
+  ],
+  "collection_filter": [
+    "019a8f2e-1c00-7a10-8b00-0000000000c7"
+  ],
+  "max_age_days": 7,
+  "include_sensitive": false,
+  "expires_at": "2026-12-22T06:00:00.000Z"
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "capture_enabled": true,
+  "mode": "paused",
+  "excluded_apps": [],
+  "capture_kinds": [
+    "text"
+  ],
+  "sensitive_handling": "store_masked",
+  "sensitive_categories_enabled": [
+    "api_key",
+    "token",
+    "private_key",
+    "password",
+    "payment_card",
+    "email"
+  ],
+  "respect_os_markers": true,
+  "capture_primary_selection": false
+}

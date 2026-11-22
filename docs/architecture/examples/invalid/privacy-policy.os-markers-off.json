@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "capture_enabled": true,
+  "mode": "normal",
+  "excluded_apps": [
+    {
+      "app_id": "keepassxc.exe",
+      "platform": "windows",
+      "name": "KeePassXC",
+      "builtin": true
+    },
+    {
+      "app_id": "1password.exe",
+      "platform": "windows",
+      "name": "1Password",
+      "builtin": true
+    },
+    {
+      "app_id": "bitwarden.exe",
+      "platform": "windows",
+      "name": "Bitwarden",
+      "builtin": true
+    },
+    {
+      "app_id": "com.1password.1password",
+      "platform": "macos",
+      "name": "1Password",
+      "builtin": true
+    },
+    {
+      "app_id": "org.keepassxc.keepassxc",
+      "platform": "macos",
+      "name": "KeePassXC",
+      "builtin": true
+    },
+    {
+      "app_id": "com.apple.keychainaccess",
+      "platform": "macos",
+      "name": "Keychain Access",
+      "builtin": true
+    },
+    {
+      "app_id": "org.keepassxc.KeePassXC",
+      "platform": "linux-wayland",
+      "name": "KeePassXC",
+      "builtin": true
+    }
+  ],
+  "capture_kinds": [
+    "text",
+    "rich_text",
+    "url",
+    "color",
+    "code",
+    "image",
+    "files"
+  ],
+  "sensitive_handling": "drop",
+  "sensitive_categories_enabled": [
+    "api_key",
+    "token",
+    "private_key",
+    "password",
+    "payment_card"
+  ],
+  "respect_os_markers": false,
+  "capture_primary_selection": false
+}

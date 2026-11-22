@@ -1,0 +1,20 @@
+[package]
+name = "slint-shell-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Throwaway Phase 0 spike. Not a workspace member. See README.md.
+[workspace]
+
+[dependencies]
+global-hotkey = "0.10.0"
+slint = "1.19.0"
+tray-icon = "0.26.1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

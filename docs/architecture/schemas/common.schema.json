@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://darkclipboard.dev/schemas/common.schema.json",
+  "title": "Common definitions",
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "UUID v7, lowercase"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "clipType": {
+      "enum": [
+        "text",
+        "rich_text",
+        "url",
+        "color",
+        "code",
+        "image",
+        "files"
+      ]
+    },
+    "platform": {
+      "enum": [
+        "windows",
+        "macos",
+        "linux-x11",
+        "linux-wayland"
+      ]
+    },
+    "sensitiveCategory": {
+      "enum": [
+        "api_key",
+        "token",
+        "private_key",
+        "password",
+        "payment_card",
+        "email",
+        "phone"
+      ]
+    },
+    "scope": {
+      "enum": [
+        "clips:read-metadata",
+        "clips:read-content",
+        "collections:read",
+        "collections:write",
+        "clips:write-organization",
+        "clipboard:write",
+        "export"
+      ]
+    },
+    "ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      }
+    }
+  }
+}

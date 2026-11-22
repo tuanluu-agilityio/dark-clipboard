@@ -1,0 +1,22 @@
+[package]
+name = "tauri-shell-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Throwaway Phase 0 spike. Not a workspace member. See README.md.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "019a8f40-02aa-7b11-8c22-5e6f7a8b9c0d",
+  "kind": "image",
+  "preview": "Image 1280×720",
+  "representations": [
+    {
+      "mime": "image/png",
+      "platform_format": "CF_DIBV5",
+      "size_bytes": 184233,
+      "storage": "blob",
+      "blob_sha256": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      "width": 1280,
+      "height": 720
+    }
+  ],
+  "content_hash": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+  "size_bytes": 184233,
+  "created_at": "2026-11-22T05:20:00.000Z",
+  "last_copied_at": "2026-11-22T05:20:00.000Z",
+  "copy_count": 1,
+  "use_count": 0,
+  "pinned": false,
+  "source": {
+    "app_id": "com.figma.Desktop",
+    "app_name": "Figma",
+    "platform": "macos",
+    "confidence": "frontmost"
+  },
+  "sensitivity": {
+    "level": "none",
+    "categories": []
+  },
+  "metadata": {
+    "image_thumb_sha256": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+  }
+}

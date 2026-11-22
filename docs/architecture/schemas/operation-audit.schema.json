@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://darkclipboard.dev/schemas/operation-audit.schema.json",
+  "title": "OperationAudit",
+  "description": "Content-free record of a CLI or MCP operation. No query text, no clip content.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "at",
+    "actor",
+    "operation",
+    "result",
+    "items"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "$ref": "common.schema.json#/$defs/uuid"
+    },
+    "at": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "actor": {
+      "type": "string",
+      "pattern": "^(ui|cli|mcp:[a-z0-9][a-z0-9._-]{0,63})$"
+    },
+    "operation": {
+      "type": "string",
+      "pattern": "^[a-z_]{3,64}$"
+    },
+    "result": {
+      "enum": [
+        "ok",
+        "denied",
+        "error"
+      ]
+    },
+    "items": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "clip_ids": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "common.schema.json#/$defs/uuid"
+      }
+    },
+    "error_code": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{2,63}$"
+    }
+  }
+}

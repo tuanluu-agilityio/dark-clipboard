@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://darkclipboard.dev/schemas/ai-permission.schema.json",
+  "title": "AiPermission",
+  "description": "Grant for one AI/MCP client. Default: no grant at all. Sensitive clips are never grantable.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "client_id",
+    "display_name",
+    "granted_at",
+    "scopes",
+    "include_sensitive"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "client_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "granted_at": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "scopes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/scope"
+      }
+    },
+    "collection_filter": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/uuid"
+      }
+    },
+    "max_age_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 365,
+      "description": "Only clips newer than this are visible"
+    },
+    "include_sensitive": {
+      "const": false
+    },
+    "expires_at": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "revoked_at": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    }
+  }
+}

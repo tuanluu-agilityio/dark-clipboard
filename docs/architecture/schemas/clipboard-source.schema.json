@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://darkclipboard.dev/schemas/clipboard-source.schema.json",
+  "title": "ClipboardSource",
+  "description": "Where a clip came from. Never contains window titles.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "app_id",
+    "platform",
+    "confidence"
+  ],
+  "properties": {
+    "app_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "app_name": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "platform": {
+      "$ref": "common.schema.json#/$defs/platform"
+    },
+    "confidence": {
+      "enum": [
+        "owner",
+        "frontmost",
+        "declared"
+      ]
+    }
+  }
+}
