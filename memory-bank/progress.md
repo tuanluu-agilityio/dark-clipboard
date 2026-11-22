@@ -59,7 +59,7 @@ Phase 2 complete 2026-11-23 (Bitwarden/1Password rows n/a on the test machine; s
 | 206 Previews | task/206-previews | builder | sonnet | done | 230,796 | 124,502 (security-reviewer opus ×2: APPROVED with should-fix → fixed, APPROVED) | 40,923 | 396,221 |
 | 211 History window | task/211-history-window | builder | sonnet | done | 267,633 | 120,811 (reviewer opus: APPROVED, fixes applied) | 9,697 | 398,141 |
 | 207 Settings window | task/207-settings | builder | sonnet | done | 228,434 | 121,072 (security-reviewer opus ×2: APPROVED with should-fix → fixed, APPROVED) | 36,293 | 385,799 |
-| 208 Autostart + welcome | task/208-autostart-welcome | builder | sonnet | next | | | | |
+| 208 Autostart + welcome | task/208-autostart-welcome | builder | sonnet | in progress | | | | |
 
 ## Totals by model
 
