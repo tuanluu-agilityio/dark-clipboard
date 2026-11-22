@@ -18,6 +18,14 @@ pub const DANGER: Color = Color::from_rgb_u8(0xFF, 0x7B, 0x72);
 pub const SUCCESS: Color = Color::from_rgb_u8(0x4A, 0xDE, 0x80);
 pub const WARNING: Color = Color::from_rgb_u8(0xF5, 0xC0, 0x4A);
 
+/// A monospace face that ships with the OS (code clips).
+#[cfg(windows)]
+pub const MONO_FONT: &str = "Consolas";
+#[cfg(target_os = "macos")]
+pub const MONO_FONT: &str = "Menlo";
+#[cfg(not(any(windows, target_os = "macos")))]
+pub const MONO_FONT: &str = "DejaVu Sans Mono";
+
 /// Sets the Slint `Theme` global of `window`.
 pub fn apply(window: &MainWindow) {
     let t = window.global::<Theme>();
@@ -30,6 +38,7 @@ pub fn apply(window: &MainWindow) {
     t.set_danger(DANGER);
     t.set_success(SUCCESS);
     t.set_warning(WARNING);
+    t.set_mono_font(MONO_FONT.into());
 }
 
 #[cfg(test)]

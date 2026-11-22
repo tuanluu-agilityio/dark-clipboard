@@ -1,6 +1,7 @@
-// Popup building blocks (Task 204). Data comes from Rust (`src/ui/popup_host.rs`); every string
-// comes from the `Strings` global (i18n). Dark only (D-037).
+// Popup building blocks (Tasks 204 and 206). Data comes from Rust (`src/ui/popup_host.rs`);
+// every string comes from the `Strings` global (i18n). Dark only (D-037).
 
+import { ScrollView } from "std-widgets.slint";
 import { Theme, Strings } from "theme.slint";
 
 // One piece of a preview line; `hit` pieces matched the search.
@@ -9,13 +10,27 @@ export struct Seg {
     hit: bool,
 }
 
-// One row of the list: a one-line preview (already cut and split into pieces in Rust), a line
-// of details (number, kind, source app) and the plain preview for screen readers.
+// One row of the list (Task 206): a kind icon, a two-line preview (already cut and split into
+// pieces in Rust; `mono` for code), a line of details (number, kind, source app, time), badges
+// and the plain texts for screen readers.
 export struct ClipRow {
     segs: [Seg],
+    segs2: [Seg],
     meta: string,
     label: string,
+    description: string,
+    icon: string,
+    // Empty when the clip is not pinned / not masked.
+    pin-badge: string,
+    masked-badge: string,
+    mono: bool,
     pinned: bool,
+}
+
+// One file of a file clip.
+export struct FileRow {
+    name: string,
+    path: string,
 }
 
 // A filter chip. `id` is opaque to the markup (Rust decides what it means).
@@ -26,7 +41,7 @@ export struct Chip {
 }
 
 export global RowMetrics {
-    out property <length> height: 48px;
+    out property <length> height: 68px;
 }
 
 export component ChipView inherits FocusScope {
@@ -114,6 +129,24 @@ export component ActionButton inherits Rectangle {
     }
 }
 
+// A small pill (pinned, masked).
+component Badge inherits Rectangle {
+    in property <string> text;
+    in property <color> tint;
+    height: 15px;
+    min-width: label.preferred-width + 10px;
+    border-radius: 7.5px;
+    border-width: 1px;
+    border-color: root.tint;
+    label := Text {
+        text: root.text;
+        color: root.tint;
+        font-size: 10px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
 export component RowView inherits Rectangle {
     in property <ClipRow> data;
     in property <bool> selected;
@@ -126,7 +159,7 @@ export component RowView inherits Rectangle {
     background: selected ? Theme.surface : (touch.has-hover ? Theme.surface.with-alpha(0.5) : transparent);
     accessible-role: list-item;
     accessible-label: data.label;
-    accessible-description: data.meta;
+    accessible-description: data.description;
     accessible-item-selectable: true;
     accessible-item-selected: root.selected;
     accessible-item-index: root.index;
@@ -145,39 +178,75 @@ export component RowView inherits Rectangle {
         visible: data.pinned;
     }
 
-    VerticalLayout {
+    HorizontalLayout {
         padding-left: 12px;
         padding-right: 10px;
         padding-top: 6px;
         padding-bottom: 6px;
-        spacing: 2px;
+        spacing: 8px;
 
-        // The preview line: pieces side by side, cut at the right edge.
+        // Kind icon.
         Rectangle {
-            height: 19px;
-            min-width: 0px;
-            horizontal-stretch: 1;
-            clip: true;
-            HorizontalLayout {
-                alignment: start;
-                spacing: 0px;
-                for s in data.segs: Text {
-                    text: s.text;
-                    min-width: self.preferred-width;
-                    color: s.hit ? Theme.accent : Theme.text;
-                    font-weight: s.hit ? 700 : 400;
-                    font-size: 13px;
-                    vertical-alignment: center;
-                }
+            width: 30px;
+            height: 30px;
+            y: 4px;
+            border-radius: 6px;
+            background: Theme.line;
+            Text {
+                text: data.icon;
+                color: Theme.text-muted;
+                font-size: 11px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
             }
         }
 
-        Text {
-            text: data.meta;
-            color: Theme.text-muted;
-            font-size: 11px;
-            overflow: elide;
-            vertical-alignment: center;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 1px;
+
+            // The two preview lines: pieces side by side, cut at the right edge.
+            for lines in [data.segs, data.segs2]: Rectangle {
+                height: 18px;
+                min-width: 0px;
+                clip: true;
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 0px;
+                    for s in lines: Text {
+                        text: s.text;
+                        min-width: self.preferred-width;
+                        color: s.hit ? Theme.accent : Theme.text;
+                        font-weight: s.hit ? 700 : 400;
+                        font-size: 13px;
+                        font-family: data.mono ? Theme.mono-font : "";
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 6px;
+                height: 16px;
+                Text {
+                    text: data.meta;
+                    color: Theme.text-muted;
+                    font-size: 11px;
+                    overflow: elide;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                }
+                if data.pin-badge != "": Badge {
+                    text: data.pin-badge;
+                    tint: Theme.accent;
+                }
+                if data.masked-badge != "": Badge {
+                    text: data.masked-badge;
+                    tint: Theme.warning;
+                }
+            }
         }
     }
 
@@ -187,6 +256,147 @@ export component RowView inherits Rectangle {
         }
         double-clicked => {
             root.activated();
+        }
+    }
+}
+
+// The detail pane under the list (Task 206). `kind`: 0 text, 1 image, 2 files, 3 masked. Every
+// text comes from Rust. A masked clip shows only the note: no content is ever passed here.
+export component DetailPane inherits Rectangle {
+    in property <int> kind;
+    in property <string> title;
+    in property <string> text;
+    // Masked note, or "no preview image".
+    in property <string> note;
+    // Loading or failure message, or the cut-text note.
+    in property <string> status;
+    in property <bool> can-load-text;
+    in property <image> picture;
+    in property <bool> has-picture;
+    in property <string> picture-info;
+    in property <bool> can-load-image;
+    in property <[FileRow]> files;
+    in property <string> files-more;
+    in property <bool> mono;
+    callback load-text();
+    callback load-image();
+
+    border-radius: 6px;
+    background: Theme.surface;
+    accessible-role: groupbox;
+    accessible-label: root.title;
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 6px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            height: 22px;
+            Text {
+                text: root.title;
+                color: Theme.text-muted;
+                font-size: 11px;
+                font-weight: 700;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            if root.kind == 0 && root.can-load-text: ActionButton {
+                text: Strings.load-full-text;
+                clicked => {
+                    root.load-text();
+                }
+            }
+            if root.kind == 1 && root.can-load-image: ActionButton {
+                text: Strings.load-larger-image;
+                clicked => {
+                    root.load-image();
+                }
+            }
+        }
+
+        if root.kind == 0: Flickable {
+            vertical-stretch: 1;
+            content-height: body.preferred-height;
+            body := Text {
+                width: parent.width;
+                text: root.text;
+                color: Theme.text;
+                font-size: 12px;
+                font-family: root.mono ? Theme.mono-font : "";
+                wrap: word-wrap;
+                accessible-role: AccessibleRole.text;
+            }
+        }
+
+        if root.kind == 1: Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+            if root.has-picture: Image {
+                source: root.picture;
+                image-fit: contain;
+                accessible-role: image;
+                accessible-label: root.picture-info;
+            }
+            if !root.has-picture: Text {
+                text: root.note;
+                color: Theme.text-muted;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+        if root.kind == 1: Text {
+            text: root.picture-info;
+            color: Theme.text-muted;
+            font-size: 11px;
+            horizontal-alignment: center;
+        }
+
+        if root.kind == 2: ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                spacing: 6px;
+                for f in root.files: VerticalLayout {
+                    spacing: 0px;
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: f.path;
+                    Text {
+                        text: f.name;
+                        color: Theme.text;
+                        font-size: 12px;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: f.path;
+                        color: Theme.text-muted;
+                        font-size: 10px;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+        if root.kind == 2 && root.files-more != "": Text {
+            text: root.files-more;
+            color: Theme.text-muted;
+            font-size: 11px;
+        }
+
+        if root.kind == 3: Text {
+            vertical-stretch: 1;
+            text: root.note;
+            color: Theme.text-muted;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        if root.status != "": Text {
+            text: root.status;
+            color: Theme.text-muted;
+            font-size: 11px;
+            wrap: word-wrap;
         }
     }
 }

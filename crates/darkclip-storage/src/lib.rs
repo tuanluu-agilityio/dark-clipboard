@@ -372,6 +372,25 @@ mod tests {
     }
 
     #[test]
+    fn read_thumbnail_returns_the_blob_and_none_without_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path());
+        let mut n = new_clip(vec![raw(Mime::ImagePng, &png_bytes(1))]);
+        let thumb = png_bytes(2);
+        n.thumbnail_png = Some(thumb.clone());
+        let UpsertOutcome::Inserted(with) = s.upsert_clip(&n).unwrap() else {
+            panic!("expected Inserted");
+        };
+        assert_eq!(s.read_thumbnail(&with).unwrap(), Some(thumb));
+        let UpsertOutcome::Inserted(text) = s.upsert_clip(&text_clip("no picture")).unwrap() else {
+            panic!("expected Inserted");
+        };
+        assert_eq!(s.read_thumbnail(&text).unwrap(), None);
+        let missing = ClipId::new_v7(Timestamp(1));
+        assert_eq!(s.read_thumbnail(&missing).unwrap(), None);
+    }
+
+    #[test]
     fn mark_used_and_set_pinned() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());

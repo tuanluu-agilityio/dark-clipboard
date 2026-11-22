@@ -112,6 +112,57 @@ impl std::fmt::Debug for ClipContent {
     }
 }
 
+/// 8-bit RGBA pixels for the popup, decoded off the UI thread. UI only (never serialized).
+#[derive(Clone, PartialEq, Eq)]
+pub struct PixelsView {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// Never prints pixels (GC-06).
+impl std::fmt::Debug for PixelsView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PixelsView")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .finish_non_exhaustive()
+    }
+}
+
+/// An image clip's detail: the original size and the stored 256 px thumbnail, decoded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageDetailView {
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub thumbnail: Option<PixelsView>,
+}
+
+/// What the popup's detail pane needs beyond the preview (Task 206). UI only: not part of
+/// `ClipApi`, so the CLI and MCP surfaces are unchanged. For a masked clip every field but
+/// `masked` is empty and nothing was read from storage.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct ClipDetailView {
+    pub masked: bool,
+    pub image: Option<ImageDetailView>,
+    /// `text/uri-list` lines of a file clip (at most `MAX_FILE_URIS`). Paths: shown in the UI,
+    /// never logged.
+    pub file_uris: Vec<String>,
+    /// How many lines the clip has in all.
+    pub file_total: usize,
+}
+
+/// Never prints file paths (GC-06).
+impl std::fmt::Debug for ClipDetailView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClipDetailView")
+            .field("masked", &self.masked)
+            .field("image", &self.image)
+            .field("file_total", &self.file_total)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ClipView {
     #[serde(flatten)]
@@ -220,6 +271,10 @@ const NOT_YET: ApiError = ApiError::InvalidArgument("not available until P1");
 const MAX_LIMIT: u16 = 200;
 const MAX_LIMIT_MCP: u16 = 50;
 const CONTENT_MAX_BYTES: usize = 100 * 1024;
+/// File names the detail pane may carry (the rest is counted).
+pub const MAX_FILE_URIS: usize = 100;
+/// A stored thumbnail is at most 256 px; this bounds its decoded size.
+const THUMB_RGBA_MAX: u64 = 2 * 1024 * 1024;
 const ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -276,6 +331,106 @@ pub struct App {
 }
 
 impl App {
+    /// Detail for the popup's pane (Task 206): image size and decoded thumbnail, or the file
+    /// list. Runs on the caller's thread (the popup's worker). Masked clips answer
+    /// `masked: true` without any storage read of content; expired or missing: `NotFound`.
+    pub fn ui_clip_detail(&self, id: ClipId) -> Result<ClipDetailView, ApiError> {
+        let clip = self.visible_clip(&Caller::Ui, &id)?;
+        if clip.sensitivity.level == SensitivityLevel::Masked {
+            return Ok(ClipDetailView {
+                masked: true,
+                ..ClipDetailView::default()
+            });
+        }
+        let mut out = ClipDetailView::default();
+        match clip.kind {
+            ClipType::Image => {
+                let rep = clip
+                    .representations
+                    .iter()
+                    .find(|r| r.mime == Mime::ImagePng);
+                let thumbnail = match self.reader().read_thumbnail(&id) {
+                    Ok(Some(png)) => {
+                        crate::image::decode_png(&png, crate::image::MAX_PIXELS, THUMB_RGBA_MAX)
+                            .ok()
+                            .map(|d| PixelsView {
+                                width: d.width,
+                                height: d.height,
+                                rgba: d.rgba,
+                            })
+                    }
+                    Ok(None) => None,
+                    Err(e) => return Err(map_storage(&e)),
+                };
+                out.image = Some(ImageDetailView {
+                    width: rep.and_then(|r| r.width),
+                    height: rep.and_then(|r| r.height),
+                    thumbnail,
+                });
+            }
+            ClipType::Files => {
+                let ord = clip
+                    .representations
+                    .iter()
+                    .position(|r| r.mime == Mime::UriList);
+                if let Some(ord) = ord {
+                    let ord = u32::try_from(ord).map_err(|_| ApiError::Internal)?;
+                    let bytes = self
+                        .reader()
+                        .read_representation(&id, ord)
+                        .map_err(|e| map_storage(&e))?;
+                    let text = String::from_utf8_lossy(&bytes);
+                    let lines: Vec<&str> = text
+                        .lines()
+                        .map(str::trim)
+                        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                        .collect();
+                    out.file_total = lines.len();
+                    out.file_uris = lines
+                        .into_iter()
+                        .take(MAX_FILE_URIS)
+                        .map(str::to_string)
+                        .collect();
+                }
+            }
+            _ => {}
+        }
+        Ok(out)
+    }
+
+    /// The full image of an image clip, decoded and downscaled to at most `max_side` px
+    /// (never upscaled). Heavy: the popup calls it on its worker thread, on demand only.
+    /// Masked clips and non-images answer `NotFound` before anything is read.
+    pub fn ui_clip_image(&self, id: ClipId, max_side: u32) -> Result<PixelsView, ApiError> {
+        let clip = self.visible_clip(&Caller::Ui, &id)?;
+        if clip.sensitivity.level == SensitivityLevel::Masked || clip.kind != ClipType::Image {
+            return Err(ApiError::NotFound);
+        }
+        let ord = clip
+            .representations
+            .iter()
+            .position(|r| r.mime == Mime::ImagePng)
+            .ok_or(ApiError::NotFound)?;
+        let ord = u32::try_from(ord).map_err(|_| ApiError::Internal)?;
+        let bytes = self
+            .reader()
+            .read_representation(&id, ord)
+            .map_err(|e| map_storage(&e))?;
+        let img = crate::image::decode_png(
+            &bytes,
+            crate::image::MAX_PIXELS,
+            crate::image::MAX_RGBA_BYTES,
+        )
+        .map_err(|_| ApiError::InvalidArgument("image cannot be shown"))?;
+        let small = crate::image::downscale(&img, max_side)
+            .ok_or(ApiError::InvalidArgument("image cannot be shown"))?;
+        Ok(PixelsView {
+            width: small.width,
+            height: small.height,
+            rgba: small.rgba,
+        })
+    }
+
     /// Loads settings, opens storage, starts the capture actor. `events` receives every
     /// `AppEvent` after the App has updated its status from it.
     pub fn start(
@@ -1353,6 +1508,173 @@ mod tests {
         assert_eq!(a.get_storage_stats(&Caller::Ui).unwrap().clips, 2);
         // The UI still can.
         a.delete_clip(&Caller::Ui, masked).unwrap();
+    }
+
+    fn png_of(w: u32, h: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut e = png::Encoder::new(&mut bytes, w, h);
+        e.set_color(png::ColorType::Rgba);
+        e.set_depth(png::BitDepth::Eight);
+        let mut wr = e.write_header().unwrap();
+        wr.write_image_data(&vec![90u8; (w * h * 4) as usize])
+            .unwrap();
+        wr.finish().unwrap();
+        bytes
+    }
+
+    fn image_clip(w: u32, h: u32, masked: bool) -> NewClip {
+        let png = png_of(w, h);
+        let reps = vec![RawRepresentation {
+            mime: Mime::ImagePng,
+            platform_format: "PNG".into(),
+            bytes: png.clone(),
+            width: Some(w),
+            height: Some(h),
+            truncated: false,
+        }];
+        let mut n = new_clip("x", masked);
+        n.classified = classify(&reps);
+        if masked {
+            n.classified.preview = "[masked image]".into();
+        }
+        n.hash = canonical_hash(n.classified.kind, &reps, None);
+        n.reps = reps;
+        // Even a thumbnail handed to storage must not be served for a masked clip.
+        let img = crate::image::decode_png(&png, 1 << 26, 1 << 28).unwrap();
+        n.thumbnail_png = Some(crate::image::thumbnail(&img, crate::image::THUMB_MAX_SIDE));
+        n
+    }
+
+    fn files_clip(uris: &str) -> NewClip {
+        let reps = vec![RawRepresentation {
+            mime: Mime::UriList,
+            platform_format: "CF_HDROP".into(),
+            bytes: uris.as_bytes().to_vec(),
+            width: None,
+            height: None,
+            truncated: false,
+        }];
+        let mut n = new_clip("x", false);
+        n.classified = classify(&reps);
+        n.hash = canonical_hash(n.classified.kind, &reps, None);
+        n.reps = reps;
+        n
+    }
+
+    /// Seeds `clips`, then starts the App on the same directory.
+    fn start_with_clips(clips: &[NewClip]) -> H {
+        let dir = tempfile::tempdir().unwrap();
+        let clock: Arc<dyn Clock> = Arc::new(TestClock(AtomicI64::new(T0)));
+        let mut ids = Vec::new();
+        {
+            let mut s = Storage::open(dir.path(), OpenMode::ReadWrite, Arc::clone(&clock)).unwrap();
+            for c in clips {
+                match s.upsert_clip(c).unwrap() {
+                    darkclip_storage::UpsertOutcome::Inserted(id)
+                    | darkclip_storage::UpsertOutcome::Bumped(id) => ids.push(id),
+                }
+            }
+        }
+        let (platform, fake) = FakePlatform::new();
+        let (tx, events) = mpsc::channel();
+        let cfg = CaptureConfig {
+            debounce_ms: 5,
+            open_retries: 10,
+            retry_delay_ms: 1,
+            lang: Lang::En,
+        };
+        let (app, _) = App::start(
+            platform.bundle(),
+            dir.path(),
+            &dir.path().join("settings.json"),
+            clock,
+            cfg,
+            tx,
+        )
+        .unwrap();
+        H {
+            dir,
+            app: Some(app),
+            fake,
+            events,
+            ids,
+        }
+    }
+
+    #[test]
+    fn ui_detail_of_an_image_has_size_and_decoded_thumbnail() {
+        let h = start_with_clips(&[image_clip(600, 40, false)]);
+        let d = h.app().ui_clip_detail(h.ids[0]).unwrap();
+        assert!(!d.masked);
+        let img = d.image.unwrap();
+        assert_eq!((img.width, img.height), (Some(600), Some(40)));
+        let t = img.thumbnail.unwrap();
+        assert_eq!((t.width, t.height), (256, 17));
+        assert_eq!(t.rgba.len(), 256 * 17 * 4);
+        assert!(d.file_uris.is_empty());
+    }
+
+    #[test]
+    fn ui_detail_of_files_lists_uris_and_counts_the_rest() {
+        let many: String = (0..130)
+            .map(|i| {
+                format!(
+                    "file:///C:/d/f{i}.txt
+"
+                )
+            })
+            .collect();
+        let h = start_with_clips(&[
+            files_clip(
+                "# c
+file:///C:/a%20b.txt
+file:///C:/c.txt
+",
+            ),
+            files_clip(&many),
+        ]);
+        let d = h.app().ui_clip_detail(h.ids[0]).unwrap();
+        assert_eq!(d.file_total, 2);
+        assert_eq!(d.file_uris, ["file:///C:/a%20b.txt", "file:///C:/c.txt"]);
+        let big = h.app().ui_clip_detail(h.ids[1]).unwrap();
+        assert_eq!(big.file_total, 130);
+        assert_eq!(big.file_uris.len(), MAX_FILE_URIS);
+    }
+
+    #[test]
+    fn ui_detail_of_a_masked_clip_reads_nothing() {
+        let h = start_with_clips(&[image_clip(8, 8, true), new_clip("secret text", true)]);
+        for id in &h.ids {
+            let d = h.app().ui_clip_detail(*id).unwrap();
+            assert!(d.masked);
+            assert!(d.image.is_none());
+            assert!(d.file_uris.is_empty());
+            // No full image either, and no thumbnail at the storage level.
+            assert_eq!(
+                h.app().ui_clip_image(*id, 1024).unwrap_err(),
+                ApiError::NotFound
+            );
+            assert_eq!(h.app().reader().read_thumbnail(id).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn ui_image_is_downscaled_and_only_for_images() {
+        let h = start_with_clips(&[image_clip(2000, 10, false), new_clip("plain", false)]);
+        let p = h.app().ui_clip_image(h.ids[0], 1024).unwrap();
+        assert_eq!((p.width, p.height), (1024, 5));
+        assert_eq!(p.rgba.len(), 1024 * 5 * 4);
+        assert_eq!(
+            h.app().ui_clip_image(h.ids[1], 1024).unwrap_err(),
+            ApiError::NotFound
+        );
+        let t = h.app().ui_clip_detail(h.ids[1]).unwrap();
+        assert!(t.image.is_none() && t.file_uris.is_empty() && !t.masked);
+        let missing = ClipId::new_v7(Timestamp(1));
+        assert_eq!(
+            h.app().ui_clip_detail(missing).unwrap_err(),
+            ApiError::NotFound
+        );
     }
 
     #[test]

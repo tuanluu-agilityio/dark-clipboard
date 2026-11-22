@@ -130,23 +130,43 @@ messages! {
     UiUndo => ("Undo", "Hoàn tác"),
     UiClose => ("Close", "Đóng"),
     UiKeyHints => (
-        "Enter copy · Shift+Enter plain · Ctrl+P pin · Del delete · Esc close",
-        "Enter sao chép · Shift+Enter văn bản thuần · Ctrl+P ghim · Del xóa · Esc đóng"
+        "Enter copy · Shift+Enter plain · Ctrl+P pin · Del delete · → details · Esc close",
+        "Enter sao chép · Shift+Enter văn bản thuần · Ctrl+P ghim · Del xóa · → chi tiết · Esc đóng"
     ),
     // Copy back and paste (Task 205)
     UiKeyHintsPaste => (
-        "Enter copy · Ctrl+Enter paste · Shift+Enter plain · Ctrl+P pin · Del delete · Esc close",
-        "Enter sao chép · Ctrl+Enter dán · Shift+Enter văn bản thuần · Ctrl+P ghim · Del xóa · Esc đóng"
+        "Enter copy · Ctrl+Enter paste · Shift+Enter plain · Ctrl+P pin · Del delete · → details · Esc close",
+        "Enter sao chép · Ctrl+Enter dán · Shift+Enter văn bản thuần · Ctrl+P ghim · Del xóa · → chi tiết · Esc đóng"
     ),
     UiKeyHintsEnterPastes => (
-        "Enter paste · Shift+Enter plain · Ctrl+P pin · Del delete · Esc close",
-        "Enter dán · Shift+Enter văn bản thuần · Ctrl+P ghim · Del xóa · Esc đóng"
+        "Enter paste · Shift+Enter plain · Ctrl+P pin · Del delete · → details · Esc close",
+        "Enter dán · Shift+Enter văn bản thuần · Ctrl+P ghim · Del xóa · → chi tiết · Esc đóng"
     ),
     UiPasteManual => ("Copied — paste manually", "Đã sao chép — hãy tự dán"),
     UiPasteElevated => (
         "Copied — that app runs as administrator, so Dark Clipboard cannot paste into it. Paste manually.",
         "Đã sao chép — ứng dụng đó chạy với quyền quản trị nên Dark Clipboard không thể dán vào. Hãy tự dán."
     ),
+    // Previews and item detail (Task 206)
+    UiTimeNow => ("just now", "vừa xong"),
+    UiTimeMinutes => ("{n} min ago", "{n} phút trước"),
+    UiTimeHours => ("{n} h ago", "{n} giờ trước"),
+    UiTimeDays => ("{n} d ago", "{n} ngày trước"),
+    UiMaskedBadge => ("Masked", "Đã che"),
+    UiMaskedDetail => (
+        "Hidden because it may contain a secret.",
+        "Đã ẩn vì có thể chứa thông tin bí mật."
+    ),
+    UiDetailLabel => ("Details", "Chi tiết"),
+    UiLoadFullText => ("Load full text", "Tải toàn bộ văn bản"),
+    UiTextCut => (
+        "Showing the first 100 KiB only.",
+        "Chỉ hiển thị 100 KiB đầu tiên."
+    ),
+    UiLoadLargerImage => ("Load larger preview", "Tải ảnh xem trước lớn hơn"),
+    UiNoImagePreview => ("No preview image stored", "Không có ảnh xem trước"),
+    UiFilesCount => ("{n} files", "{n} tệp"),
+    UiFilesMore => ("and {n} more", "và {n} tệp khác"),
     CliSeedRefused => (
         "--seed-demo-clips needs --data-dir with a folder other than the default data folder.",
         "--seed-demo-clips cần --data-dir với một thư mục khác thư mục dữ liệu mặc định."

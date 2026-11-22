@@ -22,7 +22,7 @@
 mod generated {
     slint::include_modules!();
 }
-pub use generated::{Chip, ClipRow, MainWindow, Seg, Strings, Theme};
+pub use generated::{Chip, ClipRow, FileRow, MainWindow, Seg, Strings, Theme};
 
 mod popup_host;
 mod shortcut_host;

@@ -8,6 +8,8 @@ use slint::platform::Key as SlintKey;
 pub enum Key {
     Up,
     Down,
+    Left,
+    Right,
     PageUp,
     PageDown,
     Home,
@@ -71,6 +73,12 @@ pub enum Action {
     TogglePin,
     Undo,
     Close,
+    /// Space: show or hide the detail pane (Task 206).
+    ToggleDetail,
+    /// Right arrow: show the detail pane.
+    OpenDetail,
+    /// Left arrow: hide the detail pane.
+    CloseDetail,
 }
 
 /// Which filter chip has the keyboard focus, from per-chip gained/lost reports. The reports of
@@ -111,6 +119,8 @@ pub fn key_from_text(s: &str) -> Key {
     let named = [
         (SlintKey::UpArrow, Key::Up),
         (SlintKey::DownArrow, Key::Down),
+        (SlintKey::LeftArrow, Key::Left),
+        (SlintKey::RightArrow, Key::Right),
         (SlintKey::PageUp, Key::PageUp),
         (SlintKey::PageDown, Key::PageDown),
         (SlintKey::Home, Key::Home),
@@ -148,6 +158,10 @@ pub fn map_key(k: Key, m: Mods, ctx: KeyCtx) -> Option<Action> {
     match k {
         Key::Up if plain => Some(Action::Move(Move::Up)),
         Key::Down if plain => Some(Action::Move(Move::Down)),
+        // Left, Right and Space move the text caret or type in a non-empty search box.
+        Key::Right if plain && !m.shift && list_keys => Some(Action::OpenDetail),
+        Key::Left if plain && !m.shift && list_keys => Some(Action::CloseDetail),
+        Key::Char(' ') if plain && !m.shift && list_keys => Some(Action::ToggleDetail),
         Key::PageUp if plain => Some(Action::Move(Move::PageUp)),
         Key::PageDown if plain => Some(Action::Move(Move::PageDown)),
         Key::Home if (plain && list_keys) || (m.ctrl && !m.alt) => Some(Action::Move(Move::Home)),
@@ -226,7 +240,9 @@ mod tests {
         assert_eq!(key_from_text("ệ"), Key::Char('ệ'));
         assert_eq!(key_from_text(""), Key::Other);
         assert_eq!(key_from_text("ab"), Key::Other);
-        assert_eq!(key_from_text(&text(SlintKey::LeftArrow)), Key::Other);
+        assert_eq!(key_from_text(&text(SlintKey::LeftArrow)), Key::Left);
+        assert_eq!(key_from_text(&text(SlintKey::RightArrow)), Key::Right);
+        assert_eq!(key_from_text(&text(SlintKey::F1)), Key::Other);
     }
 
     #[test]
@@ -283,6 +299,35 @@ mod tests {
             Some(Action::Copy(CopyKind::Paste))
         );
         assert_eq!(map_key(Key::Enter, ALT, LIST), None);
+    }
+
+    #[test]
+    fn right_left_and_space_drive_the_detail_pane_unless_they_edit_text() {
+        for ctx in [FRESH, LIST] {
+            assert_eq!(map_key(Key::Right, NONE, ctx), Some(Action::OpenDetail));
+            assert_eq!(map_key(Key::Left, NONE, ctx), Some(Action::CloseDetail));
+            assert_eq!(
+                map_key(Key::Char(' '), NONE, ctx),
+                Some(Action::ToggleDetail)
+            );
+        }
+        // A non-empty search box keeps them: caret movement and spaces in the query.
+        assert_eq!(map_key(Key::Right, NONE, TYPING), None);
+        assert_eq!(map_key(Key::Left, NONE, TYPING), None);
+        assert_eq!(map_key(Key::Char(' '), NONE, TYPING), None);
+        // Selection (Shift+arrows) and shortcuts (Ctrl/Alt) are never taken.
+        assert_eq!(map_key(Key::Right, SHIFT, LIST), None);
+        assert_eq!(map_key(Key::Right, CTRL, LIST), None);
+        assert_eq!(map_key(Key::Char(' '), CTRL, LIST), None);
+        assert_eq!(map_key(Key::Char(' '), SHIFT, LIST), None);
+        // A focused chip keeps Space (it toggles the chip) and the arrows.
+        let chip = KeyCtx {
+            search_focused: false,
+            chips_focused: true,
+            ..TYPING
+        };
+        assert_eq!(map_key(Key::Char(' '), NONE, chip), None);
+        assert_eq!(map_key(Key::Right, NONE, chip), None);
     }
 
     #[test]

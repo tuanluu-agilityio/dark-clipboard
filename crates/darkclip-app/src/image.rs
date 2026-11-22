@@ -123,14 +123,14 @@ pub fn decode_png(
     })
 }
 
-/// PNG thumbnail with the longest side at most `max_side`, aspect kept (box filter), never
-/// upscaled. Empty on an encoding failure or an inconsistent image.
-pub fn thumbnail(img: &DecodedImage, max_side: u32) -> Vec<u8> {
+/// Box-filter downscale with the longest side at most `max_side`, aspect kept, never upscaled.
+/// `None` for an inconsistent or empty image.
+pub fn downscale(img: &DecodedImage, max_side: u32) -> Option<DecodedImage> {
     let (w, h) = (u64::from(img.width), u64::from(img.height));
     let long = w.max(h);
     let max_side = u64::from(max_side.max(1));
     if w == 0 || h == 0 || img.rgba.len() as u64 != w * h * 4 {
-        return Vec::new();
+        return None;
     }
     let (tw, th) = if long <= max_side {
         (w, h)
@@ -162,13 +162,26 @@ pub fn thumbnail(img: &DecodedImage, max_side: u32) -> Vec<u8> {
             }
         }
     }
+    Some(DecodedImage {
+        rgba: std::mem::take(&mut *out),
+        width: tw as u32,
+        height: th as u32,
+    })
+}
+
+/// PNG thumbnail with the longest side at most `max_side`, aspect kept (box filter), never
+/// upscaled. Empty on an encoding failure or an inconsistent image.
+pub fn thumbnail(img: &DecodedImage, max_side: u32) -> Vec<u8> {
+    let Some(small) = downscale(img, max_side) else {
+        return Vec::new();
+    };
     let mut png_bytes = Vec::new();
-    let mut enc = png::Encoder::new(&mut png_bytes, tw as u32, th as u32);
+    let mut enc = png::Encoder::new(&mut png_bytes, small.width, small.height);
     enc.set_color(ColorType::Rgba);
     enc.set_depth(BitDepth::Eight);
     let ok = enc
         .write_header()
-        .and_then(|mut w| w.write_image_data(&out))
+        .and_then(|mut w| w.write_image_data(&small.rgba))
         .is_ok();
     if ok {
         png_bytes
@@ -366,5 +379,24 @@ pub(crate) mod tests {
             let d = decode_png(&t, MAX_PIXELS, MAX_RGBA_BYTES).unwrap();
             assert_eq!((d.width, d.height), want);
         }
+    }
+
+    #[test]
+    fn downscale_keeps_aspect_and_never_upscales() {
+        let d = downscale(&solid(2000, 1000), 500).unwrap();
+        assert_eq!((d.width, d.height), (500, 250));
+        assert_eq!(d.rgba.len(), 500 * 250 * 4);
+        assert!(d.rgba.iter().all(|&v| v == 200));
+        let same = downscale(&solid(30, 20), 500).unwrap();
+        assert_eq!((same.width, same.height), (30, 20));
+        assert!(downscale(
+            &DecodedImage {
+                rgba: vec![0; 3],
+                width: 1,
+                height: 1
+            },
+            10
+        )
+        .is_none());
     }
 }
