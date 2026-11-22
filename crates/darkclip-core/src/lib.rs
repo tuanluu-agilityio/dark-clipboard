@@ -10,6 +10,7 @@ pub mod i18n;
 pub mod ids;
 pub mod model;
 pub mod redact;
+pub mod sensitive;
 pub mod time;
 
 pub use error::CoreError;
