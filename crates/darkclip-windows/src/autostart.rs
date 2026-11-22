@@ -3,6 +3,9 @@
 //! executable and no arguments. Per-user only; nothing is written outside that key. The
 //! command string is built by a pure function so its tests run on every OS.
 
+// The pure helpers are used only by the Windows adapter; their tests run on every OS.
+#![cfg_attr(not(windows), allow(dead_code))]
+
 use std::path::Path;
 
 /// The `Run` key, relative to `HKEY_CURRENT_USER`.
