@@ -576,8 +576,8 @@ mod tests {
     fn search_prefix() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        s.upsert_clip(text_clip("kubectl get pods")).unwrap();
-        s.upsert_clip(text_clip("unrelated words")).unwrap();
+        s.upsert_clip(&text_clip("kubectl get pods")).unwrap();
+        s.upsert_clip(&text_clip("unrelated words")).unwrap();
         let r = s.search(&q("kube")).unwrap();
         assert_eq!(previews(&r), vec!["kubectl get pods"]);
     }
@@ -587,7 +587,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
         let long = format!("{} needlebody", "filler ".repeat(200));
-        s.upsert_clip(text_clip(&long)).unwrap();
+        s.upsert_clip(&text_clip(&long)).unwrap();
         assert_eq!(s.search(&q("needlebody")).unwrap().0.len(), 1);
     }
 
@@ -595,7 +595,7 @@ mod tests {
     fn search_diacritic_insensitive() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        s.upsert_clip(text_clip("Tiếng Việt")).unwrap();
+        s.upsert_clip(&text_clip("Tiếng Việt")).unwrap();
         let r = s.search(&q("tieng viet")).unwrap();
         assert_eq!(previews(&r), vec!["Tiếng Việt"]);
     }
@@ -604,8 +604,8 @@ mod tests {
     fn search_short_query_fallback() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        s.upsert_clip(text_clip("mydb_backup")).unwrap();
-        s.upsert_clip(text_clip("nothing here")).unwrap();
+        s.upsert_clip(&text_clip("mydb_backup")).unwrap();
+        s.upsert_clip(&text_clip("nothing here")).unwrap();
         let r = s.search(&q("db")).unwrap();
         assert_eq!(previews(&r), vec!["mydb_backup"]);
     }
@@ -614,9 +614,9 @@ mod tests {
     fn search_operators_are_literal() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        s.upsert_clip(text_clip("alpha beta")).unwrap();
-        s.upsert_clip(text_clip("NOT OR gate")).unwrap();
-        s.upsert_clip(text_clip("say \"hi\" to NOT")).unwrap();
+        s.upsert_clip(&text_clip("alpha beta")).unwrap();
+        s.upsert_clip(&text_clip("NOT OR gate")).unwrap();
+        s.upsert_clip(&text_clip("say \"hi\" to NOT")).unwrap();
         // Operators are plain words: "NOT OR" needs both words as prefixes.
         let r = s.search(&q("NOT OR \"")).unwrap();
         assert_eq!(previews(&r), vec!["NOT OR gate"]);
@@ -639,9 +639,9 @@ mod tests {
     fn masked_excluded_from_mcp_style_query() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        s.upsert_clip(masked_clip("sk_live_hunter2secret", "sk_l…[masked]"))
+        s.upsert_clip(&masked_clip("sk_live_hunter2secret", "sk_l…[masked]"))
             .unwrap();
-        s.upsert_clip(text_clip("a normal masked-looking note"))
+        s.upsert_clip(&text_clip("a normal masked-looking note"))
             .unwrap();
         let mut mcp = q("masked");
         mcp.include_masked = false;
@@ -660,7 +660,7 @@ mod tests {
     fn masked_body_is_never_indexed() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        s.upsert_clip(masked_clip("hunter2secretvalue", "hunt…[masked]"))
+        s.upsert_clip(&masked_clip("hunter2secretvalue", "hunt…[masked]"))
             .unwrap();
         assert!(s.search(&q("hunter2secretvalue")).unwrap().0.is_empty());
         let n: i64 = s
@@ -678,8 +678,8 @@ mod tests {
     fn bump_replaces_fts_row() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        let id = id_of(s.upsert_clip(text_clip("kubectl get pods")).unwrap());
-        let again = s.upsert_clip(text_clip("kubectl get pods")).unwrap();
+        let id = id_of(s.upsert_clip(&text_clip("kubectl get pods")).unwrap());
+        let again = s.upsert_clip(&text_clip("kubectl get pods")).unwrap();
         assert_eq!(again, UpsertOutcome::Bumped(id));
         let n: i64 = s
             .conn
@@ -694,7 +694,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
         let text = format!("{} tailmarker", "a ".repeat(20_000));
-        s.upsert_clip(text_clip(&text)).unwrap();
+        s.upsert_clip(&text_clip(&text)).unwrap();
         assert!(s.search(&q("tailmarker")).unwrap().0.is_empty());
         assert_eq!(truncate_body("é".repeat(40_000).as_str()).len(), 32 * 1024);
     }
@@ -721,7 +721,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
         for i in 0..10 {
-            s.upsert_clip(text_clip(&format!("item number {i}")))
+            s.upsert_clip(&text_clip(&format!("item number {i}")))
                 .unwrap();
         }
         let mut query = q("");
@@ -730,7 +730,7 @@ mod tests {
         let (p1, c1) = s.search(&query).unwrap();
         assert_eq!(p1.len(), 4);
         // A new clip arrives between pages.
-        s.upsert_clip(text_clip("brand new arrival")).unwrap();
+        s.upsert_clip(&text_clip("brand new arrival")).unwrap();
         query.cursor = Some(Cursor::decode(&c1.unwrap().encode()).unwrap());
         let (p2, c2) = s.search(&query).unwrap();
         query.cursor = Some(c2.unwrap());
@@ -750,9 +750,9 @@ mod tests {
     fn kinds_filter() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        s.upsert_clip(text_clip("https://example.com/page"))
+        s.upsert_clip(&text_clip("https://example.com/page"))
             .unwrap();
-        s.upsert_clip(text_clip("just some text")).unwrap();
+        s.upsert_clip(&text_clip("just some text")).unwrap();
         let mut query = q("");
         query.text = None;
         query.kinds = vec![ClipType::Url];
@@ -769,9 +769,9 @@ mod tests {
     fn pinned_first() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        let old = id_of(s.upsert_clip(text_clip("pin target old")).unwrap());
-        s.upsert_clip(text_clip("middle clip")).unwrap();
-        s.upsert_clip(text_clip("newest clip")).unwrap();
+        let old = id_of(s.upsert_clip(&text_clip("pin target old")).unwrap());
+        s.upsert_clip(&text_clip("middle clip")).unwrap();
+        s.upsert_clip(&text_clip("newest clip")).unwrap();
         s.set_pinned(&old, true).unwrap();
         let mut query = q("");
         query.text = None;
@@ -799,7 +799,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
         for i in 0..210 {
-            s.upsert_clip(text_clip(&format!("clip {i}"))).unwrap();
+            s.upsert_clip(&text_clip(&format!("clip {i}"))).unwrap();
         }
         let mut query = q("");
         query.text = None;
@@ -814,11 +814,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
         for i in 0..30 {
-            let id = id_of(s.upsert_clip(text_clip(&format!("pinned {i}"))).unwrap());
+            let id = id_of(s.upsert_clip(&text_clip(&format!("pinned {i}"))).unwrap());
             s.set_pinned(&id, true).unwrap();
         }
         for i in 0..30 {
-            s.upsert_clip(text_clip(&format!("plain {i}"))).unwrap();
+            s.upsert_clip(&text_clip(&format!("plain {i}"))).unwrap();
         }
         let mut query = q("");
         query.text = None;
@@ -854,7 +854,7 @@ mod tests {
     fn nul_in_query_is_harmless() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        s.upsert_clip(text_clip("abc def")).unwrap();
+        s.upsert_clip(&text_clip("abc def")).unwrap();
         assert!(s.search(&q("abc\0def")).is_ok());
         assert!(s.search(&q("a\0")).is_ok());
         assert_eq!(s.search(&q("abc\0def")).unwrap().0.len(), 1);
@@ -864,10 +864,10 @@ mod tests {
     fn text_results_pinned_then_bm25_then_recency() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        let older = id_of(s.upsert_clip(text_clip("needle needle alpha")).unwrap());
+        let older = id_of(s.upsert_clip(&text_clip("needle needle alpha")).unwrap());
         let weak = format!("needle {}", "filler ".repeat(40));
-        let weak = id_of(s.upsert_clip(text_clip(&weak)).unwrap());
-        let newer = id_of(s.upsert_clip(text_clip("needle needle bravo")).unwrap());
+        let weak = id_of(s.upsert_clip(&text_clip(&weak)).unwrap());
+        let newer = id_of(s.upsert_clip(&text_clip("needle needle bravo")).unwrap());
         let ids = |r: (Vec<ClipSummary>, Option<Cursor>)| -> Vec<ClipId> {
             r.0.iter().map(|c| c.id).collect()
         };
@@ -899,7 +899,7 @@ mod tests {
     /// [`FTS_CANDIDATES`] best.
     fn crowded(s: &mut Storage) {
         for i in 0..600 {
-            s.upsert_clip(text_clip(&format!("token token clip{i}")))
+            s.upsert_clip(&text_clip(&format!("token token clip{i}")))
                 .unwrap();
         }
     }
@@ -935,7 +935,7 @@ mod tests {
             reps,
             ..text_clip("unused")
         };
-        let img = id_of(s.upsert_clip(img).unwrap());
+        let img = id_of(s.upsert_clip(&img).unwrap());
         assert!(!in_top_candidates(&s, "\"token\"*", &img), "precondition");
         let mut query = q("token");
         query.kinds = vec![ClipType::Image];
@@ -949,7 +949,7 @@ mod tests {
         let mut s = open(tmp.path());
         crowded(&mut s);
         let weak = format!("token {}", "filler ".repeat(60));
-        let weak = id_of(s.upsert_clip(text_clip(&weak)).unwrap());
+        let weak = id_of(s.upsert_clip(&text_clip(&weak)).unwrap());
         s.set_pinned(&weak, true).unwrap();
         assert!(!in_top_candidates(&s, "\"token\"*", &weak), "precondition");
         let r = s.search(&q("token")).unwrap();
@@ -970,8 +970,8 @@ mod tests {
         let mut s = Storage::open(tmp.path(), OpenMode::ReadWrite, c.clone()).unwrap();
         let mut soon = text_clip("kubectl expiring row");
         soon.expires_at = Some(Timestamp(T0 + 1000));
-        s.upsert_clip(soon).unwrap();
-        s.upsert_clip(text_clip("kubectl lasting row")).unwrap();
+        s.upsert_clip(&soon).unwrap();
+        s.upsert_clip(&text_clip("kubectl lasting row")).unwrap();
         let mut list = q("");
         list.text = None;
         let paths = [q("kubectl"), q("ku"), list];
@@ -1016,7 +1016,7 @@ mod tests {
                 text.push_str(words[usize::try_from(next() % 30).unwrap()]);
                 text.push(' ');
             }
-            s.upsert_clip(text_clip(&text)).unwrap();
+            s.upsert_clip(&text_clip(&text)).unwrap();
         }
         let mut times = Vec::new();
         for n in 0..200usize {
@@ -1099,7 +1099,7 @@ mod tests {
                 text.push(' ');
             }
             lens += text.len();
-            s.upsert_clip(text_clip(&text)).unwrap();
+            s.upsert_clip(&text_clip(&text)).unwrap();
         }
         let mut times = Vec::new();
         let mut empty = 0;

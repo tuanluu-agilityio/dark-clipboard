@@ -31,6 +31,7 @@ const KNOWN_EVENTS: &[&str] = &[
     "stop_requested",
     "stop",
     "stop_failed",
+    "start_failed",
 ];
 
 #[cfg(windows)]

@@ -76,8 +76,9 @@ impl Log {
             return;
         };
         let add = u64::try_from(line.len()).unwrap_or(u64::MAX);
-        if inner.size.saturating_add(add) > MAX_LOG_SIZE {
-            inner.rotate();
+        if inner.size.saturating_add(add) > MAX_LOG_SIZE && !inner.rotate() {
+            *guard = None;
+            return;
         }
         if inner.file.write_all(line.as_bytes()).is_ok() {
             inner.size = inner.size.saturating_add(add);
@@ -87,16 +88,22 @@ impl Log {
 
 impl Inner {
     /// Keeps one old file: the current log becomes `.log.1` (replacing the previous one).
-    fn rotate(&mut self) {
+    /// Returns false when the new file cannot be opened; the caller then stops logging, so
+    /// nothing grows without bound.
+    fn rotate(&mut self) -> bool {
         let _ = fs::remove_file(&self.rotated);
         let _ = fs::rename(&self.path, &self.rotated);
-        if let Ok(f) = OpenOptions::new()
+        match OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.path)
         {
-            self.file = f;
-            self.size = 0;
+            Ok(f) => {
+                self.file = f;
+                self.size = 0;
+                true
+            }
+            Err(_) => false,
         }
     }
 }

@@ -786,7 +786,7 @@ mod tests {
         {
             let mut s = Storage::open(dir.path(), OpenMode::ReadWrite, Arc::clone(&clock)).unwrap();
             for (text, masked) in seed {
-                match s.upsert_clip(new_clip(text, *masked)).unwrap() {
+                match s.upsert_clip(&new_clip(text, *masked)).unwrap() {
                     darkclip_storage::UpsertOutcome::Inserted(id)
                     | darkclip_storage::UpsertOutcome::Bumped(id) => ids.push(id),
                 }

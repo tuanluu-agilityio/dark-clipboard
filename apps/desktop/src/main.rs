@@ -117,6 +117,13 @@ fn default_data_dir() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("DarkClipboard"))
 }
 
+/// Default settings file (system-overview §10: config lives in `%APPDATA%`, not with the data).
+#[cfg(windows)]
+fn default_settings_path() -> Option<PathBuf> {
+    std::env::var_os("APPDATA")
+        .map(|p| PathBuf::from(p).join("DarkClipboard").join("settings.json"))
+}
+
 #[cfg(windows)]
 fn platform() -> Result<darkclip_platform::PlatformBundle, darkclip_platform::PlatformError> {
     darkclip_windows::create()
@@ -124,6 +131,11 @@ fn platform() -> Result<darkclip_platform::PlatformBundle, darkclip_platform::Pl
 
 #[cfg(not(windows))]
 fn default_data_dir() -> Option<PathBuf> {
+    None
+}
+
+#[cfg(not(windows))]
+fn default_settings_path() -> Option<PathBuf> {
     None
 }
 
@@ -171,13 +183,26 @@ fn run_headless(cli: &Cli, lang: Lang) -> ExitCode {
         Ok(b) => b,
         Err(_) => {
             log.event("start_failed", &[("stage", Val::Name("platform"))]);
-            eprintln!("{}", t(lang, Msg::CliNotSupportedYet));
-            return ExitCode::from(2);
+            eprintln!("{}", t(lang, Msg::CliStartFailed));
+            return ExitCode::from(1);
         }
     };
 
     let (ev_tx, ev_rx) = mpsc::channel::<AppEvent>();
-    let settings_path = data_dir.join("settings.json");
+    // `--data-dir` keeps everything (settings and data) in that folder, for tests.
+    let settings_path = if cli.data_dir.is_some() {
+        Some(data_dir.join("settings.json"))
+    } else {
+        default_settings_path()
+    };
+    let Some(settings_path) = settings_path else {
+        log.event("start_failed", &[("stage", Val::Name("settings_path"))]);
+        eprintln!("{}", t(lang, Msg::CliStartFailed));
+        return ExitCode::from(1);
+    };
+    if let Some(dir) = settings_path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
     let started = App::start(
         bundle,
         &data_dir,
@@ -203,7 +228,11 @@ fn run_headless(cli: &Cli, lang: Lang) -> ExitCode {
     })
     .is_err()
     {
-        log.event("start_failed", &[("stage", Val::Name("ctrl_handler"))]);
+        // Without a handler Ctrl+C would kill the process without a clean stop.
+        log.event("start_failed", &[("stage", Val::Name("no_handler"))]);
+        eprintln!("{}", t(lang, Msg::CliStartFailed));
+        let _ = app.shutdown();
+        return ExitCode::from(1);
     }
 
     // Counts events; blocks on the channel (no polling).

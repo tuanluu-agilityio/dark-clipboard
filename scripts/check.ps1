@@ -57,13 +57,15 @@ foreach ($f in $rs) {
 if ($bad) { exit 1 }
 
 Write-Host '== headless binary: log/print lines carry no content-like words (S-10)'
-# In apps/desktop/src/**, a log or print macro line must not mention preview, content, bytes, text, query,
+# In apps/*/src/**, a log or print macro line must not mention preview, content, bytes, text, query,
 # or Debug formatting. Line based: keep such macro calls on one line. Bash twin: scripts/check.sh.
-$s10Words = 'preview|content|bytes|text|query|\{:\?\}|\{:#\?\}'
+$s10Words = 'preview|content|bytes|text|query|\{[^}]*:#?\?\}'
+# Log lines: the macros of the GC-06 rule, plus calls of the binary's own logger (`.event(`, `Val::`).
+$s10Lines = $logPattern + '|\.event\s*\(|\bVal::'
 foreach ($f in $rs) {
     $rel = Rel $f
-    if ($rel -notmatch '^apps/desktop/src/.*\.rs$') { continue }
-    foreach ($h in @(Select-String -LiteralPath $f.FullName -Pattern $logPattern)) {
+    if ($rel -notmatch '^apps/[^/]+/src/.*\.rs$') { continue }
+    foreach ($h in @(Select-String -LiteralPath $f.FullName -Pattern $s10Lines)) {
         if ($h.Line -match $s10Words) { Write-Host "CHECK FAILED: content-like word in log/print line ${rel}:$($h.LineNumber)"; $bad = $true }
     }
 }

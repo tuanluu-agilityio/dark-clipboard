@@ -32,8 +32,8 @@ hits="$(rs_files | grep -E '^(crates/darkclip-app/src/capture\.rs|crates/darkcli
 echo "== headless binary: log/print lines carry no content-like words (S-10)"
 # Twin of the rule in check.ps1: line based; keep such macro calls on one line.
 hits="$(find apps -path '*/src/*' -name '*.rs' -not -path '*/target/*' 2>/dev/null \
-  | xargs -r grep -nE '\b(e?println|e?print|dbg)!|\b(log|tracing)::(trace|debug|info|warn|error)!|\b(trace|debug|info|warn|error)!\s*\(' \
-  | grep -E 'preview|content|bytes|text|query|\{:\?\}|\{:#\?\}' || true)"
+  | xargs -r grep -nE '\b(e?println|e?print|dbg)!|\b(log|tracing)::(trace|debug|info|warn|error)!|\b(trace|debug|info|warn|error)!\s*\(|\.event\s*\(|\bVal::' \
+  | grep -iE 'preview|content|bytes|text|query|\{[^}]*:#?\?\}' || true)"
 [ -z "$hits" ] || { echo "CHECK FAILED: content-like word in log/print line:"; echo "$hits"; exit 1; }
 
 echo "== clipboard read/write only from the capture actor (GC-03)"

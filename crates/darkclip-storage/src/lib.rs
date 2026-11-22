@@ -51,9 +51,9 @@ pub enum OpenMode {
 }
 
 /// A classified capture ready to store. `classified.preview` must already be the
-/// masked preview for masked clips; storage stores what it is given. `Clone` so the capture
-/// actor can retry once after `StorageFull` (F-02); the spare copy is wiped by the caller.
-#[derive(Clone)]
+/// masked preview for masked clips; storage stores what it is given. `upsert_clip` borrows it, so the
+/// capture actor can retry once after `StorageFull` (F-02) with the same value and wipe it
+/// afterwards.
 pub struct NewClip {
     pub classified: Classified,
     pub hash: [u8; 32],
@@ -226,7 +226,7 @@ mod tests {
     fn upsert_same_hash_bumps() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        let UpsertOutcome::Inserted(id) = s.upsert_clip(text_clip("hello world")).unwrap() else {
+        let UpsertOutcome::Inserted(id) = s.upsert_clip(&text_clip("hello world")).unwrap() else {
             panic!("expected Inserted");
         };
         let first = s.get_clip(&id).unwrap().unwrap();
@@ -237,7 +237,7 @@ mod tests {
             platform: Platform::Windows,
             confidence: SourceConfidence::Frontmost,
         });
-        assert_eq!(s.upsert_clip(again).unwrap(), UpsertOutcome::Bumped(id));
+        assert_eq!(s.upsert_clip(&again).unwrap(), UpsertOutcome::Bumped(id));
         assert_eq!(count(&s, "SELECT count(*) FROM clips"), 1);
         assert_eq!(count(&s, "SELECT count(*) FROM representations"), 1);
         let c = s.get_clip(&id).unwrap().unwrap();
@@ -255,7 +255,7 @@ mod tests {
     fn small_text_inline() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        let UpsertOutcome::Inserted(id) = s.upsert_clip(text_clip("short text")).unwrap() else {
+        let UpsertOutcome::Inserted(id) = s.upsert_clip(&text_clip("short text")).unwrap() else {
             panic!("expected Inserted");
         };
         let c = s.get_clip(&id).unwrap().unwrap();
@@ -277,7 +277,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
         let text = "x".repeat(70 * 1024);
-        let UpsertOutcome::Inserted(id) = s.upsert_clip(text_clip(&text)).unwrap() else {
+        let UpsertOutcome::Inserted(id) = s.upsert_clip(&text_clip(&text)).unwrap() else {
             panic!("expected Inserted");
         };
         let c = s.get_clip(&id).unwrap().unwrap();
@@ -308,7 +308,7 @@ mod tests {
         }
         // exactly 64 KiB stays inline
         let edge = "y".repeat(64 * 1024);
-        let UpsertOutcome::Inserted(id2) = s.upsert_clip(text_clip(&edge)).unwrap() else {
+        let UpsertOutcome::Inserted(id2) = s.upsert_clip(&text_clip(&edge)).unwrap() else {
             panic!("expected Inserted");
         };
         let c2 = s.get_clip(&id2).unwrap().unwrap();
@@ -325,10 +325,10 @@ mod tests {
         img.height = Some(1);
         let a = new_clip(vec![raw(Mime::TextPlain, b"caption one"), img.clone()]);
         let b = new_clip(vec![raw(Mime::TextPlain, b"caption two"), img]);
-        let UpsertOutcome::Inserted(ia) = s.upsert_clip(a).unwrap() else {
+        let UpsertOutcome::Inserted(ia) = s.upsert_clip(&a).unwrap() else {
             panic!("expected Inserted");
         };
-        let UpsertOutcome::Inserted(ib) = s.upsert_clip(b).unwrap() else {
+        let UpsertOutcome::Inserted(ib) = s.upsert_clip(&b).unwrap() else {
             panic!("expected Inserted");
         };
         assert_ne!(ia, ib);
@@ -357,7 +357,7 @@ mod tests {
         let mut n = new_clip(vec![img]);
         let thumb = png_bytes(2);
         n.thumbnail_png = Some(thumb.clone());
-        let UpsertOutcome::Inserted(id) = s.upsert_clip(n).unwrap() else {
+        let UpsertOutcome::Inserted(id) = s.upsert_clip(&n).unwrap() else {
             panic!("expected Inserted");
         };
         let c = s.get_clip(&id).unwrap().unwrap();
@@ -375,7 +375,7 @@ mod tests {
     fn mark_used_and_set_pinned() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        let UpsertOutcome::Inserted(id) = s.upsert_clip(text_clip("pin me")).unwrap() else {
+        let UpsertOutcome::Inserted(id) = s.upsert_clip(&text_clip("pin me")).unwrap() else {
             panic!("expected Inserted");
         };
         s.mark_used(&id).unwrap();
@@ -403,7 +403,7 @@ mod tests {
             categories: vec![SensitiveCategory::ApiKey],
         };
         assert!(matches!(
-            s.upsert_clip(n),
+            s.upsert_clip(&n),
             Err(StorageError::Invalid(darkclip_core::CoreError::Invalid {
                 field: "expires_at"
             }))
@@ -415,7 +415,7 @@ mod tests {
             categories: vec![SensitiveCategory::ApiKey],
         };
         n.expires_at = Some(Timestamp(1_795_320_120_000));
-        let UpsertOutcome::Inserted(id) = s.upsert_clip(n).unwrap() else {
+        let UpsertOutcome::Inserted(id) = s.upsert_clip(&n).unwrap() else {
             panic!("expected Inserted");
         };
         let c = s.get_clip(&id).unwrap().unwrap();
@@ -430,10 +430,10 @@ mod tests {
         let mut s = open(tmp.path());
         let mut n = new_clip(vec![]);
         n.hash = [3; 32];
-        assert!(matches!(s.upsert_clip(n), Err(StorageError::Invalid(_))));
+        assert!(matches!(s.upsert_clip(&n), Err(StorageError::Invalid(_))));
         let mut big = text_clip(&"z".repeat(70 * 1024));
         big.classified.preview = "p".repeat(600);
-        assert!(matches!(s.upsert_clip(big), Err(StorageError::Invalid(_))));
+        assert!(matches!(s.upsert_clip(&big), Err(StorageError::Invalid(_))));
         assert_eq!(count(&s, "SELECT count(*) FROM clips"), 0);
         assert!(files_under(&tmp.path().join("blobs")).is_empty());
     }
@@ -443,7 +443,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let id = {
             let mut s = open(tmp.path());
-            match s.upsert_clip(text_clip("stored")).unwrap() {
+            match s.upsert_clip(&text_clip("stored")).unwrap() {
                 UpsertOutcome::Inserted(id) => id,
                 UpsertOutcome::Bumped(_) => panic!("expected Inserted"),
             }
@@ -453,7 +453,7 @@ mod tests {
         assert!(ro.get_clip(&id).unwrap().is_some());
         assert_eq!(ro.read_representation(&id, 0).unwrap(), b"stored");
         assert_eq!(
-            ro.upsert_clip(text_clip("new")),
+            ro.upsert_clip(&text_clip("new")),
             Err(StorageError::ReadOnly)
         );
         assert_eq!(ro.mark_used(&id), Err(StorageError::ReadOnly));
@@ -577,7 +577,7 @@ mod tests {
         let mut s = open(tmp.path());
         s.fail_before_commit = true;
         let text = "q".repeat(70 * 1024);
-        assert!(s.upsert_clip(text_clip(&text)).is_err());
+        assert!(s.upsert_clip(&text_clip(&text)).is_err());
         assert_eq!(
             files_under(&tmp.path().join("blobs")).len(),
             1,
@@ -614,7 +614,7 @@ mod tests {
             raw(Mime::TextPlain, b"para"),
             raw(Mime::TextHtml, html.as_bytes()),
         ]);
-        let UpsertOutcome::Inserted(id) = s.upsert_clip(first).unwrap() else {
+        let UpsertOutcome::Inserted(id) = s.upsert_clip(&first).unwrap() else {
             panic!("expected Inserted");
         };
         assert_eq!(files_under(&tmp.path().join("blobs")).len(), 1);
@@ -622,7 +622,7 @@ mod tests {
             raw(Mime::TextPlain, b"para"),
             raw(Mime::TextHtml, b"<p>para</p>"),
         ]);
-        assert_eq!(s.upsert_clip(second).unwrap(), UpsertOutcome::Bumped(id));
+        assert_eq!(s.upsert_clip(&second).unwrap(), UpsertOutcome::Bumped(id));
         let c = s.get_clip(&id).unwrap().unwrap();
         assert_eq!(c.representations.len(), 2);
         assert_eq!(c.representations[1].storage, RepStorage::Inline);
@@ -770,7 +770,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
         let text = "r".repeat(70 * 1024);
-        let UpsertOutcome::Inserted(id) = s.upsert_clip(text_clip(&text)).unwrap() else {
+        let UpsertOutcome::Inserted(id) = s.upsert_clip(&text_clip(&text)).unwrap() else {
             panic!("expected Inserted");
         };
         let files = files_under(&tmp.path().join("blobs"));
@@ -782,7 +782,7 @@ mod tests {
             Err(StorageError::Io(std::io::ErrorKind::InvalidData))
         );
         assert_eq!(
-            s.upsert_clip(text_clip(&text)).unwrap(),
+            s.upsert_clip(&text_clip(&text)).unwrap(),
             UpsertOutcome::Bumped(id)
         );
         assert_eq!(s.read_representation(&id, 0).unwrap(), text.as_bytes());
@@ -793,7 +793,7 @@ mod tests {
     fn deleting_clip_removes_fts_row() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path());
-        let UpsertOutcome::Inserted(id) = s.upsert_clip(text_clip("findable words")).unwrap()
+        let UpsertOutcome::Inserted(id) = s.upsert_clip(&text_clip("findable words")).unwrap()
         else {
             panic!("expected Inserted");
         };
