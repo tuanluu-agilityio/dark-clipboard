@@ -1,0 +1,192 @@
+// Popup building blocks (Task 204). Data comes from Rust (`src/ui/popup_host.rs`); every string
+// comes from the `Strings` global (i18n). Dark only (D-037).
+
+import { Theme, Strings } from "theme.slint";
+
+// One piece of a preview line; `hit` pieces matched the search.
+export struct Seg {
+    text: string,
+    hit: bool,
+}
+
+// One row of the list: a one-line preview (already cut and split into pieces in Rust), a line
+// of details (number, kind, source app) and the plain preview for screen readers.
+export struct ClipRow {
+    segs: [Seg],
+    meta: string,
+    label: string,
+    pinned: bool,
+}
+
+// A filter chip. `id` is opaque to the markup (Rust decides what it means).
+export struct Chip {
+    id: int,
+    label: string,
+    on: bool,
+}
+
+export global RowMetrics {
+    out property <length> height: 48px;
+}
+
+export component ChipView inherits FocusScope {
+    in property <Chip> chip;
+    callback toggled();
+    callback focused(length, length);
+    // Every focus change, so Rust knows which chip has the focus (Enter/Space toggle it).
+    callback focus-report(bool);
+
+    focus-on-click: false;
+    height: 26px;
+    min-width: label.preferred-width + 22px;
+    accessible-role: checkbox;
+    accessible-checkable: true;
+    accessible-checked: chip.on;
+    accessible-label: chip.label;
+    accessible-action-default => {
+        root.toggled();
+    }
+
+    key-pressed(e) => {
+        if (e.text == " " || e.text == Key.Return) {
+            root.toggled();
+            return accept;
+        }
+        reject
+    }
+    focus-gained(reason) => {
+        root.focused(self.x, self.width);
+        root.focus-report(true);
+    }
+    focus-lost(reason) => {
+        root.focus-report(false);
+    }
+
+    Rectangle {
+        border-radius: 13px;
+        background: chip.on ? Theme.accent : (touch.has-hover ? Theme.line : Theme.surface);
+        border-width: root.has-focus ? 2px : 1px;
+        border-color: root.has-focus ? Theme.text : (chip.on ? Theme.accent : Theme.line);
+        label := Text {
+            text: chip.label;
+            color: chip.on ? Theme.bg : Theme.text;
+            font-size: 12px;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.toggled();
+        }
+    }
+}
+
+export component ActionButton inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+
+    height: 26px;
+    min-width: label.preferred-width + 16px;
+    border-radius: 5px;
+    background: touch.has-hover ? Theme.surface : transparent;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    label := Text {
+        text: root.text;
+        color: touch.has-hover ? Theme.text : Theme.text-muted;
+        font-size: 12px;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component RowView inherits Rectangle {
+    in property <ClipRow> data;
+    in property <bool> selected;
+    in property <int> index;
+    callback clicked();
+    callback activated();
+
+    height: RowMetrics.height;
+    border-radius: 6px;
+    background: selected ? Theme.surface : (touch.has-hover ? Theme.surface.with-alpha(0.5) : transparent);
+    accessible-role: list-item;
+    accessible-label: data.label;
+    accessible-description: data.meta;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.selected;
+    accessible-item-index: root.index;
+    accessible-action-default => {
+        root.activated();
+    }
+
+    // Pinned clips carry an accent bar on the left.
+    Rectangle {
+        x: 0;
+        y: 8px;
+        width: 3px;
+        height: parent.height - 16px;
+        border-radius: 1.5px;
+        background: Theme.accent;
+        visible: data.pinned;
+    }
+
+    VerticalLayout {
+        padding-left: 12px;
+        padding-right: 10px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        spacing: 2px;
+
+        // The preview line: pieces side by side, cut at the right edge.
+        Rectangle {
+            height: 19px;
+            min-width: 0px;
+            horizontal-stretch: 1;
+            clip: true;
+            HorizontalLayout {
+                alignment: start;
+                spacing: 0px;
+                for s in data.segs: Text {
+                    text: s.text;
+                    min-width: self.preferred-width;
+                    color: s.hit ? Theme.accent : Theme.text;
+                    font-weight: s.hit ? 700 : 400;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        Text {
+            text: data.meta;
+            color: Theme.text-muted;
+            font-size: 11px;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+        double-clicked => {
+            root.activated();
+        }
+    }
+}

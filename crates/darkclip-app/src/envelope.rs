@@ -112,6 +112,7 @@ mod tests {
             pinned: true,
             last_copied_at: Timestamp::parse_rfc3339("2026-11-22T04:01:44.903Z").unwrap(),
             masked: false,
+            source_app: None,
         }
     }
 

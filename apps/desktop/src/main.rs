@@ -14,6 +14,8 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod log;
+mod popup;
+mod seed;
 mod shortcut;
 mod single_instance;
 mod theme;
@@ -46,6 +48,8 @@ enum Mode {
     Toggle,
     /// Ask the running instance to quit.
     Quit,
+    /// Dev flag: write synthetic demo clips into `--data-dir`, then exit (Task 204).
+    Seed,
     Help,
 }
 
@@ -58,6 +62,8 @@ struct Cli {
     exit_after_ms: Option<u64>,
     /// Hidden test flag: do not register the global shortcut with the OS.
     no_global_shortcut: bool,
+    /// Dev flag `--seed-demo-clips N` (1..=100,000).
+    seed_demo_clips: Option<u32>,
 }
 
 /// `Err(())` is a malformed command line (exit code 2).
@@ -67,6 +73,7 @@ fn parse_args(args: &[String]) -> Result<Cli, ()> {
         data_dir: None,
         exit_after_ms: None,
         no_global_shortcut: false,
+        seed_demo_clips: None,
     };
     let mut chosen: Option<Mode> = None;
     let mut pick = |m: Mode| -> Result<(), ()> {
@@ -85,6 +92,14 @@ fn parse_args(args: &[String]) -> Result<Cli, ()> {
             "--help" => pick(Mode::Help)?,
             "--no-global-shortcut" => cli.no_global_shortcut = true,
             "--data-dir" => cli.data_dir = Some(PathBuf::from(it.next().ok_or(())?)),
+            "--seed-demo-clips" => {
+                pick(Mode::Seed)?;
+                let n: u32 = it.next().ok_or(())?.parse().map_err(|_| ())?;
+                if n == 0 || n > seed::MAX_DEMO_CLIPS {
+                    return Err(());
+                }
+                cli.seed_demo_clips = Some(n);
+            }
             "--exit-after-ms" => {
                 cli.exit_after_ms = Some(it.next().ok_or(())?.parse().map_err(|_| ())?);
             }
@@ -219,6 +234,9 @@ fn platform() -> Result<darkclip_platform::PlatformBundle, darkclip_platform::Pl
 fn main() -> ExitCode {
     #[cfg(windows)]
     winsys::attach_parent_console();
+    // Before any window exists (the popup must be crisp on every monitor, Task 204).
+    #[cfg(windows)]
+    winsys::set_per_monitor_dpi_awareness();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Until the settings are read, messages follow the OS language.
     let lang = ui::os_lang();
@@ -229,6 +247,9 @@ fn main() -> ExitCode {
     if cli.mode == Mode::Help {
         println!("{}", t(lang, Msg::CliUsage));
         return ExitCode::SUCCESS;
+    }
+    if cli.mode == Mode::Seed {
+        return run_seed(&cli, lang);
     }
     if !cfg!(windows) {
         eprintln!("{}", t(lang, Msg::CliNotSupportedYet));
@@ -324,6 +345,31 @@ fn run_app(cli: &Cli, lang: Lang) -> ExitCode {
     } else {
         eprintln!("{}", t(lang, Msg::CliStartFailed));
         ExitCode::from(1)
+    }
+}
+
+/// `--seed-demo-clips N --data-dir <dir>`: synthetic clips for scroll and search tests. Refuses
+/// the default data dir. Prints only a count.
+fn run_seed(cli: &Cli, lang: Lang) -> ExitCode {
+    let default = default_data_dir();
+    let allowed = seed::seed_target_allowed(cli.data_dir.as_deref(), default.as_deref());
+    let (Some(dir), Some(n), true) = (cli.data_dir.as_deref(), cli.seed_demo_clips, allowed) else {
+        eprintln!("{}", t(lang, Msg::CliSeedRefused));
+        return ExitCode::from(2);
+    };
+    if std::fs::create_dir_all(dir).is_err() {
+        eprintln!("{}", t(lang, Msg::CliStartFailed));
+        return ExitCode::from(1);
+    }
+    match seed::seed(dir, n, SystemClock.now()) {
+        Ok(stored) => {
+            println!("{} {stored}", t(lang, Msg::CliSeedDone));
+            ExitCode::SUCCESS
+        }
+        Err(_) => {
+            eprintln!("{}", t(lang, Msg::CliStartFailed));
+            ExitCode::from(1)
+        }
     }
 }
 
@@ -519,6 +565,19 @@ mod tests {
         }
         let c = parse_args(&a(&["--data-dir", "d", "--exit-after-ms", "7"])).unwrap();
         assert_eq!((c.mode, c.exit_after_ms), (Mode::App, Some(7)));
+    }
+
+    #[test]
+    fn seed_demo_clips_flag_is_its_own_mode() {
+        let c = parse_args(&a(&["--seed-demo-clips", "10000", "--data-dir", "d"])).unwrap();
+        assert_eq!(c.mode, Mode::Seed);
+        assert_eq!(c.seed_demo_clips, Some(10_000));
+        assert!(parse_args(&a(&["--seed-demo-clips"])).is_err());
+        assert!(parse_args(&a(&["--seed-demo-clips", "many"])).is_err());
+        assert!(parse_args(&a(&["--seed-demo-clips", "0"])).is_err());
+        assert!(parse_args(&a(&["--seed-demo-clips", "100001"])).is_err());
+        assert!(parse_args(&a(&["--seed-demo-clips", "5", "--toggle"])).is_err());
+        assert_eq!(parse_args(&a(&[])).unwrap().seed_demo_clips, None);
     }
 
     #[test]

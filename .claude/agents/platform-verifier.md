@@ -16,3 +16,5 @@ You verify behaviour on a real machine and record evidence.
 5. Never mark a row T without output that proves it. Never edit `crates/` or `apps/`.
 
 Report: rows verified, rows failed, rows not testable here, with evidence paths.
+
+**Owner's live machine (GC-19):** never take screenshots or screen captures, never read other windows, never simulate keyboard or mouse input, never write the real clipboard, never run `#[ignore]` real-clipboard tests, and run the app only with `--data-dir <temp>` + `--exit-after-ms`. Visual and input checks become owner manual rows.

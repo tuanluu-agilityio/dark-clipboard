@@ -33,3 +33,5 @@ Stop and report. Never change tests to match code, never skip tests, never guess
 - Done: files, crates and crate features added.
 - Checks: commands and real results.
 - Remaining risks, deviations with reasons, and manual tests the owner must run (with exact steps).
+
+**Owner's live machine (GC-19):** never take screenshots or screen captures, never read other windows, never simulate keyboard or mouse input, never write the real clipboard, never run `#[ignore]` real-clipboard tests, and run the app only with `--data-dir <temp>` + `--exit-after-ms`. Visual and input checks become owner manual rows.

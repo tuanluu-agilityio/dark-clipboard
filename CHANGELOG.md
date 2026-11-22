@@ -5,6 +5,7 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 ## [Unreleased]
 
 ### Added (Phase 3 desktop shell)
+- Task 204: the popup. A frameless, always-on-top dark window opens near the cursor on the monitor under it (per-monitor DPI aware) with the search box focused and the recent clips listed, pinned first. Typing searches as you type (accent-insensitive, matched words highlighted); filter chips for kind, pinned, today, 7 days and source app; the list loads more clips as you scroll. Keys: arrows, Page Up/Down, Home/End, Enter copies the clip back, Shift+Enter copies plain text, Ctrl+Enter copies (paste comes with Task 205), Delete removes with an Undo toast, Ctrl+P pins, Alt+1..9 copies the n-th result, Esc or clicking elsewhere closes; every action also has a button. Developer flag `--seed-demo-clips N --data-dir <dir>` writes N synthetic clips (never into the default data folder). Popup open time is logged content-free (`perf` event); `scripts/measure-popup.ps1` reports p50/p95.
 - Task 201: `dark-clipboard` with no flag now starts the Slint app hidden (placeholder window, always dark, English and Vietnamese; the OS language is used on first run). Single instance per user: a second start forwards its command over a named pipe restricted to the current user and exits 0. New `--toggle` (show or hide the popup) and `--quit` ask the running instance; `--help` prints usage. `--headless` is unchanged. No tray, shortcut or popup content yet (Tasks 202-204); the console window of this developer build stays visible.
 
 ### Added
@@ -32,5 +33,5 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 ### Known issues
 - Windows build uses the GUI subsystem (no console window). Interactive cmd and PowerShell do not wait for `dark-clipboard --toggle`, `--quit` or `--help`: output may appear after the prompt and `%ERRORLEVEL%` / `$LASTEXITCODE` are not the real exit code (use `start /wait` or `Start-Process -Wait`). `--headless` started from Explorer has no console or tray and stops only via `--quit` or Task Manager.
 - Windows verification covered KeePassXC 2.8.0 and Darkshot; Bitwarden, 1Password, Office and RDP are untested.
-- No UI yet: only the Windows developer binary (`dark-clipboard --headless`).
+- The popup is Windows only and was measured only through `--toggle` (IPC); the real-shortcut timing, Vietnamese IME, mixed-DPI monitors and 10,000-clip scrolling are owner manual checks. Image thumbnails and the detail view arrive in Task 206; Ctrl+Enter does not paste yet (Task 205). The popup may show a taskbar button while open.
 - macOS and Linux behaviour is untested.

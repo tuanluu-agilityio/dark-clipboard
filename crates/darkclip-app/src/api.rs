@@ -62,6 +62,10 @@ pub struct ClipSummaryView {
     /// Only ever true for `Caller::Ui` (other callers never get masked clips).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub masked: bool,
+    /// Source app name (or id) for the popup's source chips. UI only: never serialized, so
+    /// the envelope (CLI/MCP) is unchanged.
+    #[serde(skip)]
+    pub source_app: Option<String>,
 }
 
 /// Never prints the preview (GC-06).
@@ -86,6 +90,7 @@ impl From<ClipSummary> for ClipSummaryView {
             pinned: c.pinned,
             last_copied_at: c.last_copied_at,
             masked: c.sensitivity == SensitivityLevel::Masked,
+            source_app: c.source_app,
         }
     }
 }
@@ -914,6 +919,19 @@ mod tests {
     }
 
     #[test]
+    fn ui_summaries_carry_the_source_app_but_never_serialize_it() {
+        let h = start(&[("from an editor", false)], None);
+        let page = h.app().search_clips(&Caller::Ui, query(None)).unwrap();
+        assert_eq!(
+            page.items[0].source_app.as_deref(),
+            Some("org.example.editor")
+        );
+        // The envelope shape is unchanged (UI-only field).
+        let env = to_envelope(&Ok(page), Lang::En);
+        assert!(env["data"][0].get("source_app").is_none());
+    }
+
+    #[test]
     fn search_limits_and_cursor() {
         let h = start(&[("alpha one", false), ("alpha two", false)], None);
         let a = h.app();
@@ -1115,6 +1133,7 @@ mod tests {
             pinned: false,
             last_copied_at: Timestamp(T0),
             masked: false,
+            source_app: Some(secret.into()),
         };
         let content = ClipContent {
             text: secret.into(),
@@ -1133,6 +1152,7 @@ mod tests {
             last_copied_at: Timestamp(T0),
             sensitivity: SensitivityLevel::None,
             thumb: None,
+            source_app: None,
         };
         let h = start(&[("clip", false)], None);
         let full = h
