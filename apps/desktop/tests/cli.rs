@@ -113,7 +113,7 @@ fn second_instance_forwards_and_exits_zero() {
     let mut first = bin()
         .arg("--data-dir")
         .arg(dir.path())
-        .args(["--exit-after-ms", "20000"])
+        .args(["--exit-after-ms", "20000", "--no-global-shortcut"])
         .spawn()
         .unwrap();
     wait_running(dir.path());
@@ -163,7 +163,7 @@ fn app_mode_starts_hidden_and_stops_on_timer() {
     let out = bin()
         .arg("--data-dir")
         .arg(dir.path())
-        .args(["--exit-after-ms", "1500"])
+        .args(["--exit-after-ms", "1500", "--no-global-shortcut"])
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0));
@@ -176,4 +176,50 @@ fn app_mode_starts_hidden_and_stops_on_timer() {
         ) || log.ends_with(" stop"),
         "{log}"
     );
+}
+
+/// Runs the app for 1.5 s with `toggle_popup` set in a temp settings file; returns the log.
+/// Never uses the default Ctrl+Shift+V, so the owner's real shortcut is not touched.
+#[cfg(windows)]
+#[allow(clippy::unwrap_used)]
+fn run_with_shortcut(shortcut: &str, extra: &[&str]) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("settings.json"),
+        format!(r#"{{"settings_version":1,"shortcuts":{{"toggle_popup":"{shortcut}"}}}}"#),
+    )
+    .unwrap();
+    let out = bin()
+        .arg("--data-dir")
+        .arg(dir.path())
+        .args(["--exit-after-ms", "1500"])
+        .args(extra)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    std::fs::read_to_string(dir.path().join("logs").join("dark-clipboard.log")).unwrap()
+}
+
+/// Task 203: the configured shortcut is registered with the OS (an unusual combination, so no
+/// real app shortcut is taken); nothing is pressed.
+#[cfg(windows)]
+#[test]
+fn configured_shortcut_is_registered() {
+    let log = run_with_shortcut("Ctrl+Alt+Shift+F24", &[]);
+    assert!(log.contains(" shortcut status=registered"), "{log}");
+}
+
+#[cfg(windows)]
+#[test]
+fn invalid_shortcut_is_reported_and_the_app_keeps_running() {
+    let log = run_with_shortcut("Ctrl+Banana", &[]);
+    assert!(log.contains(" shortcut status=invalid"), "{log}");
+    assert!(log.contains(" running"), "{log}");
+}
+
+#[cfg(windows)]
+#[test]
+fn no_global_shortcut_flag_registers_nothing() {
+    let log = run_with_shortcut("Ctrl+Alt+Shift+F24", &["--no-global-shortcut"]);
+    assert!(!log.contains(" shortcut status=registered"), "{log}");
 }

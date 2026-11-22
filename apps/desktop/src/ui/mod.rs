@@ -24,9 +24,11 @@ mod generated {
 }
 pub use generated::{MainWindow, Strings, Theme};
 
+mod shortcut_host;
 mod tray_host;
 
 use crate::log::{Log, Val};
+use crate::shortcut::{Failure, Status as ShortcutStatus};
 use crate::single_instance::Command;
 use crate::theme;
 use crate::tray::{mode_for, tray_state, MenuAction, TrayState, TrayUpdate, UNTIL_RESUMED};
@@ -36,6 +38,7 @@ use darkclip_app::{App, AppEvent, CaptureConfig, ClipApi};
 use darkclip_core::i18n::{t, Lang, Msg};
 use darkclip_core::Clock;
 use slint::{ComponentHandle, Weak};
+use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
@@ -102,8 +105,15 @@ pub fn os_lang() -> Lang {
     }
 }
 
-fn set_strings(w: &MainWindow, lang: Lang, status: Option<CaptureStatus>) {
+fn set_strings(
+    w: &MainWindow,
+    lang: Lang,
+    status: Option<CaptureStatus>,
+    shortcut: ShortcutStatus,
+) {
     let s = w.global::<Strings>();
+    // Empty when the shortcut works; the settings window (Task 207) shows it when not empty.
+    s.set_shortcut_warning(shortcut.warning().map_or("", |m| t(lang, m)).into());
     s.set_app_name(t(lang, Msg::UiAppName).into());
     s.set_placeholder(t(lang, Msg::UiPopupPlaceholder).into());
     let status = status.map_or(Msg::UiStarting, status_msg);
@@ -143,6 +153,30 @@ pub struct StartArgs {
     pub os_lang: Lang,
 }
 
+/// Whether the global popup shortcut is registered, and what the main thread found at start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortcutMode {
+    /// `--no-global-shortcut` (tests): nothing is registered.
+    Disabled,
+    /// The OS manager could not be created: reported as a registration failure.
+    InitFailed,
+    Enabled,
+}
+
+thread_local! {
+    /// The last shortcut status that was logged (main thread only).
+    static LAST_SHORTCUT: Cell<Option<ShortcutStatus>> = const { Cell::new(None) };
+}
+
+/// The shortcut status for a mode; `apply` registers the configured shortcut when enabled.
+fn shortcut_status(mode: ShortcutMode, wanted: &str) -> ShortcutStatus {
+    match mode {
+        ShortcutMode::Disabled => ShortcutStatus::Off,
+        ShortcutMode::InitFailed => ShortcutStatus::Failed(Failure::Other),
+        ShortcutMode::Enabled => shortcut_host::apply(wanted),
+    }
+}
+
 /// Asks the event loop to end (callable from any thread).
 fn quit_soon() {
     let _ = slint::invoke_from_event_loop(|| {
@@ -167,7 +201,12 @@ fn wake_after(state: TrayState, now: darkclip_core::Timestamp) -> Option<Duratio
 
 /// Reads status, mode and language on the worker, then updates the window and the tray on the
 /// event loop. Returns when the worker should refresh again by itself (a timed pause ends).
-fn push_status(app: &App, ui: &Weak<MainWindow>) -> Option<Duration> {
+fn push_status(
+    app: &App,
+    ui: &Weak<MainWindow>,
+    mode: ShortcutMode,
+    log: &Arc<Log>,
+) -> Option<Duration> {
     let status = app.status().capture;
     let settings = app.settings();
     let lang = settings.ui.language;
@@ -178,13 +217,25 @@ fn push_status(app: &App, ui: &Weak<MainWindow>) -> Option<Duration> {
         settings.privacy.mode,
         now,
     );
-    let update = TrayUpdate {
-        state,
-        lang,
-        utc_offset_min: tray_host::local_utc_offset_minutes(),
-    };
-    let _ = slint::invoke_from_event_loop(move || tray_host::update(update));
-    let _ = ui.upgrade_in_event_loop(move |w| set_strings(&w, lang, Some(status)));
+    let wanted = settings.shortcuts.toggle_popup;
+    let (ui, log) = (ui.clone(), Arc::clone(log));
+    // The registration lives on the main thread; it changes only when the setting changed.
+    let _ = slint::invoke_from_event_loop(move || {
+        let sc = shortcut_status(mode, &wanted);
+        // Logged only when it changes (every refresh passes through here).
+        if LAST_SHORTCUT.replace(Some(sc)) != Some(sc) {
+            log.event("shortcut", &[("status", Val::Name(sc.log_name()))]);
+        }
+        tray_host::update(TrayUpdate {
+            state,
+            lang,
+            utc_offset_min: tray_host::local_utc_offset_minutes(),
+            warning: sc.warning(),
+        });
+        if let Some(w) = ui.upgrade() {
+            set_strings(&w, lang, Some(status), sc);
+        }
+    });
     wake_after(state, now)
 }
 
@@ -200,7 +251,12 @@ fn finish_shutdown<E>(shutdown: Result<(), E>, forwarder: Option<JoinHandle<()>>
 }
 
 impl Worker {
-    pub fn spawn(args: StartArgs, ui: Weak<MainWindow>, log: Arc<Log>) -> Option<Worker> {
+    pub fn spawn(
+        args: StartArgs,
+        ui: Weak<MainWindow>,
+        log: Arc<Log>,
+        mode: ShortcutMode,
+    ) -> Option<Worker> {
         let (tx, rx) = mpsc::channel::<WorkerMsg>();
         let failed = Arc::new(AtomicBool::new(false));
         let worker_failed = Arc::clone(&failed);
@@ -254,7 +310,7 @@ impl Worker {
                         }
                     });
                 log.event("running", &[]);
-                let mut wake = push_status(&app, &ui);
+                let mut wake = push_status(&app, &ui, mode, &log);
                 loop {
                     // Blocks on the channel; wakes by itself only to end a timed pause.
                     let msg = match wake {
@@ -269,10 +325,10 @@ impl Worker {
                         },
                     };
                     match msg {
-                        WorkerMsg::Refresh => wake = push_status(&app, &ui),
+                        WorkerMsg::Refresh => wake = push_status(&app, &ui, mode, &log),
                         WorkerMsg::Run(job) => {
                             job(&app);
-                            wake = push_status(&app, &ui);
+                            wake = push_status(&app, &ui, mode, &log);
                         }
                         WorkerMsg::Stop => break,
                     }
@@ -363,6 +419,8 @@ pub struct RunArgs {
     pub start: StartArgs,
     pub exit_after_ms: Option<u64>,
     pub log: Arc<Log>,
+    /// False with `--no-global-shortcut`: nothing is registered with the OS (tests).
+    pub global_shortcut: bool,
 }
 
 /// Callback the IPC server calls for each valid command (on its own thread).
@@ -379,7 +437,7 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
     };
     theme::apply(&window);
     let args_lang = args.start.os_lang;
-    set_strings(&window, args_lang, None);
+    set_strings(&window, args_lang, None, ShortcutStatus::Off);
     // Closing the window only hides it; the app keeps running (the tray is the way back).
 
     let weak = window.as_weak();
@@ -393,7 +451,24 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
         return false;
     }
 
-    let Some(worker) = Worker::spawn(args.start, window.as_weak(), Arc::clone(&log)) else {
+    // The global shortcut: presses hop to the event loop and toggle the window like `--toggle`.
+    // Registration itself follows the saved setting and happens on each status refresh.
+    let mode = if !args.global_shortcut {
+        ShortcutMode::Disabled
+    } else {
+        let press_window = window.as_weak();
+        let on_press: shortcut_host::OnPress = Arc::new(move || {
+            let w = press_window.clone();
+            let _ = w.upgrade_in_event_loop(|w| apply_command(&w, Command::Toggle));
+        });
+        if shortcut_host::init(on_press) {
+            ShortcutMode::Enabled
+        } else {
+            ShortcutMode::InitFailed
+        }
+    };
+
+    let Some(worker) = Worker::spawn(args.start, window.as_weak(), Arc::clone(&log), mode) else {
         log.event("start_failed", &[("stage", Val::Name("worker"))]);
         return false;
     };
@@ -423,6 +498,7 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
         state: TrayState::Off,
         lang: args_lang,
         utc_offset_min: tray_host::local_utc_offset_minutes(),
+        warning: None,
     };
     if !tray_host::create(first, on_action) {
         log.event("tray_failed", &[]);
@@ -431,6 +507,7 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
     let looped = slint::run_event_loop_until_quit();
     // Remove the icon first, so it does not linger while the app shuts down.
     tray_host::destroy();
+    shortcut_host::release();
     let failed = worker.failed();
     log.event("stop_requested", &[]);
     worker.stop();

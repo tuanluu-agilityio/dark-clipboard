@@ -14,6 +14,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod log;
+mod shortcut;
 mod single_instance;
 mod theme;
 mod tray;
@@ -55,6 +56,8 @@ struct Cli {
     data_dir: Option<PathBuf>,
     /// Hidden test flag: stop by itself after this many milliseconds.
     exit_after_ms: Option<u64>,
+    /// Hidden test flag: do not register the global shortcut with the OS.
+    no_global_shortcut: bool,
 }
 
 /// `Err(())` is a malformed command line (exit code 2).
@@ -63,6 +66,7 @@ fn parse_args(args: &[String]) -> Result<Cli, ()> {
         mode: Mode::App,
         data_dir: None,
         exit_after_ms: None,
+        no_global_shortcut: false,
     };
     let mut chosen: Option<Mode> = None;
     let mut pick = |m: Mode| -> Result<(), ()> {
@@ -79,6 +83,7 @@ fn parse_args(args: &[String]) -> Result<Cli, ()> {
             "--toggle" => pick(Mode::Toggle)?,
             "--quit" => pick(Mode::Quit)?,
             "--help" => pick(Mode::Help)?,
+            "--no-global-shortcut" => cli.no_global_shortcut = true,
             "--data-dir" => cli.data_dir = Some(PathBuf::from(it.next().ok_or(())?)),
             "--exit-after-ms" => {
                 cli.exit_after_ms = Some(it.next().ok_or(())?.parse().map_err(|_| ())?);
@@ -309,6 +314,7 @@ fn run_app(cli: &Cli, lang: Lang) -> ExitCode {
             },
             exit_after_ms: cli.exit_after_ms,
             log: Arc::clone(&log),
+            global_shortcut: !cli.no_global_shortcut,
         },
         |handler| transport.listen(Arc::clone(&log), handler),
     );
@@ -485,6 +491,14 @@ mod tests {
         assert!(parse_args(&a(&["--data-dir"])).is_err());
         assert!(parse_args(&a(&["--exit-after-ms", "x"])).is_err());
         assert!(parse_args(&a(&["--what"])).is_err());
+    }
+
+    #[test]
+    fn no_global_shortcut_flag_is_parsed() {
+        assert!(!parse_args(&a(&[])).unwrap().no_global_shortcut);
+        let c = parse_args(&a(&["--no-global-shortcut", "--data-dir", "d"])).unwrap();
+        assert!(c.no_global_shortcut);
+        assert_eq!(c.mode, Mode::App);
     }
 
     #[test]

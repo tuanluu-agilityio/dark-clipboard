@@ -118,6 +118,36 @@ messages! {
         "Dark Clipboard: capture unavailable",
         "Dark Clipboard: không thể ghi nhớ"
     ),
+    // Global shortcut (Task 203)
+    ShortcutInUse => (
+        "Shortcut in use by another app",
+        "Phím tắt đang được ứng dụng khác dùng"
+    ),
+    ShortcutRegisterFailed => (
+        "Shortcut could not be registered",
+        "Không đăng ký được phím tắt"
+    ),
+    ShortcutErrEmpty => ("Shortcut is empty", "Phím tắt đang trống"),
+    ShortcutErrNoKey => (
+        "Shortcut needs one key besides the modifiers",
+        "Phím tắt cần một phím ngoài các phím bổ trợ"
+    ),
+    ShortcutErrManyKeys => (
+        "Shortcut can have only one key",
+        "Phím tắt chỉ được có một phím"
+    ),
+    ShortcutErrNoModifier => (
+        "Shortcut needs Ctrl, Alt or Win",
+        "Phím tắt cần Ctrl, Alt hoặc Win"
+    ),
+    ShortcutErrDuplicate => (
+        "A modifier is repeated in the shortcut",
+        "Phím tắt lặp lại một phím bổ trợ"
+    ),
+    ShortcutErrUnknownKey => (
+        "Unknown key in the shortcut",
+        "Phím tắt có phím không hợp lệ"
+    ),
 }
 
 /// Messages allowed to read the same in both languages.

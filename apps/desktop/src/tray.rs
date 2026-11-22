@@ -67,6 +67,8 @@ pub struct TrayUpdate {
     pub state: TrayState,
     pub lang: Lang,
     pub utc_offset_min: i32,
+    /// Shown under the state in the tooltip, e.g. "Shortcut in use by another app" (Task 203).
+    pub warning: Option<Msg>,
 }
 
 /// Derives the tray state. `failed` is `AppStatus.capture == Unavailable`; a pause whose end has
@@ -154,6 +156,19 @@ pub fn tooltip(lang: Lang, s: TrayState, utc_offset_min: i32) -> String {
     }
 }
 
+/// The tooltip of a refresh: the state text, and the warning on a second line when there is one.
+pub fn tooltip_for(u: &TrayUpdate) -> String {
+    let base = tooltip(u.lang, u.state, u.utc_offset_min);
+    match u.warning {
+        Some(w) => format!(
+            "{base}
+{}",
+            t(u.lang, w)
+        ),
+        None => base,
+    }
+}
+
 /// Side of the generated icon in pixels (Windows scales it to the tray size).
 pub const ICON_SIZE: usize = 32;
 /// Glyph colour: the dark theme's text colour (see `theme.rs`).
@@ -197,7 +212,7 @@ pub use win::Tray;
 #[cfg(windows)]
 mod win {
     use super::{
-        icon_id, icon_rgba, menu_model, tooltip, IconId, MenuAction, TrayUpdate, ICON_SIZE,
+        icon_id, icon_rgba, menu_model, tooltip_for, IconId, MenuAction, TrayUpdate, ICON_SIZE,
     };
     use darkclip_core::i18n::{t, Msg};
     use std::sync::Arc;
@@ -268,7 +283,7 @@ mod win {
             let built = TrayIconBuilder::new()
                 .with_menu(Box::new(menu))
                 .with_menu_on_left_click(false)
-                .with_tooltip(tooltip(l, first.state, first.utc_offset_min))
+                .with_tooltip(tooltip_for(&first))
                 .with_icon(icon_for(id)?)
                 .build()
                 .ok()?;
@@ -319,9 +334,7 @@ mod win {
                     }
                 }
             }
-            let _ = self
-                .icon
-                .set_tooltip(Some(tooltip(l, u.state, u.utc_offset_min)));
+            let _ = self.icon.set_tooltip(Some(tooltip_for(&u)));
             self.open.set_text(t(l, Msg::TrayOpen));
             self.pause.set_text(t(l, Msg::TrayPause));
             self.pause_5.set_text(t(l, Msg::TrayPause5Min));
@@ -517,6 +530,25 @@ mod tests {
         assert_eq!(format_clock(ts, -(14 * 60 + 5)), "00:00");
         assert_eq!(format_clock(ts, 600), "00:05"); // wraps past midnight
         assert_eq!(format_clock(Timestamp(-60_000), 0), "23:59"); // before the epoch
+    }
+
+    #[test]
+    fn a_warning_goes_on_a_second_tooltip_line() {
+        let mut u = TrayUpdate {
+            state: TrayState::Active,
+            lang: Lang::En,
+            utc_offset_min: 0,
+            warning: None,
+        };
+        assert_eq!(tooltip_for(&u), "Dark Clipboard: capturing");
+        u.warning = Some(Msg::ShortcutInUse);
+        assert_eq!(
+            tooltip_for(&u),
+            "Dark Clipboard: capturing
+Shortcut in use by another app"
+        );
+        u.lang = Lang::Vi;
+        assert!(tooltip_for(&u).ends_with("Phím tắt đang được ứng dụng khác dùng"));
     }
 
     #[test]
