@@ -5,7 +5,7 @@ Updated: 2026-11-22
 ## Where we are
 
 - **Phase 0 (discovery and architecture): complete**, pending owner approval of the blueprint.
-- **Current phase:** Phase 1 Foundation (`docs/plans/phase-1-foundation.md`). Task 001 done (merged 2026-11-22). Tasks 001–007 done. **In progress: 008 and 009 in parallel worktrees.** Then 010 (capture actor), 011, 012 phase review.
+- **Current phase:** Phase 1 Foundation (`docs/plans/phase-1-foundation.md`). Task 001 done (merged 2026-11-22). Tasks 001–007 done. Tasks 008–009 done. **In progress: 010 capture actor.** Then 011, 012 phase review.
 - Git: local only (D-013). Branch `main`; Phase 0 is the first commit. No remote yet: tasks merge locally with `git merge --no-ff`.
 
 ## Waiting on owner

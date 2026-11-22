@@ -28,7 +28,7 @@ Status: Phase 0, 2026-11-22. Storage decision: ADR-0003. JSON Schemas: `docs/arc
 | `size_bytes` | integer | sum of representation sizes |
 | `created_at`, `last_copied_at`, `last_used_at` | time | `last_used_at` = last time copied back by the user |
 | `copy_count`, `use_count` | integer | |
-| `pinned` | bool | pinned clips are exempt from retention and sorted first |
+| `pinned` | bool | pinned clips are exempt from retention limits (age, count, size) and sorted first; `expires_at` still applies (D-025) |
 | `pin_order` | integer? | manual order among pinned |
 | `source` | ClipboardSource? | absent if unknown |
 | `sensitivity` | `{ level: none | masked, categories: SensitiveCategory[] }` | never contains matched text |

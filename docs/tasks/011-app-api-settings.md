@@ -34,5 +34,9 @@ pub enum LoadOutcome { Loaded, Defaulted, RecoveredFromCorrupt { backup: PathBuf
 - `settings_corrupt_recovers` (garbage file → defaults + `.corrupt-<ts>` kept).
 - `settings_os_markers_not_configurable`: JSON with `respect_os_markers: false` and a custom `max_items: 50` loads with `respect_os_markers == true`, `max_items == 50`, outcome `LoadedWithCorrections(["privacy.respect_os_markers"])`.
 
+## Added from Task 008/009 reviews (D-025, D-026)
+- `pin_clip` on a masked clip returns `InvalidArgument("masked clips cannot be pinned")` (pinning would not extend its expiry). Test `pin_masked_clip_rejected`.
+- Text searches return `next_cursor: null` in the envelope; the API passes the clamped limit (MCP ≤ 50 enforced here, storage ≤ 200).
+
 ## Not doing
 CLI binary, MCP server, IPC (P2).

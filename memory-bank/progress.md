@@ -21,9 +21,9 @@ Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers sub
 | 005 Sensitive detection | task/005-core-sensitive | specialist | opus | done | 124,994 | 167,147 (security-reviewer opus ×2: should-fix → APPROVED-equivalent; round-2 fix verified by orchestrator) | 339,666 (2 rounds) | 631,807 |
 | 006 Platform traits, fake | task/006-platform-traits-fake | builder | sonnet | done | 91,759 | 172,568 (specialist opus: CHANGES REQUIRED → APPROVED) | 100,426 | 364,753 |
 | 007 Storage schema | task/007-storage-schema | specialist | opus | done | 154,499 | 169,359 (reviewer opus: CHANGES REQUIRED → APPROVED) | 178,797 | 502,655 |
-| 008 Storage search | task/008-storage-search | builder | sonnet | in progress | | | | |
-| 009 Storage retention | task/009-storage-retention | builder | sonnet | in progress | | | | |
-| 010 Capture actor | task/010-app-capture-actor | specialist | opus | pending | | | | |
+| 008 Storage search | task/008-storage-search | builder | sonnet | done | 83,809 | 38,523 (reviewer sonnet: APPROVED) | 90,645 | 212,977 |
+| 009 Storage retention | task/009-storage-retention | builder | sonnet | done | 94,709 | 53,101 (reviewer opus: APPROVED) | 102,230 | 250,040 |
+| 010 Capture actor | task/010-app-capture-actor | specialist | opus | in progress | | | | |
 | 011 App API, settings | task/011-app-api-settings | builder | sonnet | pending | | | | |
 | 012 Phase review | main | specialist | opus | pending | | | | |
 
@@ -31,6 +31,6 @@ Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers sub
 
 | Model | Tokens |
 |---|---|
-| opus | 1,461,402 |
-| sonnet | 782,950 |
+| opus | 1,514,503 |
+| sonnet | 1,192,866 |
 | haiku | 0 |
