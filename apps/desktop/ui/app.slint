@@ -28,11 +28,12 @@ export component MainWindow inherits Window {
     in-out property <string> query;
     // Whole rows that fit in the list (for Page Up / Page Down).
     out property <int> page-rows: max(1, floor(clip-list.visible-height / RowMetrics.height));
-    private property <bool> chips-focused;
 
     callback query-edited(string);
     // Returns true when the key was handled (the search box does not see it then).
-    callback key(string, bool, bool, bool, bool, bool, bool) -> bool;
+    callback key(string, bool, bool, bool, bool, bool) -> bool;
+    // A chip gained (true) or lost (false) the keyboard focus.
+    callback chip-focus(int, bool);
     callback chip-toggled(int);
     callback row-clicked(int);
     callback row-activated(int);
@@ -75,7 +76,7 @@ export component MainWindow inherits Window {
         focus-on-click: false;
         focus-on-tab-navigation: false;
         capture-key-pressed(e) => {
-            if (root.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, search.has-focus, root.chips-focused)) {
+            if (root.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, search.has-focus)) {
                 return accept;
             }
             reject
@@ -170,8 +171,8 @@ export component MainWindow inherits Window {
                                     chip-flick.content-x = -(x + w - chip-flick.width);
                                 }
                             }
-                            changed has-focus => {
-                                root.chips-focused = self.has-focus;
+                            focus-report(on) => {
+                                root.chip-focus(c.id, on);
                             }
                         }
                     }

@@ -10,7 +10,7 @@ use darkclip_core::{
     Sensitivity, SourceConfidence, Timestamp,
 };
 use darkclip_storage::{NewClip, OpenMode, Storage, StorageError};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
@@ -22,36 +22,65 @@ const SPREAD_MS: i64 = 30 * 86_400_000;
 /// True when seeding may write into `data_dir`: it must be given and must not be (or be inside)
 /// the default data dir. Paths are compared after canonicalisation when they exist.
 pub fn seed_target_allowed(data_dir: Option<&Path>, default: Option<&Path>) -> bool {
+    seed_target_allowed_with(data_dir, default, |p: &Path| std::fs::canonicalize(p))
+}
+
+/// `seed_target_allowed` with the canonicalisation passed in (tests).
+fn seed_target_allowed_with(
+    data_dir: Option<&Path>,
+    default: Option<&Path>,
+    canonicalize: impl Fn(&Path) -> std::io::Result<PathBuf>,
+) -> bool {
     let Some(dir) = data_dir else {
         return false;
     };
     let Some(default) = default else {
         return true;
     };
-    let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    // A folder that does not exist yet: canonicalise its nearest existing parent.
-    let resolve = |p: &Path| {
-        let mut tail = Vec::new();
-        let mut cur = p.to_path_buf();
-        loop {
-            if cur.exists() {
-                let mut out = canon(&cur);
-                for part in tail.iter().rev() {
-                    out.push(part);
-                }
-                return out;
+    match (resolve(dir, &canonicalize), resolve(default, &canonicalize)) {
+        (Some(dir), Some(default)) => !is_inside(&dir, &default),
+        // A path that exists but cannot be resolved: refuse rather than guess.
+        _ => false,
+    }
+}
+
+/// The canonical form of `p`. A path that does not exist yet is its nearest existing ancestor,
+/// canonicalised, plus the rest. `None` when an existing part cannot be canonicalised.
+fn resolve(p: &Path, canonicalize: &impl Fn(&Path) -> std::io::Result<PathBuf>) -> Option<PathBuf> {
+    let mut tail = Vec::new();
+    let mut cur = p.to_path_buf();
+    loop {
+        if cur.exists() {
+            let mut out = canonicalize(&cur).ok()?;
+            for part in tail.iter().rev() {
+                out.push(part);
             }
-            match (cur.file_name().map(|n| n.to_os_string()), cur.parent()) {
-                (Some(name), Some(parent)) => {
-                    tail.push(name);
-                    cur = parent.to_path_buf();
-                }
-                _ => return p.to_path_buf(),
-            }
+            return Some(out);
         }
-    };
-    let (dir, default) = (resolve(dir), resolve(default));
-    !dir.starts_with(&default)
+        match (cur.file_name().map(|n| n.to_os_string()), cur.parent()) {
+            (Some(name), Some(parent)) if !parent.as_os_str().is_empty() => {
+                tail.push(name);
+                cur = parent.to_path_buf();
+            }
+            // Nothing of it exists (e.g. a relative path in a missing folder): compare as given.
+            _ => return Some(p.to_path_buf()),
+        }
+    }
+}
+
+/// `dir` is `base` or inside it. Windows paths compare without case (NTFS default), which
+/// matters for the parts that do not exist yet and were not canonicalised.
+fn is_inside(dir: &Path, base: &Path) -> bool {
+    if cfg!(windows) {
+        let lower = |p: &Path| -> PathBuf {
+            p.components()
+                .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+                .collect()
+        };
+        lower(dir).starts_with(lower(base))
+    } else {
+        dir.starts_with(base)
+    }
 }
 
 const EN: &[&str] = &[
@@ -204,6 +233,39 @@ mod tests {
         assert!(seed_target_allowed(Some(&other), Some(&default)));
         // Without a default dir (no OS data folder) a given dir is fine.
         assert!(seed_target_allowed(Some(&other), None));
+    }
+
+    #[test]
+    fn a_path_that_cannot_be_canonicalised_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let default = tmp.path().join("DarkClipboard");
+        let failing = |_: &Path| -> std::io::Result<std::path::PathBuf> {
+            Err(std::io::Error::other("cannot resolve"))
+        };
+        // The data dir exists but cannot be resolved: refuse rather than guess.
+        assert!(!seed_target_allowed_with(
+            Some(tmp.path()),
+            Some(&default),
+            failing
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_compare_without_case_even_before_the_default_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        // The default dir does not exist yet (first run).
+        let default = tmp.path().join("DarkClipboard");
+        let upper = tmp.path().join("DARKCLIPBOARD");
+        assert!(!seed_target_allowed(Some(&upper), Some(&default)));
+        assert!(!seed_target_allowed(
+            Some(&upper.join("Sub")),
+            Some(&default)
+        ));
+        assert!(seed_target_allowed(
+            Some(&tmp.path().join("demo")),
+            Some(&default)
+        ));
     }
 
     #[test]

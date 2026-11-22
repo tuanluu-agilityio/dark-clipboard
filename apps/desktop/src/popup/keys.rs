@@ -73,6 +73,35 @@ pub enum Action {
     Close,
 }
 
+/// Which filter chip has the keyboard focus, from per-chip gained/lost reports. The reports of
+/// two chips may arrive in any order (the old chip's "lost" after the new chip's "gained"), so
+/// a "lost" only clears the chip it names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ChipFocus(Option<i32>);
+
+impl ChipFocus {
+    pub fn report(&mut self, chip: i32, has_focus: bool) {
+        if has_focus {
+            self.0 = Some(chip);
+        } else if self.0 == Some(chip) {
+            self.0 = None;
+        }
+    }
+
+    /// Chips were rebuilt: a focused chip that no longer exists has no focus.
+    pub fn retain(&mut self, exists: impl Fn(i32) -> bool) {
+        if self.0.is_some_and(|c| !exists(c)) {
+            self.0 = None;
+        }
+    }
+
+    /// True when a chip has the focus. The search box having the focus wins (a chip can then
+    /// not have it, whatever was reported).
+    pub fn focused(&self, search_focused: bool) -> bool {
+        !search_focused && self.0.is_some()
+    }
+}
+
 /// Maps Slint's key text to a `Key`.
 pub fn key_from_text(s: &str) -> Key {
     let mut it = s.chars();
@@ -330,6 +359,34 @@ mod tests {
         assert_eq!(map_key(Key::Down, NONE, chip), None);
         assert_eq!(map_key(Key::Delete, NONE, chip), None);
         assert_eq!(map_key(Key::Escape, NONE, chip), Some(Action::Close));
+    }
+
+    #[test]
+    fn chip_focus_does_not_depend_on_report_order() {
+        let mut f = ChipFocus::default();
+        assert!(!f.focused(false));
+        // Tab from chip 1 to chip 2, reports in the expected order.
+        f.report(1, true);
+        assert!(f.focused(false));
+        f.report(1, false);
+        f.report(2, true);
+        assert!(f.focused(false));
+        // Tab from chip 2 to chip 3, the old chip's "lost" arriving last.
+        f.report(3, true);
+        f.report(2, false);
+        assert!(f.focused(false));
+        // The focus leaves the chips.
+        f.report(3, false);
+        assert!(!f.focused(false));
+        // The search box having the focus always wins.
+        f.report(4, true);
+        assert!(!f.focused(true));
+        // A focused chip removed by a rebuild loses the focus; others keep it.
+        f.retain(|id| id != 4);
+        assert!(!f.focused(false));
+        f.report(5, true);
+        f.retain(|id| id == 5);
+        assert!(f.focused(false));
     }
 
     #[test]

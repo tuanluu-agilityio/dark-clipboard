@@ -83,6 +83,7 @@ All rows **untested** until the owner runs them. Use a scratch history: `dark-cl
 | Ctrl+P on a clip | Pinned clips move to the top with an accent bar; again unpins | **untested** |
 | Alt+1 .. Alt+9 | Copies the n-th listed clip and closes | **untested** |
 | Tab / Shift+Tab | Focus moves search → chips → list and back; Enter or Space on a chip toggles it | **untested** |
+| Tab quickly through several chips, then press Enter on one | Enter toggles that chip; it never copies a clip or closes the popup | **untested** |
 | Narrator on the popup | Search box, chips (checkbox, checked state) and rows (list items) are announced | **untested** |
 | Real-shortcut NFR-01 timing: 50 presses, then `scripts/measure-popup.ps1 -LogPath <log> -Source hotkey` | p95 ≤ 100 ms (record the numbers in `docs/testing/perf-windows.md`) | **untested** |
 

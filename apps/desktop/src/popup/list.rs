@@ -12,6 +12,10 @@ use darkclip_storage::{Cursor, SearchQuery};
 
 /// Rows per search request.
 pub const PAGE_SIZE: u16 = 50;
+/// A refresh reloads as many rows as were loaded, up to this many (scrolling loads the rest).
+pub const REFRESH_MAX: usize = 1000;
+/// Rows one request may ask for (`App` caps the limit at 200).
+const MAX_REQUEST: usize = 200;
 /// Load the next page when the last shown row is this close to the end.
 pub const LOAD_MORE_MARGIN: usize = 10;
 const DAY_MS: i64 = 86_400_000;
@@ -72,6 +76,8 @@ pub struct Request {
     pub pinned_only: bool,
     pub since: Option<Timestamp>,
     pub cursor: Option<String>,
+    /// Rows asked for (a refresh asks for as many as were loaded, in requests of ≤ 200).
+    pub limit: u16,
 }
 
 /// Never prints the query text (GC-06).
@@ -98,7 +104,7 @@ impl Request {
             pinned_only: self.pinned_only,
             since: self.since,
             include_masked: false,
-            limit: PAGE_SIZE,
+            limit: self.limit,
             cursor: self.cursor.as_deref().and_then(Cursor::decode),
         }
     }
@@ -154,7 +160,7 @@ pub enum View {
 }
 
 /// What `apply` did with a response.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Applied {
     /// Stale or unexpected: nothing changed.
     Ignored,
@@ -162,6 +168,13 @@ pub enum Applied {
     Replaced,
     /// Rows were added at the end; `from` is the first new visible index.
     Appended { from: usize },
+    /// A refresh needs another page before it can replace the rows: run this request.
+    More(Request),
+}
+
+/// `rows` as a request limit: at least 1, at most what one request may ask for.
+fn request_limit(rows: usize) -> u16 {
+    u16::try_from(rows.clamp(1, MAX_REQUEST)).unwrap_or(PAGE_SIZE)
 }
 
 /// Start of the time window for a filter. `utc_offset_min` is the local offset (east positive).
@@ -197,6 +210,12 @@ pub struct ListModel {
     refreshing: bool,
     /// The time window of the current search (kept for its next pages).
     since: Option<Timestamp>,
+    /// Rows a running refresh reloads before it replaces the ones on screen.
+    target: usize,
+    /// The refreshed rows collected so far, and their cursor (the screen keeps the old rows
+    /// until the refresh is complete).
+    staged: Vec<Item>,
+    staged_next: Option<String>,
 }
 
 impl ListModel {
@@ -226,6 +245,7 @@ impl ListModel {
             pinned_only: self.filters.pinned_only,
             since: self.since,
             cursor: None,
+            limit: PAGE_SIZE,
         }
     }
 
@@ -234,6 +254,7 @@ impl ListModel {
         self.filters = f;
         self.refreshing = false;
         self.keep = None;
+        self.staged.clear();
         self.request(now, utc_offset_min)
     }
 
@@ -244,8 +265,15 @@ impl ListModel {
         if !new_search_running {
             self.refreshing = true;
             self.keep = self.selected_item().map(|i| i.id);
+            self.target = self.items.len().clamp(usize::from(PAGE_SIZE), REFRESH_MAX);
         }
-        self.request(now, utc_offset_min)
+        self.staged.clear();
+        self.staged_next = None;
+        let mut r = self.request(now, utc_offset_min);
+        if self.refreshing {
+            r.limit = request_limit(self.target);
+        }
+        r
     }
 
     /// The next page, unless there is none or one is already loading.
@@ -264,6 +292,7 @@ impl ListModel {
             pinned_only: self.filters.pinned_only,
             since: self.since,
             cursor: Some(cursor),
+            limit: PAGE_SIZE,
         })
     }
 
@@ -284,6 +313,9 @@ impl ListModel {
     ) -> Applied {
         if gen != self.gen {
             return Applied::Ignored;
+        }
+        if self.refreshing && self.waiting {
+            return self.apply_refresh(append, r);
         }
         if append {
             if !self.more_in_flight || self.waiting {
@@ -325,6 +357,62 @@ impl ListModel {
             self.selected = 0;
         }
         self.refreshing = false;
+        self.clamp();
+        Applied::Replaced
+    }
+
+    /// A page of a running refresh: collect it, ask for the next one, or swap the rows in.
+    fn apply_refresh(
+        &mut self,
+        append: bool,
+        r: Result<Page<ClipSummaryView>, &'static str>,
+    ) -> Applied {
+        if append != self.more_in_flight {
+            return Applied::Ignored;
+        }
+        self.more_in_flight = false;
+        let Ok(page) = r else {
+            // Keep the rows (and their cursor) on screen; the next change refreshes again.
+            self.waiting = false;
+            self.refreshing = false;
+            self.keep = None;
+            self.staged.clear();
+            self.staged_next = None;
+            return Applied::Ignored;
+        };
+        for v in page.items {
+            if !self.staged.iter().any(|i| i.id == v.id) {
+                self.staged.push(Item::from(v));
+            }
+        }
+        self.staged_next = page.next_cursor;
+        if self.staged.len() < self.target {
+            if let Some(cursor) = self.staged_next.clone() {
+                self.more_in_flight = true;
+                return Applied::More(Request {
+                    gen: self.gen,
+                    append: true,
+                    text: self.trimmed_text(),
+                    kinds: self.filters.kinds.clone(),
+                    pinned_only: self.filters.pinned_only,
+                    since: self.since,
+                    cursor: Some(cursor),
+                    limit: request_limit(self.target - self.staged.len()),
+                });
+            }
+        }
+        self.items = std::mem::take(&mut self.staged);
+        self.next = self.staged_next.take();
+        self.error = None;
+        self.waiting = false;
+        self.refreshing = false;
+        if let Some(i) = self
+            .keep
+            .take()
+            .and_then(|id| self.visible().iter().position(|i| i.id == id))
+        {
+            self.selected = i;
+        }
         self.clamp();
         Applied::Replaced
     }
@@ -431,7 +519,8 @@ impl ListModel {
 
     /// `slow`: the fresh search has run longer than the loading threshold.
     pub fn view(&self, slow: bool) -> View {
-        if self.waiting && slow {
+        // A refresh keeps showing the current rows however long it takes.
+        if self.waiting && slow && !self.refreshing {
             return View::Loading;
         }
         if let Some(code) = self.error.filter(|_| !self.waiting) {
@@ -777,6 +866,127 @@ mod tests {
         let r = m.search(text("x"), NOW, 0);
         m.apply(r.gen, false, Ok(page(items(0..1), None)));
         assert_eq!(m.view(false), View::Rows);
+    }
+
+    /// A list loaded to `pages` × `per_page` rows through the cursor.
+    fn deep_list(pages: u32, per_page: u32) -> ListModel {
+        let mut m = ListModel::new();
+        let r = m.search(Filters::default(), NOW, 0);
+        let cur = cursor();
+        m.apply(r.gen, false, Ok(page(items(0..per_page), Some(&cur))));
+        for p in 1..pages {
+            let more = m.load_more().unwrap();
+            m.apply(
+                more.gen,
+                true,
+                Ok(page(items(p * per_page..(p + 1) * per_page), Some(&cur))),
+            );
+        }
+        m
+    }
+
+    #[test]
+    fn a_refresh_keeps_a_deep_list_and_the_selected_clip() {
+        let mut m = deep_list(3, 50);
+        m.select(120);
+        let r = m.refresh(NOW, 0);
+        assert!(!r.append);
+        assert_eq!(r.limit, 150);
+        assert_eq!(r.to_query().limit, 150);
+        // The old rows stay on screen while the refresh runs, even when it is slow.
+        assert_eq!(m.visible().len(), 150);
+        assert_eq!(m.view(true), View::Rows);
+        let cur = cursor();
+        assert_eq!(
+            m.apply(r.gen, false, Ok(page(items(0..150), Some(&cur)))),
+            Applied::Replaced
+        );
+        assert_eq!(m.visible().len(), 150);
+        assert_eq!(m.selected_item().unwrap().preview, "clip 120");
+        // Paging goes on from there.
+        assert!(m.load_more().is_some());
+    }
+
+    #[test]
+    fn a_refresh_of_more_than_one_request_comes_in_staged_pages() {
+        let mut m = deep_list(5, 50);
+        m.select(240);
+        let r = m.refresh(NOW, 0);
+        assert_eq!(r.limit, 200);
+        let cur = cursor();
+        let Applied::More(next) = m.apply(r.gen, false, Ok(page(items(0..200), Some(&cur)))) else {
+            panic!("a second refresh page is needed");
+        };
+        assert!(next.append);
+        assert_eq!(next.gen, r.gen);
+        assert_eq!(next.limit, 50);
+        assert_eq!(next.cursor.as_deref(), Some(cur.as_str()));
+        // Still the old rows until the refresh is complete.
+        assert_eq!(m.visible().len(), 250);
+        assert!(m.load_more().is_none());
+        assert_eq!(
+            m.apply(next.gen, true, Ok(page(items(200..250), None))),
+            Applied::Replaced
+        );
+        assert_eq!(m.visible().len(), 250);
+        assert_eq!(m.selected_item().unwrap().preview, "clip 240");
+    }
+
+    #[test]
+    fn a_refresh_reloads_at_most_a_thousand_rows() {
+        let mut m = deep_list(6, 200);
+        assert_eq!(m.visible().len(), 1200);
+        let r = m.refresh(NOW, 0);
+        assert_eq!(r.limit, 200);
+        let cur = cursor();
+        let mut answer = m.apply(r.gen, false, Ok(page(items(0..200), Some(&cur))));
+        let mut requests = 1;
+        let mut at = 200;
+        while let Applied::More(next) = answer {
+            requests += 1;
+            answer = m.apply(
+                next.gen,
+                true,
+                Ok(page(items(at..at + next.limit as u32), Some(&cur))),
+            );
+            at += u32::from(next.limit);
+        }
+        assert_eq!(answer, Applied::Replaced);
+        assert_eq!(requests, 5);
+        assert_eq!(m.visible().len(), 1000);
+        // The rest loads by scrolling, as before.
+        assert!(m.load_more().is_some());
+    }
+
+    #[test]
+    fn a_failed_refresh_keeps_the_rows_on_screen() {
+        let mut m = deep_list(2, 50);
+        m.select(70);
+        let r = m.refresh(NOW, 0);
+        assert_eq!(
+            m.apply(r.gen, false, Err("STORAGE_ERROR")),
+            Applied::Ignored
+        );
+        assert_eq!(m.visible().len(), 100);
+        assert_eq!(m.selected_item().unwrap().preview, "clip 70");
+        assert_eq!(m.view(false), View::Rows);
+        assert!(!m.is_waiting(r.gen));
+        assert!(m.load_more().is_some());
+    }
+
+    #[test]
+    fn a_new_search_during_a_refresh_wins() {
+        let mut m = deep_list(5, 50);
+        let r = m.refresh(NOW, 0);
+        let fresh = m.search(text("x"), NOW, 0);
+        assert_eq!(fresh.limit, PAGE_SIZE);
+        let cur = cursor();
+        assert_eq!(
+            m.apply(r.gen, false, Ok(page(items(0..200), Some(&cur)))),
+            Applied::Ignored
+        );
+        m.apply(fresh.gen, false, Ok(page(items(0..3), None)));
+        assert_eq!(m.visible().len(), 3);
     }
 
     #[test]

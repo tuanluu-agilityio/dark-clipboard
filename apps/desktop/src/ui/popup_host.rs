@@ -13,7 +13,7 @@
 use super::{Chip, ClipRow, MainWindow, Poster, Seg, Strings};
 use crate::log::{Log, Val};
 use crate::popup::highlight::row_segments;
-use crate::popup::keys::{self, Action, CopyKind, KeyCtx, Mods};
+use crate::popup::keys::{self, Action, ChipFocus, CopyKind, KeyCtx, Mods};
 use crate::popup::list::{Applied, Filters, Item, ListModel, Request, TimeFilter, View};
 use darkclip_app::api::{Caller, CopyMode};
 use darkclip_app::{ClipApi, ClipSummaryView, Page};
@@ -121,6 +121,8 @@ struct Host {
     slow: bool,
     /// A deleted clip that can still be undone (the delete is not sent yet).
     pending_delete: Option<ClipId>,
+    /// Which chip has the keyboard focus (from the chips' own reports).
+    chip_focus: ChipFocus,
 }
 
 thread_local! {
@@ -249,6 +251,8 @@ impl Host {
                 .enumerate()
                 .all(|(i, c)| self.chips.row_data(i).as_ref() == Some(c));
         if !same {
+            self.chip_focus
+                .retain(|id| chips.iter().any(|c| c.id == id));
             self.chips.set_vec(chips);
         }
     }
@@ -320,6 +324,13 @@ impl Host {
         let Some(w) = self.window() else {
             return;
         };
+        if !undo && self.pending_delete.is_some() {
+            // An error during the undo window: say so, but keep Undo and the 5 s counted
+            // from the delete (the running timer still sends the delete when it ends).
+            w.set_toast(t(self.lang, msg).into());
+            w.set_toast_undo(true);
+            return;
+        }
         w.set_toast(t(self.lang, msg).into());
         w.set_toast_undo(undo);
         let wait = if undo { UNDO_FOR } else { ERROR_FOR };
@@ -555,6 +566,11 @@ fn on_results(gen: u64, append: bool, result: Result<Page<ClipSummaryView>, &'st
     with_host(|h| {
         match h.model.apply(gen, append, result) {
             Applied::Ignored => return,
+            Applied::More(req) => {
+                // A refresh continues; the rows on screen stay until it is complete.
+                h.run(req);
+                return;
+            }
             Applied::Replaced => {
                 h.loading.stop();
                 h.slow = false;
@@ -602,6 +618,7 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
         toast: Timer::default(),
         slow: false,
         pending_delete: None,
+        chip_focus: ChipFocus::default(),
     };
     host.rebuild_chips();
     host.sync_state();
@@ -621,30 +638,31 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
             });
         });
     });
-    w.on_key(
-        |text, ctrl, shift, alt, meta, search_focused, chips_focused| {
-            with_host(|h| {
-                let query_empty = h.window().is_none_or(|w| w.get_query().is_empty());
-                let ctx = KeyCtx {
-                    query_empty,
-                    search_focused,
-                    undo_available: h.pending_delete.is_some(),
-                    chips_focused,
-                };
-                let mods = Mods {
-                    ctrl,
-                    shift,
-                    alt,
-                    meta,
-                };
-                match keys::map_key(keys::key_from_text(&text), mods, ctx) {
-                    Some(a) => h.act(a),
-                    None => false,
-                }
-            })
-            .unwrap_or(false)
-        },
-    );
+    w.on_chip_focus(|id, on| {
+        with_host(|h| h.chip_focus.report(id, on));
+    });
+    w.on_key(|text, ctrl, shift, alt, meta, search_focused| {
+        with_host(|h| {
+            let query_empty = h.window().is_none_or(|w| w.get_query().is_empty());
+            let ctx = KeyCtx {
+                query_empty,
+                search_focused,
+                undo_available: h.pending_delete.is_some(),
+                chips_focused: h.chip_focus.focused(search_focused),
+            };
+            let mods = Mods {
+                ctrl,
+                shift,
+                alt,
+                meta,
+            };
+            match keys::map_key(keys::key_from_text(&text), mods, ctx) {
+                Some(a) => h.act(a),
+                None => false,
+            }
+        })
+        .unwrap_or(false)
+    });
     w.on_chip_toggled(|id| {
         with_host(|h| h.toggle_chip(id));
     });

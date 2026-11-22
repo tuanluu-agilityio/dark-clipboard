@@ -231,7 +231,10 @@ fn like_escape(s: &str) -> String {
     out
 }
 
-const COLS: &str = "c.id, c.kind, c.preview, c.pinned, c.last_copied_at, c.sensitivity_level,      c.meta, COALESCE(c.source_app_name, c.source_app_id)";
+const COLS: &str = concat!(
+    "c.id, c.kind, c.preview, c.pinned, c.last_copied_at, c.sensitivity_level, c.meta, ",
+    "COALESCE(c.source_app_name, c.source_app_id)"
+);
 
 fn row_to_summary(r: &rusqlite::Row<'_>) -> Result<ClipSummary, StorageError> {
     let decode = || StorageError::Sqlite("ColumnDecode".into());

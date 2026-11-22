@@ -17,7 +17,8 @@ darkclip-core = { path = "../../crates/darkclip-core" }
 darkclip-app = { path = "../../crates/darkclip-app" }
 darkclip-platform = { path = "../../crates/darkclip-platform" }
 ctrlc = "3.5.3"
-slint = { version = "1.19.0", features = ["unstable-winit-030"] }
+# `~1.19`: the `unstable-winit-030` API is outside Slint's semver promise (Task 204 review).
+slint = { version = "~1.19.0", features = ["unstable-winit-030"] }
 darkclip-storage = { path = "../../crates/darkclip-storage" }
 
 [target."cfg(windows)".dependencies]
@@ -30,4 +31,4 @@ windows = { version = "0.62", default-features = false, features = ["Win32_Found
 tempfile = "3.27.0"
 
 [build-dependencies]
-slint-build = "1.19.0"
+slint-build = "~1.19.0"
