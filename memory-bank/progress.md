@@ -55,14 +55,14 @@ Phase 2 complete 2026-11-23 (Bitwarden/1Password rows n/a on the test machine; s
 | 202 Tray | task/202-tray | builder | sonnet | done | 125,457 | 83,766 (reviewer opus ×2: CR (blocking: i64::MAX pause corrupts settings) → APPROVED) | 16,124 | 225,347 |
 | 203 Shortcut | task/203-shortcut | builder | sonnet | done | 124,733 | 62,231 (reviewer opus: APPROVED, nits fixed) | 4,061 | 191,025 |
 | 204 Popup | task/204-popup | specialist | opus | done | 335,455 | 151,701 (reviewer opus ×2: APPROVED with should-fix → fixed, APPROVED) | 37,299 | 524,455 |
-| 205 Paste back | task/205-paste-back | specialist | opus | done | 225,505 | 94,313 (security-reviewer opus ×2: APPROVED with should-fix → fixed, APPROVED) | 13,786 | 333,604 |
-| 206 Previews | task/206-previews | builder | sonnet | next | | | | |
+| 205 Paste back | task/205-paste-back | specialist | opus | done | 225,505 | 95,918 (security-reviewer opus ×2: APPROVED with should-fix → fixed, APPROVED) | 13,786 | 335,209 |
+| 206 Previews | task/206-previews | builder | sonnet | in progress | | | | |
 
 ## Totals by model
 
 | Model | Tokens |
 |---|---|
-| opus | 6,864,958 |
+| opus | 6,866,563 |
 | sonnet | 2,562,072 |
 | haiku | 0 |
-| **Total** | **9,427,030** (subagents only; orchestrator not measured) |
+| **Total** | **9,428,635** (subagents only; orchestrator not measured) |
