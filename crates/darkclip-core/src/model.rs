@@ -304,20 +304,21 @@ pub struct Tag {
 impl Tag {
     /// Lowercases `raw` and checks `[\p{L}\p{N}_-]+`, at most 40 characters.
     pub fn validate_name(raw: &str) -> Result<String, CoreError> {
-        if raw.chars().count() > TAG_NAME_MAX_CHARS {
+        let name = raw.to_lowercase();
+        if name.chars().count() > TAG_NAME_MAX_CHARS {
             return Err(CoreError::TooLong {
                 field: "tag",
                 max: TAG_NAME_MAX_CHARS,
             });
         }
-        if raw.is_empty()
-            || !raw
+        if name.is_empty()
+            || !name
                 .chars()
                 .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
         {
             return Err(CoreError::InvalidTag);
         }
-        Ok(raw.to_lowercase())
+        Ok(name)
     }
 }
 
@@ -605,6 +606,14 @@ mod tests {
             })
         );
         assert!(Tag::validate_name(&"a".repeat(40)).is_ok());
+        let r = Tag::validate_name(&"İ".repeat(40));
+        assert!(
+            matches!(
+                r,
+                Err(CoreError::TooLong { .. }) | Err(CoreError::InvalidTag)
+            ),
+            "{r:?}"
+        );
     }
 
     #[test]

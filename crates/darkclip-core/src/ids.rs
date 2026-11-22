@@ -16,8 +16,11 @@ fn parse(s: &str) -> Result<Uuid, CoreError> {
     if s.len() != 36 {
         return Err(CoreError::InvalidId);
     }
+    if s.bytes().any(|b| b.is_ascii_uppercase()) {
+        return Err(CoreError::InvalidId);
+    }
     let u = Uuid::parse_str(s).map_err(|_| CoreError::InvalidId)?;
-    if u.get_version_num() != 7 {
+    if u.get_version_num() != 7 || u.get_variant() != uuid::Variant::RFC4122 {
         return Err(CoreError::InvalidId);
     }
     Ok(u)
@@ -75,9 +78,31 @@ mod tests {
 
     #[test]
     fn uuid_v7_sorts_by_time() {
-        let a = ClipId::new_v7(Timestamp(1_795_320_104_903)).to_string();
-        let b = ClipId::new_v7(Timestamp(1_795_320_104_904)).to_string();
-        assert!(a < b, "{a} !< {b}");
+        let base = 1_795_320_104_903i64;
+        let mut prev: Option<String> = None;
+        for i in 0..250i64 {
+            let t = Timestamp(base + i);
+            let a = ClipId::new_v7(t).to_string();
+            let b = ClipId::new_v7(t).to_string();
+            assert_ne!(a, b, "same-ms ids must be distinct");
+            if let Some(p) = &prev {
+                assert!(p < &a, "{p} !< {a}");
+            }
+            prev = Some(a);
+        }
+    }
+
+    #[test]
+    fn parse_rejects_uppercase_and_bad_variant() {
+        assert_eq!(
+            ClipId::parse("019A8F40-02AA-7B11-8C22-5E6F7A8B9C0D"),
+            Err(CoreError::InvalidId)
+        );
+        // variant nibble 'c' is not in [89ab]
+        assert_eq!(
+            ClipId::parse("019a8f40-02aa-7b11-cc22-5e6f7a8b9c0d"),
+            Err(CoreError::InvalidId)
+        );
     }
 
     #[test]
