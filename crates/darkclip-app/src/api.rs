@@ -637,6 +637,9 @@ impl ClipApi for App {
         Err(NOT_YET)
     }
 
+    /// Applies the mode to the actor first, then saves it. If the save fails the mode stays
+    /// applied at runtime and the call returns `Err`. That is intentional: the user's privacy
+    /// choice (pause, private) wins over persistence.
     fn set_capture_mode(&self, c: &Caller, mode: CaptureMode) -> Result<(), ApiError> {
         PermissionGuard::check(c, Operation::SetCaptureMode)?;
         let mut s = lock(&self.settings);
@@ -1179,6 +1182,72 @@ mod tests {
         let sentinel_wait = h.events.recv_timeout(Duration::from_millis(300));
         assert!(!matches!(sentinel_wait, Ok(AppEvent::ClipAdded(_))));
         assert_eq!(a.get_storage_stats(&Caller::Ui).unwrap().clips, 0);
+    }
+
+    #[test]
+    fn update_settings_save_failure_changes_nothing() {
+        use darkclip_core::sensitive::{masked_preview, scan};
+        let s0 = Settings {
+            privacy: PrivacyPolicy {
+                sensitive_handling: SensitiveHandling::StoreMasked,
+                ..PrivacyPolicy::default()
+            },
+            ui: crate::settings::UiSettings {
+                language: Lang::Vi,
+                ..Default::default()
+            },
+            ..Settings::default()
+        };
+        let h = start(&[], Some(s0.clone()));
+        let a = h.app();
+        let path = h.dir.path().join("settings.json");
+        let before = std::fs::read(&path).unwrap();
+        // Make the save fail: a directory takes the place of the file.
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let mut bad = s0.clone();
+        bad.ui.language = Lang::En;
+        bad.retention.max_items = 7;
+        assert!(a.update_settings(bad).is_err());
+        // Memory and file keep the old settings.
+        assert_eq!(a.settings(), s0);
+        assert!(path.is_dir());
+        assert!(!before.is_empty());
+        // The actor keeps the old policy: masked previews are still Vietnamese.
+        let key = format!(
+            "key {}{}",
+            concat!("s", "k-"),
+            "aB3dE5gH7jK9mN1pQ2rS4tU6vW8xY0zaB3dE5gH7jK9m"
+        );
+        h.fake.copy(text_copy(&key));
+        let id = h.wait_added();
+        let hint = scan(&key, &s0.privacy.sensitive_categories_enabled)
+            .mask_hint
+            .unwrap();
+        let preview = a
+            .get_clip(&Caller::Ui, id, GetOptions::default())
+            .unwrap()
+            .clip
+            .preview;
+        assert_eq!(preview, masked_preview(&hint, Lang::Vi));
+    }
+
+    #[test]
+    fn set_capture_mode_save_failure_keeps_mode_and_errs() {
+        let h = start(&[], None);
+        let a = h.app();
+        let path = h.dir.path().join("settings.json");
+        std::fs::create_dir(&path).unwrap();
+        // `persist` is true (the file did not exist at start), so the save is attempted.
+        assert!(a
+            .set_capture_mode(&Caller::Ui, CaptureMode::Private)
+            .is_err());
+        assert_eq!(a.status().capture, CaptureStatus::Private);
+        h.fake.copy(text_copy("not captured while private"));
+        assert!(!matches!(
+            h.events.recv_timeout(Duration::from_millis(300)),
+            Ok(AppEvent::ClipAdded(_))
+        ));
     }
 
     #[test]

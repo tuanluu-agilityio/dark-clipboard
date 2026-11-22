@@ -194,16 +194,21 @@ impl Settings {
     /// failure the temp file is removed and the old file is untouched.
     pub fn save(&self, path: &Path) -> Result<(), ApiError> {
         let json = serde_json::to_vec_pretty(self).map_err(|_| ApiError::Internal)?;
-        let mut name = path.file_name().ok_or(ApiError::Internal)?.to_os_string();
-        let n = SAVE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        name.push(format!(".tmp-{}-{n}", std::process::id()));
-        let tmp = path.with_file_name(name);
+        let tmp = temp_path(path).ok_or(ApiError::Internal)?;
         let result = write_synced(&tmp, &json).and_then(|()| std::fs::rename(&tmp, path));
         if result.is_err() {
             let _ = std::fs::remove_file(&tmp);
         }
         result.map_err(|_| ApiError::Internal)
     }
+}
+
+/// A temp file name next to `path`, unique within the process (pid + counter, no clock).
+fn temp_path(path: &Path) -> Option<PathBuf> {
+    let mut name = path.file_name()?.to_os_string();
+    let n = SAVE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    name.push(format!(".tmp-{}-{n}", std::process::id()));
+    Some(path.with_file_name(name))
 }
 
 fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -349,6 +354,15 @@ mod tests {
         assert_eq!(s, Settings::default());
         assert!(matches!(o, LoadOutcome::DefaultedReadOnly(_)), "{o:?}");
         assert_eq!(std::fs::read(&p).unwrap(), b"garbage");
+    }
+
+    #[test]
+    fn temp_names_are_unique_within_one_millisecond() {
+        let p = Path::new("dir").join("settings.json");
+        let names: Vec<PathBuf> = (0..1000).map(|_| temp_path(&p).unwrap()).collect();
+        let distinct: std::collections::HashSet<&PathBuf> = names.iter().collect();
+        assert_eq!(distinct.len(), names.len());
+        assert_eq!(names[0].parent(), p.parent());
     }
 
     #[test]

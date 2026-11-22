@@ -1909,6 +1909,35 @@ mod tests {
     }
 
     #[test]
+    fn late_copy_back_does_not_write() {
+        let h = start(PrivacyPolicy::default());
+        h.fake.copy(text_copy("clip A"));
+        let (a, _) = h.wait_added();
+        h.fake.copy(text_copy("clip B"));
+        h.wait_added();
+        let before: Vec<_> = h.fake.current().into_iter().map(|r| r.bytes).collect();
+        assert_eq!(h.fake.write_calls(), 0);
+        let deadline = Instant::now();
+        std::thread::sleep(Duration::from_millis(5));
+        let (tx, rx) = mpsc::channel();
+        h.cap()
+            .send(ActorCommand::CopyBack {
+                id: a,
+                plain: false,
+                deadline,
+                reply: tx,
+            })
+            .unwrap();
+        assert_eq!(rx.recv_timeout(WAIT).unwrap(), Err(ApiError::Internal));
+        assert_eq!(h.fake.write_calls(), 0);
+        let now: Vec<_> = h.fake.current().into_iter().map(|r| r.bytes).collect();
+        assert_eq!(now, before);
+        // On time, the same command writes.
+        h.copy_back(a, false).unwrap();
+        assert_eq!(h.fake.write_calls(), 1);
+    }
+
+    #[test]
     fn late_commands_have_no_side_effect() {
         let h = start(PrivacyPolicy::default());
         h.fake.copy(text_copy("keep me"));

@@ -32,6 +32,7 @@ struct State {
     source: Option<ClipboardSource>,
     busy: u32,
     read_calls: u32,
+    write_calls: u32,
     snapshot_meta_calls: u32,
     resolve_calls: u32,
     /// Test hook: the next `read` bumps `seq` (a change whose signal is not delivered yet).
@@ -201,6 +202,11 @@ impl FakeHandle {
         lock(&self.state).read_calls
     }
 
+    /// How many times `write` was invoked (a skipped command must not reach the clipboard).
+    pub fn write_calls(&self) -> u32 {
+        lock(&self.state).write_calls
+    }
+
     /// How many times `SourceResolver::resolve` was invoked (sync point for timing tests).
     pub fn resolve_calls(&self) -> u32 {
         lock(&self.state).resolve_calls
@@ -305,6 +311,7 @@ impl ClipboardAccess for FakeAccess {
 
     fn write(&mut self, reps: &[RawRepresentation]) -> Result<u64, PlatformError> {
         let mut st = lock(&self.state);
+        st.write_calls += 1;
         st.take_busy()?;
         st.seq += 1;
         st.formats = reps

@@ -21,7 +21,8 @@ pub fn to_envelope<T: Serialize>(r: &Result<T, ApiError>, lang: Lang) -> serde_j
 pub struct Settings { pub settings_version: u32, pub privacy: PrivacyPolicy, pub retention: RetentionPolicy,
                       pub shortcuts: Shortcuts, pub ui: UiSettings, pub startup: StartupSettings }
 impl Settings { pub fn load(path: &Path) -> (Settings, LoadOutcome); pub fn save(&self, path: &Path) -> Result<(), ApiError>; }
-pub enum LoadOutcome { Loaded, Defaulted, RecoveredFromCorrupt { backup: PathBuf }, LoadedWithCorrections(Vec<&'static str /* field path */>) }
+pub enum LoadOutcome { Loaded, Defaulted, RecoveredFromCorrupt { backup: PathBuf }, LoadedWithCorrections(Vec<&'static str /* field path */>),
+                   DefaultedReadOnly(&'static str /* defaults in memory; the file must not be written */) }
 ```
 `PermissionGuard` in `permission.rs`: in Phase 1, `Caller::Mcp` → always `PermissionDenied` except `get_storage_stats`; `Caller::Cli` → allowed (the App is in-process in Phase 1; the P2 CLI process will route mutations over IPC). Mark both rules with the comment `// P2: replaced by grant checks (ADR-0005)`.
 
