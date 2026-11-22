@@ -17,6 +17,7 @@
 
 | Task | Title | Depends | Agent / model | Reviewer | Risk | Acceptance criteria | Tests |
 |---|---|---|---|---|---|---|---|
+| 200 | Split `crates/darkclip-app/src/capture.rs` (> 2,000 lines) into modules (actor loop, pending/debounce, pipeline/store, copy-back) with no behaviour change; GC-03/GC-06 check paths updated to the new files (D-039) | P2 | specialist / opus | security-reviewer / opus | Medium (privacy gate moves) | All existing app tests pass unchanged; check scripts still enforce GC-03/GC-06 on the new files | Existing suite |
 | 201 | Desktop app skeleton: single instance (named mutex), Slint event loop, wiring `App`; theme tokens from Darkshot's dark palette (colours copied as values, not code) | P2 | builder / sonnet | reviewer / sonnet | Low | Starts hidden; second instance forwards `--toggle` over IPC stub | Unit tests for arg parsing; manual |
 | 202 | Tray icon and menu (open, pause 5 min / 1 h / until resumed, private mode, settings, quit); state icons | 201 | builder / sonnet | reviewer / sonnet | Low | States visible; menu strings from i18n | Manual checklist |
 | 203 | Global shortcut (`global-hotkey`), conflict detection (registration failure → settings warning), configurable | 201 | builder / sonnet | reviewer / sonnet | Medium | Default `Ctrl+Shift+V`; failure shown, not silent | Unit test of shortcut parsing |

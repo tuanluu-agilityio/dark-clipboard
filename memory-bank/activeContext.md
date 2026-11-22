@@ -6,7 +6,7 @@ Updated: 2026-11-22
 
 - **Phase 0 (discovery and architecture): complete**, pending owner approval of the blueprint.
 - **Phase 1 Foundation: COMPLETE (2026-11-22).** Tasks 001–011 and 013 merged; phase review 012 done (its one blocker, the bench, was a measurement artifact; fixed and re-measured in 013). Workspace: 263 tests pass, 2 benches ignored (median p95 17.5 ms worst-case corpus, 15.7 ms realistic).
-- **Phase 2 Windows capture: IN PROGRESS.** Task packages `docs/tasks/101…108` + `103b` written (D-031). Order: 101 → 105 → 102 → 103 → 103b → 104 → 106 → 107 → 108. Tasks 101 (monitor thread, `ChangeSignal.source`), 105 (owner → exe name source) and 102 (`snapshot_meta`: formats + markers by id) 103 (`read` with caps; DIB→PNG; own DROPFILES parser) 103b (PNG decode → pixel hash, thumbnails, bomb caps) and 104 (copy-back write; post-close seq + owner check; per-write owner window, D-038) done. **Current: Task 106** (`task/106-headless-binary`). CI on GitHub (Windows, Linux, macOS, deny) green since the first push: the Unix permission/fsync paths now run in CI tests (F-06 partly closed). Task 107 needs the owner at the machine. Real-clipboard-writing tests are `#[ignore]` and not run by agents.
+- **Phase 2 Windows capture: IN PROGRESS.** Task packages `docs/tasks/101…108` + `103b` written (D-031). Order: 101 → 105 → 102 → 103 → 103b → 104 → 106 → 107 → 108. Tasks 101 (monitor thread, `ChangeSignal.source`), 105 (owner → exe name source) and 102 (`snapshot_meta`: formats + markers by id) 103 (`read` with caps; DIB→PNG; own DROPFILES parser) 103b (PNG decode → pixel hash, thumbnails, bomb caps) and 104 (copy-back write; post-close seq + owner check; per-write owner window, D-038) done. 106 (`dark-clipboard --headless`, content-free log, StorageFull retry, caps Native) done. **Next: Task 107** — needs the owner at the machine; ask before starting. CI on GitHub (Windows, Linux, macOS, deny) green since the first push: the Unix permission/fsync paths now run in CI tests (F-06 partly closed). Task 107 needs the owner at the machine. Real-clipboard-writing tests are `#[ignore]` and not run by agents.
 - Git: remote `origin` = `github.com/tuanluu-agilityio/dark-clipboard` (public), pushed 2026-11-22 as is (owner, D-035). From Task 103b on, tasks merge via PR (`gh pr create` / `gh pr merge --merge --delete-branch`).
 
 ## Waiting on owner
@@ -14,9 +14,8 @@ Updated: 2026-11-22
 | ID | Question | Blocks |
 |---|---|---|
 | Q-04 | Test hardware for Phase 4 (Mac, Linux KDE/GNOME/wlroots): **none yet, test later** (owner 2026-11-22). Phase 4 adapters can be built but every row stays `untested` | Phase 4 verification |
-| Q-07 | Protect `main` on GitHub (ruleset like Darkshot: no deletion, no force-push, PR required). The orchestrator's attempt was blocked by the permission classifier; owner to enable it in Settings → Rules or allow the command | Nothing (PR flow is used anyway) |
 
-Answered 2026-11-22 (D-034): Q-01 GPLv3 · Q-02 Slint approved (ADR-0001 accepted) · Q-03 public repo exists · Q-05 left to the orchestrator: GNOME Wayland is **not** a must for 0.1.0.
+Q-07 done by the owner 2026-11-22: ruleset "Protect main" (no deletion, no force-push, PR with merge only, required checks windows/macos/ubuntu/deny). Answered 2026-11-22 (D-034): Q-01 GPLv3 · Q-02 Slint approved (ADR-0001 accepted) · Q-03 public repo exists · Q-05 left to the orchestrator: GNOME Wayland is **not** a must for 0.1.0.
 
 ## Follow-ups recorded (not yet scheduled to a task)
 - F-08 (Task 101 review nits; resolver-on-restart part fixed in 105): if `post_stop` fails the monitor thread is detached with its listener; `start()` while running silently drops the new `tx`; `Win32_System_Memory` feature only used by test code. Non-Windows build of `darkclip-windows` unverified (no other target installed).
@@ -24,10 +23,11 @@ Answered 2026-11-22 (D-034): Q-01 GPLv3 · Q-02 Slint approved (ADR-0001 accepte
 - F-10 (Task 102 review): Windows `size_hint` is always None (handle size needs GetClipboardData), so image caps apply only at read time (103). A marker DWORD with GlobalSize ≠ 4 → None → fails closed (over-skips); watch in 107. `caps.concealed_markers` flips to Native in 106.
 - F-11 (Task 103 review): only the single best image format is planned (S-1); if it is an invalid PNG or unsupported DIB the image is lost even when another image format was offered (no fallback). Repeated-masks detection matches on content (3 pixels could be lost in a pathological image). `encode_png` output keeps worst-case capacity (memory only). Win32 read paths have never run on a real clipboard (3 ignored tests for Task 107, plus a manual Explorer file copy).
 - F-12 (Task 104): `caps.write` still Unsupported in `lib.rs` (flip in 106). Unverified on a real clipboard: destroying the owner window does not bump the seq; the 300 ms no-extra-signal assert can fail if any app copies meanwhile. Manual: copy-back then copy in Notepad immediately (no delay, no recapture).
+- F-13 (Task 106): real Ctrl+C in a console untested (owner); log-rotation reopen failure path untested; S-10 word list may false-positive on future harmless lines (safe direction). Idle measurement included owner copies; scratch data dirs deleted and verified.
 - F-01 (done in 101): put `source` into `ChangeSignal`, resolved on the monitor thread at OS-signal time (Phase 2 Task 101/105; platform interface change). Closes the dequeue-time race for excluded apps.
 - F-02: StorageFull → retention then retry once (system-overview §3) is not implemented.
 - F-03: a `sequence()` error at resume leaves the current seq unmarked (possible backfill if a stale signal follows).
-- F-04: `upsert_clip` takes `NewClip` by value and cannot wipe the reps on error; consider `&NewClip` or a zeroize-on-drop byte type in core.
+- F-04 (done in 106): `upsert_clip` took `NewClip` by value and cannot wipe the reps on error; consider `&NewClip` or a zeroize-on-drop byte type in core.
 - F-05: images are hashed without decoded RGBA and without thumbnails (no `png` decode in app yet); DIB vs PNG copies of one image do not dedupe. Phase 2 Task 103 should decode in the adapter or app.
 - F-06: unix-only permission and fsync paths in storage have never run (no Unix machine).
 - F-07: search bench p95 ≈ 24–25 ms against a 30 ms budget.
