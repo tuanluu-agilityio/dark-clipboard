@@ -19,6 +19,7 @@ mod db;
 mod error;
 mod migrate;
 mod retention;
+mod search;
 mod stats;
 
 use darkclip_core::{
@@ -29,6 +30,7 @@ use std::sync::Arc;
 
 pub use error::StorageError;
 pub use retention::RetentionReport;
+pub use search::{ClipSummary, Cursor, SearchQuery};
 pub use stats::StorageStats;
 
 /// The clip store: one SQLite connection plus the data directory.
