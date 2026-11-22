@@ -7,22 +7,31 @@
 //! through `App::copy_clip_to_clipboard` (the capture actor writes the clipboard); nothing here
 //! touches the clipboard. Only previews are held, never full content.
 //!
-//! Logging: only the content-free `perf` event (timings and a source name). Queries, previews
-//! and source names are never logged or formatted (GC-06).
+//! Copy back and paste (Task 205): after the copy succeeded, Enter returns the focus to the
+//! window recorded at show time; Ctrl+Enter (or Enter with "Enter also pastes") also pastes
+//! there through the platform `PasteInjector`, on a short-lived `darkclip-paste` thread (it may
+//! wait up to about 1.3 s for keys to be released and the focus to move; the UI thread never
+//! waits). A refused paste leaves the clip copied and shows a static toast.
+//!
+//! Logging: only the content-free `perf` and `paste` events (timings, a source name, a coarse
+//! outcome). Queries, previews, source names and window titles are never logged or formatted
+//! (GC-06, SR-11).
 
 use super::{Chip, ClipRow, MainWindow, Poster, Seg, Strings};
 use crate::log::{Log, Val};
 use crate::popup::highlight::row_segments;
 use crate::popup::keys::{self, Action, ChipFocus, CopyKind, KeyCtx, Mods};
 use crate::popup::list::{Applied, Filters, Item, ListModel, Request, TimeFilter, View};
+use crate::popup::paste::{self as paste_rules, AfterCopy, Via};
 use darkclip_app::api::{Caller, CopyMode};
 use darkclip_app::{ClipApi, ClipSummaryView, Page};
 use darkclip_core::i18n::{t, Lang, Msg};
 use darkclip_core::{ClipId, ClipType, Clock};
+use darkclip_platform::{PasteInjector, PlatformError};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Typing pause before a search runs.
@@ -53,6 +62,9 @@ const CHIP_TODAY: i32 = 101;
 const CHIP_WEEK: i32 = 102;
 /// Source chips are `CHIP_SOURCE + index` into the current source list.
 const CHIP_SOURCE: i32 = 200;
+
+/// The platform's paste injector, shared with the paste threads (one job at a time).
+pub type Injector = Arc<Mutex<Box<dyn PasteInjector>>>;
 
 /// What opened the popup (for the `perf` event).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,7 +114,8 @@ pub fn set_strings(w: &MainWindow, lang: Lang) {
     s.set_delete(t(lang, Msg::UiDelete).into());
     s.set_undo(t(lang, Msg::UiUndo).into());
     s.set_close(t(lang, Msg::UiClose).into());
-    s.set_key_hints(t(lang, Msg::UiKeyHints).into());
+    let (can_paste, enter_pastes) = PASTE_PREFS.get();
+    s.set_key_hints(t(lang, paste_rules::key_hints(can_paste, enter_pastes)).into());
 }
 
 struct Host {
@@ -123,15 +136,22 @@ struct Host {
     pending_delete: Option<ClipId>,
     /// Which chip has the keyboard focus (from the chips' own reports).
     chip_focus: ChipFocus,
+    /// The platform's paste injector; `None` where auto-paste is unsupported.
+    injector: Option<Injector>,
+    /// A focus return or paste is running: further copies wait for it.
+    pasting: bool,
+    log: Arc<Log>,
 }
 
 thread_local! {
     static HOST: RefCell<Option<Host>> = const { RefCell::new(None) };
     /// When the popup was asked to show, and by what; taken by the first frame after it.
     static SHOW_ASKED: Cell<Option<(Instant, Trigger)>> = const { Cell::new(None) };
-    /// The window that had the focus before the popup showed (raw handle; Task 205 returns the
-    /// focus and pastes there).
-    static PREVIOUS_FOREGROUND: Cell<Option<isize>> = const { Cell::new(None) };
+    /// The window that had the focus before the popup showed: handle value and process id
+    /// (Task 205 returns the focus and pastes there). Never a title.
+    static PREVIOUS_FOREGROUND: Cell<Option<(u64, u32)>> = const { Cell::new(None) };
+    /// (auto-paste supported, "Enter also pastes"), for the key hints and the Enter key.
+    static PASTE_PREFS: Cell<(bool, bool)> = const { Cell::new((false, false)) };
     /// When the popup last closed itself because it lost the focus.
     static FOCUS_HIDE_AT: Cell<Option<Instant>> = const { Cell::new(None) };
 }
@@ -141,10 +161,9 @@ pub fn since_focus_hide() -> Option<Duration> {
     FOCUS_HIDE_AT.get().map(|t| t.elapsed())
 }
 
-/// The window that was in front when the popup last showed (for Task 205).
-#[allow(dead_code)]
-pub fn previous_foreground() -> Option<isize> {
-    PREVIOUS_FOREGROUND.get()
+/// The window that was in front when the popup last showed, as a paste target.
+fn previous_target() -> Option<darkclip_platform::PasteTarget> {
+    paste_rules::target(PREVIOUS_FOREGROUND.get())
 }
 
 /// Runs `f` on the host; does nothing when it is missing or already borrowed (re-entry).
@@ -443,11 +462,17 @@ impl Host {
         });
     }
 
-    fn copy(&mut self, item: Option<ClipId>, kind: CopyKind) {
+    fn copy(&mut self, item: Option<ClipId>, kind: CopyKind, via: Via) {
         let Some(id) = item else {
             return;
         };
-        // Ctrl+Enter copies until Task 205 adds the paste.
+        if self.pasting {
+            // The previous copy is still returning the focus or pasting.
+            self.show_toast(paste_rules::BUSY_TOAST, false);
+            return;
+        }
+        let (_, enter_pastes) = PASTE_PREFS.get();
+        let after = paste_rules::after_copy(kind, via, enter_pastes, self.injector.is_some());
         let mode = match kind {
             CopyKind::Plain => CopyMode::PlainText,
             CopyKind::Original | CopyKind::Paste => CopyMode::Original,
@@ -457,13 +482,53 @@ impl Host {
             let ok = app.copy_clip_to_clipboard(&Caller::Ui, id, mode).is_ok();
             let _ = ui.upgrade_in_event_loop(move |w| {
                 if ok {
-                    // J1: the clip is on the clipboard, the popup closes.
-                    hide(&w);
+                    // J1: the clip is on the clipboard; the focus goes back (and the paste
+                    // runs), then the popup closes.
+                    let started = with_host(|h| h.return_focus(after)).unwrap_or(false);
+                    if !started {
+                        hide(&w);
+                    }
                 } else {
                     with_host(|h| h.show_toast(Msg::UiActionFailed, false));
                 }
             });
         });
+    }
+
+    /// Starts the focus return (and the paste for `AfterCopy::Paste`) on a paste thread.
+    /// Returns false when nothing was started and the popup should simply close. A paste with
+    /// no recorded target shows the "paste manually" toast and keeps the popup open.
+    fn return_focus(&mut self, after: AfterCopy) -> bool {
+        let (Some(injector), Some(target)) = (self.injector.clone(), previous_target()) else {
+            if after == AfterCopy::Paste {
+                self.log_paste("refused");
+                self.show_toast(Msg::UiPasteManual, false);
+                return true;
+            }
+            return false;
+        };
+        let ui = self.window.clone();
+        let spawned = std::thread::Builder::new()
+            .name("darkclip-paste".into())
+            .spawn(move || {
+                let result = match injector.lock() {
+                    Ok(mut inj) => match after {
+                        AfterCopy::Paste => inj.paste(&target),
+                        AfterCopy::Restore => inj.focus(&target),
+                    },
+                    Err(_) => Err(PlatformError::Unsupported("paste injector unavailable")),
+                };
+                let _ = ui.upgrade_in_event_loop(move |w| on_paste_done(&w, after, result));
+            });
+        if spawned.is_err() {
+            return false;
+        }
+        self.pasting = true;
+        true
+    }
+
+    fn log_paste(&self, outcome: &'static str) {
+        self.log.event("paste", &[("result", Val::Name(outcome))]);
     }
 
     fn after_move(&mut self) {
@@ -495,7 +560,7 @@ impl Host {
             }
             Action::Copy(kind) => {
                 let id = self.model.selected_item().map(|i| i.id);
-                self.copy(id, kind);
+                self.copy(id, kind, Via::Enter);
             }
             Action::CopyNth(n) => {
                 let id = self.model.nth(n).map(|i| i.id);
@@ -503,7 +568,7 @@ impl Host {
                     self.model.select(n);
                     self.sync_state();
                 }
-                self.copy(id, CopyKind::Original);
+                self.copy(id, CopyKind::Original, Via::Other);
             }
             Action::Delete => self.delete_selected(),
             Action::TogglePin => self.toggle_pin(),
@@ -513,7 +578,13 @@ impl Host {
                 let ui = self.window.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = ui.upgrade() {
-                        hide(&w);
+                        // Esc returns the focus like Enter (Review Focus 3); never pastes.
+                        let started =
+                            with_host(|h| !h.pasting && h.return_focus(AfterCopy::Restore))
+                                .unwrap_or(false);
+                        if !started {
+                            hide(&w);
+                        }
                     }
                 });
             }
@@ -565,6 +636,54 @@ impl Host {
         }
         self.search(f);
     }
+}
+
+/// A focus return or paste finished (event loop). The clip is on the clipboard either way.
+fn on_paste_done(w: &MainWindow, after: AfterCopy, result: Result<(), PlatformError>) {
+    let toast = with_host(|h| {
+        h.pasting = false;
+        if after == AfterCopy::Restore {
+            return None;
+        }
+        h.log_paste(paste_rules::outcome_name(&result));
+        result.as_ref().err().map(paste_rules::paste_toast)
+    })
+    .flatten();
+    match toast {
+        // Shown in the popup while it is open (a refusal before the focus moved keeps it open);
+        // the user closes it with Esc.
+        Some(msg) => {
+            with_host(|h| h.show_toast(msg, false));
+        }
+        None => hide(w),
+    }
+}
+
+/// The platform's paste injector arrived from the worker (only where auto-paste is native).
+pub fn set_injector(injector: Injector) {
+    with_host(|h| h.injector = Some(injector));
+    let (_, enter) = PASTE_PREFS.get();
+    PASTE_PREFS.set((true, enter));
+    refresh_hints();
+}
+
+/// The "Enter also pastes" setting (every status refresh).
+pub fn set_enter_pastes(on: bool) {
+    let (can, old) = PASTE_PREFS.get();
+    if old != on {
+        PASTE_PREFS.set((can, on));
+        refresh_hints();
+    }
+}
+
+fn refresh_hints() {
+    with_host(|h| {
+        if let Some(w) = h.window() {
+            let (can, enter) = PASTE_PREFS.get();
+            w.global::<Strings>()
+                .set_key_hints(t(h.lang, paste_rules::key_hints(can, enter)).into());
+        }
+    });
 }
 
 /// A search answered (event loop).
@@ -625,6 +744,9 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
         slow: false,
         pending_delete: None,
         chip_focus: ChipFocus::default(),
+        injector: None,
+        pasting: false,
+        log: Arc::clone(&log),
     };
     host.rebuild_chips();
     host.sync_state();
@@ -686,11 +808,18 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
             h.act(Action::Copy(CopyKind::Original));
         });
     });
+    // The buttons only restore (never paste, whatever the setting).
     w.on_act_copy(|| {
-        with_host(|h| h.act(Action::Copy(CopyKind::Original)));
+        with_host(|h| {
+            let id = h.model.selected_item().map(|i| i.id);
+            h.copy(id, CopyKind::Original, Via::Other);
+        });
     });
     w.on_act_copy_plain(|| {
-        with_host(|h| h.act(Action::Copy(CopyKind::Plain)));
+        with_host(|h| {
+            let id = h.model.selected_item().map(|i| i.id);
+            h.copy(id, CopyKind::Plain, Via::Other);
+        });
     });
     w.on_act_pin(|| {
         with_host(|h| h.act(Action::TogglePin));

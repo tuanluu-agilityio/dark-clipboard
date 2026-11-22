@@ -53,6 +53,11 @@ pub struct UiSettings {
     #[serde(serialize_with = "ser_lang", deserialize_with = "de_lang")]
     pub language: Lang,
     pub popup_position: PopupPosition,
+    /// "Enter also pastes" (Task 205): Enter restores the clip and pastes it into the previous
+    /// app, like Ctrl+Enter. Off by default (Enter only restores, D-044). Missing in files
+    /// written before Task 205.
+    #[serde(default)]
+    pub enter_pastes: bool,
 }
 
 impl Default for UiSettings {
@@ -60,6 +65,7 @@ impl Default for UiSettings {
         Self {
             language: Lang::En,
             popup_position: PopupPosition::Cursor,
+            enter_pastes: false,
         }
     }
 }
@@ -248,10 +254,28 @@ mod tests {
         s.ui.language = Lang::Vi;
         s.ui.popup_position = PopupPosition::Center;
         s.startup.launch_at_login = true;
+        s.ui.enter_pastes = true;
         s.save(&p).unwrap();
         let (back, o) = Settings::load(&p);
         assert_eq!(back, s);
         assert_eq!(o, LoadOutcome::Loaded);
+    }
+
+    #[test]
+    fn enter_pastes_is_off_by_default_and_optional_in_older_files() {
+        assert!(!Settings::default().ui.enter_pastes);
+        // A file written before Task 205 has no `enter_pastes`: it loads, with the default.
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        std::fs::write(
+            &p,
+            br#"{"settings_version":1,"ui":{"language":"vi","popup_position":"center"}}"#,
+        )
+        .unwrap();
+        let (s, o) = Settings::load(&p);
+        assert_eq!(o, LoadOutcome::Loaded);
+        assert_eq!(s.ui.language, Lang::Vi);
+        assert!(!s.ui.enter_pastes);
     }
 
     #[test]

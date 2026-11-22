@@ -57,7 +57,7 @@ pub enum CopyKind {
     Original,
     /// Shift+Enter: plain text only.
     Plain,
-    /// Ctrl+Enter: copy and paste (Task 205 adds the paste; until then it copies).
+    /// Ctrl+Enter: copy, return the focus and paste (Task 205; copy only where unsupported).
     Paste,
 }
 

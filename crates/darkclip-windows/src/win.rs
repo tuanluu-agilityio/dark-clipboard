@@ -625,6 +625,12 @@ impl RawWindow {
         unsafe { PostMessageW(Some(hwnd), WM_DARKCLIP_STOP, WPARAM(0), LPARAM(0)) }.is_ok()
     }
 
+    /// The handle value (paste tests use it as a `PasteTarget` window).
+    #[cfg(test)]
+    pub(crate) fn value(self) -> u64 {
+        self.0 as u64
+    }
+
     /// `IsWindow`: the handle still names an existing window (teardown tests). A destroyed
     /// window's handle value may in theory be reused later by another window.
     #[cfg(test)]
@@ -633,6 +639,273 @@ impl RawWindow {
         // SAFETY: `IsWindow` accepts any handle value, valid or not, and only reads it.
         unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(hwnd)) }.as_bool()
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Focus return and auto-paste (Task 205). Only `paste.rs` calls these; the decisions live there.
+// No window title is read (SR-11): the class name is compared with fixed shell class names and
+// dropped. The only input ever synthesized is Ctrl+V, by `send_ctrl_v`, after `paste::run`
+// passed every check.
+// ---------------------------------------------------------------------------------------------
+
+/// Window classes of the taskbars and the desktop (shell windows that must never get a paste).
+const SHELL_CLASSES: [&str; 4] = [
+    "Shell_TrayWnd",
+    "Shell_SecondaryTrayWnd",
+    "Progman",
+    "WorkerW",
+];
+
+fn hwnd_from(window: u64) -> Option<HWND> {
+    let raw = usize::try_from(window).ok()?;
+    (raw != 0).then_some(HWND(raw as *mut c_void))
+}
+
+fn hwnd_value(hwnd: HWND) -> Option<u64> {
+    let raw = hwnd.0 as usize;
+    if raw == 0 {
+        return None;
+    }
+    u64::try_from(raw).ok()
+}
+
+fn is_shell_class(hwnd: HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+    let mut buf = [0u16; 64];
+    // SAFETY: `buf` is a writable buffer whose length the binding passes; a stale handle only
+    // makes the call return 0.
+    let n = unsafe { GetClassNameW(hwnd, &mut buf) };
+    let Some(name) = usize::try_from(n).ok().and_then(|n| buf.get(..n)) else {
+        return false;
+    };
+    SHELL_CLASSES
+        .iter()
+        .any(|c| c.encode_utf16().eq(name.iter().copied()))
+}
+
+/// What `paste.rs` needs to know about a window; `None` when it no longer exists.
+pub(crate) fn window_facts(window: u64) -> Option<crate::paste::WindowFacts> {
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetAncestor, GetDesktopWindow, GetShellWindow, GetWindowLongW, IsIconic, IsWindow,
+        IsWindowVisible, GA_ROOT, GWL_EXSTYLE, GWL_STYLE, WS_CHILD, WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW,
+    };
+    let hwnd = hwnd_from(window)?;
+    // SAFETY: `IsWindow` accepts any handle value and only reads it.
+    if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+        return None;
+    }
+    let mut pid = 0u32;
+    // SAFETY: a stale handle only makes the call fail; `pid` is a valid out-pointer.
+    let thread = unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut pid)) };
+    if thread == 0 || pid == 0 {
+        return None;
+    }
+    // SAFETY: plain queries on a handle value; a stale handle only makes them return
+    // 0 / FALSE / null. Nothing is owned, nothing to release.
+    let (visible, minimized, root, style, ex_style, shell, desktop) = unsafe {
+        (
+            IsWindowVisible(hwnd).as_bool(),
+            IsIconic(hwnd).as_bool(),
+            GetAncestor(hwnd, GA_ROOT),
+            GetWindowLongW(hwnd, GWL_STYLE),
+            GetWindowLongW(hwnd, GWL_EXSTYLE),
+            GetShellWindow(),
+            GetDesktopWindow(),
+        )
+    };
+    // The style words are bit sets; the casts keep the bits.
+    let style = style as u32;
+    let ex_style = ex_style as u32;
+    let mut cloaked = 0u32;
+    // SAFETY: `cloaked` is a writable u32 and its size is passed; on failure it stays 0
+    // (not cloaked), and the other checks still apply.
+    let _ = unsafe {
+        DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, (&raw mut cloaked).cast::<c_void>(), 4)
+    };
+    Some(crate::paste::WindowFacts {
+        pid,
+        visible,
+        top_level: root == hwnd && style & WS_CHILD.0 == 0,
+        minimized,
+        cloaked: cloaked != 0,
+        tool_window: ex_style & WS_EX_TOOLWINDOW.0 != 0,
+        no_activate: ex_style & WS_EX_NOACTIVATE.0 != 0,
+        shell: hwnd == shell || hwnd == desktop || is_shell_class(hwnd),
+    })
+}
+
+/// A token handle; closed on drop.
+struct TokenHandle(HANDLE);
+
+impl Drop for TokenHandle {
+    fn drop(&mut self) {
+        // SAFETY: the handle was returned by `OpenProcessToken` and is closed exactly once.
+        let _ = unsafe { CloseHandle(self.0) };
+    }
+}
+
+/// Mandatory integrity level RID (e.g. 0x2000 medium, 0x3000 high) of a process token.
+fn token_integrity(process: HANDLE) -> Option<u32> {
+    use windows::Win32::Security::{
+        GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenIntegrityLevel,
+        TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::OpenProcessToken;
+    let mut raw = HANDLE::default();
+    // SAFETY: `process` is an open process handle (or the current-process pseudo-handle);
+    // `raw` is a valid out-pointer. The token handle is owned by the guard right after.
+    unsafe { OpenProcessToken(process, TOKEN_QUERY, &raw mut raw) }.ok()?;
+    let token = TokenHandle(raw);
+    // u64 words: the buffer is aligned for TOKEN_MANDATORY_LABEL (pointer-aligned).
+    let mut buf = [0u64; 16];
+    let size = u32::try_from(std::mem::size_of_val(&buf)).ok()?;
+    let mut needed = 0u32;
+    // SAFETY: `buf` is writable for `size` bytes and outlives the call; `needed` is a valid
+    // out-pointer. A label larger than the buffer makes the call fail (handled as unknown).
+    unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenIntegrityLevel,
+            Some(buf.as_mut_ptr().cast::<c_void>()),
+            size,
+            &raw mut needed,
+        )
+    }
+    .ok()?;
+    // SAFETY: the call succeeded, so `buf` starts with a TOKEN_MANDATORY_LABEL whose SID points
+    // into `buf`, which is still alive; the SID functions only read it, and the sub-authority
+    // count is checked before the last one is read.
+    let rid = unsafe {
+        let label = &*buf.as_ptr().cast::<TOKEN_MANDATORY_LABEL>();
+        let sid = label.Label.Sid;
+        if sid.0.is_null() {
+            return None;
+        }
+        let count = *GetSidSubAuthorityCount(sid);
+        if count == 0 {
+            return None;
+        }
+        *GetSidSubAuthority(sid, u32::from(count - 1))
+    };
+    drop(token);
+    Some(rid)
+}
+
+/// Integrity level of another process; `None` when it cannot be opened or read (the caller
+/// then treats it as higher than ours).
+pub(crate) fn process_integrity(pid: u32) -> Option<u32> {
+    // SAFETY: plain call with the least right that allows opening the token for query.
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let process = ProcessHandle(process);
+    token_integrity(process.0)
+}
+
+/// Integrity level of this process.
+pub(crate) fn own_integrity() -> Option<u32> {
+    use windows::Win32::System::Threading::GetCurrentProcess;
+    // SAFETY: no arguments; the pseudo-handle needs no closing.
+    let me = unsafe { GetCurrentProcess() };
+    token_integrity(me)
+}
+
+/// True while Shift, Alt (VK_MENU covers both Alt keys, so AltGr too), a Win key or Enter is
+/// down (they would change or follow the paste).
+pub(crate) fn paste_blocking_keys_held() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_LWIN, VK_MENU, VK_RETURN, VK_RWIN, VK_SHIFT,
+    };
+    [VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN, VK_RETURN]
+        .iter()
+        // SAFETY: plain value argument; only reads the key state (the high bit means down).
+        .any(|vk| unsafe { GetAsyncKeyState(i32::from(vk.0)) } < 0)
+}
+
+/// True while Alt (VK_MENU covers both Alt keys, so AltGr too) or Enter is down.
+pub(crate) fn focus_blocking_keys_held() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU, VK_RETURN};
+    [VK_MENU, VK_RETURN]
+        .iter()
+        // SAFETY: plain value argument; only reads the key state (the high bit means down).
+        .any(|vk| unsafe { GetAsyncKeyState(i32::from(vk.0)) } < 0)
+}
+
+/// `SetForegroundWindow`; true when Windows says the window came to the front.
+pub(crate) fn set_foreground(window: u64) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+    let Some(hwnd) = hwnd_from(window) else {
+        return false;
+    };
+    // SAFETY: a stale handle only makes the call fail.
+    unsafe { SetForegroundWindow(hwnd) }.as_bool()
+}
+
+/// The foreground window's handle value.
+pub(crate) fn foreground() -> Option<u64> {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    // SAFETY: no arguments; the handle is not owned by the caller.
+    let hwnd = unsafe { GetForegroundWindow() };
+    hwnd_value(hwnd)
+}
+
+fn key_event(
+    vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY,
+    up: bool,
+) -> windows::Win32::UI::Input::KeyboardAndMouse::INPUT {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        MapVirtualKeyW, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+        KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC,
+    };
+    // SAFETY: plain value arguments; returns the scan code of the key, or 0 if there is none.
+    let scan = unsafe { MapVirtualKeyW(u32::from(vk.0), MAPVK_VK_TO_VSC) };
+    // Scan codes from MAPVK_VK_TO_VSC fit in 16 bits; 0 (unknown) is what was sent before.
+    let scan = u16::try_from(scan).unwrap_or(0);
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: scan,
+                dwFlags: if up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    KEYBD_EVENT_FLAGS(0)
+                },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+/// Sends Ctrl down, V down, V up, Ctrl up as one `SendInput` batch (not interleaved with user
+/// input). If Windows inserted only part of it, key-ups are sent so no key stays down.
+/// Never called by tests that agents run (GC-19).
+pub(crate) fn send_ctrl_v() -> Result<(), PlatformError> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, VK_CONTROL, VK_V};
+    let inputs = [
+        key_event(VK_CONTROL, false),
+        key_event(VK_V, false),
+        key_event(VK_V, true),
+        key_event(VK_CONTROL, true),
+    ];
+    let size = i32::try_from(std::mem::size_of::<INPUT>())
+        .map_err(|_| PlatformError::Backend { code: -1 })?;
+    // SAFETY: `inputs` is a slice of initialized keyboard INPUTs and `size` is the size of one
+    // INPUT, as the API requires.
+    let sent = unsafe { SendInput(&inputs, size) };
+    if usize::try_from(sent).ok() == Some(inputs.len()) {
+        return Ok(());
+    }
+    // SAFETY: no arguments; reads this thread's last error before any other call.
+    let code = unsafe { GetLastError() }.0;
+    let release = [key_event(VK_V, true), key_event(VK_CONTROL, true)];
+    // SAFETY: as above, two key-up events (harmless if the keys are already up).
+    let _ = unsafe { SendInput(&release, size) };
+    Err(PlatformError::Backend {
+        code: i64::from(code),
+    })
 }
 
 #[cfg(test)]
