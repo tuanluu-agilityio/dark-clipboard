@@ -29,8 +29,8 @@ Only Windows has been tested so far. See `docs/architecture/platform-compatibili
 
 Contributors and AI agents: start with `CLAUDE.md` / `AGENTS.md` and `memory-bank/activeContext.md`. Quality gate: `powershell -File scripts/check.ps1` (Windows) or `bash scripts/check.sh`.
 
-Developer run (Windows only for now, no UI): `cargo run -p dark-clipboard -- --headless` captures the clipboard into `%LOCALAPPDATA%\DarkClipboard` until Ctrl+C. `--data-dir <path>` picks another folder. A content-free log is written to `<data dir>\logs\dark-clipboard.log`; on stop it records how many changes were skipped, per reason (names and counts only). Windows capture was tested on a real clipboard in Task 107 (Windows 11; see the [platform checklist](docs/testing/platform-checklist.md)).
+Windows app skeleton: `cargo run -p dark-clipboard` starts the app hidden (a second start, `--toggle` or `--quit` talks to the running one through a per-user named pipe); the popup, tray and shortcut come in the next tasks. Developer run (Windows only for now, no window): `cargo run -p dark-clipboard -- --headless` captures the clipboard into `%LOCALAPPDATA%\DarkClipboard` until Ctrl+C. `--data-dir <path>` picks another folder. A content-free log is written to `<data dir>\logs\dark-clipboard.log`; on stop it records how many changes were skipped, per reason (names and counts only). Windows capture was tested on a real clipboard in Task 107 (Windows 11; see the [platform checklist](docs/testing/platform-checklist.md)).
 
 ## Licence
 
-Not decided yet (open question Q-01 in `memory-bank/activeContext.md`).
+GPL-3.0-only (see [LICENSE](LICENSE)). The UI uses Slint under its GPLv3 option.

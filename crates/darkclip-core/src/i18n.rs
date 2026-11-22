@@ -65,10 +65,16 @@ messages! {
     ErrInternal => ("Internal error", "Lỗi nội bộ"),
     // Command line (headless dev binary)
     CliUsage => (
-        "Usage: dark-clipboard --headless [--data-dir <path>]
-The windowed app arrives in a later release.",
-        "Cách dùng: dark-clipboard --headless [--data-dir <đường dẫn>]
-Ứng dụng có cửa sổ sẽ có ở bản sau."
+        "Usage: dark-clipboard [--headless | --toggle | --quit] [--data-dir <path>]
+  (no flag)   start the app hidden
+  --headless  capture without a window, until Ctrl+C
+  --toggle    ask the running app to show or hide the popup
+  --quit      ask the running app to quit",
+        "Cách dùng: dark-clipboard [--headless | --toggle | --quit] [--data-dir <đường dẫn>]
+  (không cờ)  chạy ứng dụng ở chế độ ẩn
+  --headless  ghi nhớ không cửa sổ, đến khi nhấn Ctrl+C
+  --toggle    yêu cầu ứng dụng đang chạy hiện hoặc ẩn cửa sổ nhanh
+  --quit      yêu cầu ứng dụng đang chạy thoát"
     ),
     CliNotSupportedYet => (
         "Dark Clipboard does not support this operating system yet.",
@@ -82,10 +88,21 @@ The windowed app arrives in a later release.",
         "Dark Clipboard is running headless. Press Ctrl+C to stop.",
         "Dark Clipboard đang chạy không giao diện. Nhấn Ctrl+C để dừng."
     ),
+    // Desktop window (Task 201)
+    UiAppName => ("Dark Clipboard", "Dark Clipboard"),
+    UiPopupPlaceholder => (
+        "Your clipboard history will appear here.",
+        "Lịch sử bảng nhớ tạm của bạn sẽ hiện ở đây."
+    ),
+    UiCaptureActive => ("Capture is on", "Đang ghi nhớ"),
+    UiCapturePaused => ("Capture is paused", "Đã tạm dừng ghi nhớ"),
+    UiCapturePrivate => ("Private mode: nothing is saved", "Chế độ riêng tư: không lưu gì"),
+    UiCaptureUnavailable => ("Capture is unavailable", "Không thể ghi nhớ"),
+    UiStarting => ("Starting...", "Đang khởi động..."),
 }
 
 /// Messages allowed to read the same in both languages.
-pub const SAME_IN_BOTH: &[Msg] = &[Msg::CategoryEmail];
+pub const SAME_IN_BOTH: &[Msg] = &[Msg::CategoryEmail, Msg::UiAppName];
 
 #[cfg(test)]
 mod tests {

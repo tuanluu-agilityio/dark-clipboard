@@ -4,6 +4,9 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ## [Unreleased]
 
+### Added (Phase 3 desktop shell)
+- Task 201: `dark-clipboard` with no flag now starts the Slint app hidden (placeholder window, always dark, English and Vietnamese; the OS language is used on first run). Single instance per user: a second start forwards its command over a named pipe restricted to the current user and exits 0. New `--toggle` (show or hide the popup) and `--quit` ask the running instance; `--help` prints usage. `--headless` is unchanged. No tray, shortcut or popup content yet (Tasks 202-204); the console window of this developer build stays visible.
+
 ### Added
 - Phase 0 blueprint: product vision, feature matrix, MVP scope, user journeys, system architecture, platform capability matrix, data model with JSON Schemas and examples, threat model, privacy design, AI/MCP interface draft, ADR-0001 to ADR-0006, roadmap and Phase 1–5 plans, Phase 1 task packages.
 - Feasibility spikes on Windows (clipboard monitoring; Tauri 2 vs Slint shell). These are throwaway code under `spikes/`.

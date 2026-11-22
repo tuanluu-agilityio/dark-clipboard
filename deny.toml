@@ -15,7 +15,66 @@ allow = [
     "Unicode-3.0",
     "Zlib",
     "MPL-2.0",
+    "BSL-1.0",
+    "Unlicense",
 ]
+
+# Slint is used under its GPLv3 option (D-034). Only the Slint crates may carry it.
+[[licenses.exceptions]]
+allow = ["GPL-3.0-only"]
+crate = "slint"
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-only"]
+crate = "slint-build"
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-only"]
+crate = "slint-macros"
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-only"]
+crate = "i-slint-backend-linuxkms"
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-only"]
+crate = "i-slint-backend-selector"
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-only"]
+crate = "i-slint-backend-testing"
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-only"]
+crate = "i-slint-backend-winit"
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-only"]
+crate = "i-slint-common"
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-only"]
+crate = "i-slint-compiler"
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-only"]
+crate = "i-slint-core"
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-only"]
+crate = "i-slint-core-macros"
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-only"]
+crate = "i-slint-renderer-femtovg"
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-only"]
+crate = "i-slint-renderer-skia"
+
+[[licenses.exceptions]]
+allow = ["GPL-3.0-only"]
+crate = "i-slint-renderer-software"
 
 [licenses.private]
 ignore = true

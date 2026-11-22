@@ -1,0 +1,40 @@
+import { Theme, Strings } from "theme.slint";
+
+export { Theme, Strings }
+
+// Placeholder popup window (Task 201). The real popup content arrives in Task 204.
+export component MainWindow inherits Window {
+    title: Strings.app-name;
+    background: Theme.bg;
+    preferred-width: 420px;
+    preferred-height: 560px;
+    min-width: 320px;
+    min-height: 240px;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: Strings.app-name;
+            color: Theme.text;
+            font-size: 20px;
+            font-weight: 600;
+        }
+        Text {
+            text: Strings.status;
+            color: Theme.accent;
+            font-size: 13px;
+        }
+        Rectangle {
+            height: 1px;
+            background: Theme.line;
+        }
+        Text {
+            text: Strings.placeholder;
+            color: Theme.text-muted;
+            wrap: word-wrap;
+        }
+    }
+}
