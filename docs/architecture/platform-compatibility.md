@@ -47,6 +47,10 @@ Source: `spikes/win-clipboard-monitor/spike-output-2026-11-22.txt`, write-up in 
 | S7 file list from PowerShell | same 3-event pattern; `CF_HDROP` + `FileNameW` |
 | S8 self-write suppression | post-write sequence number equals the notified one → suppressible |
 
+## 2b. Phase 2 verification results (Windows, 2026-11-22; Changed by D-041)
+
+Recorded in `docs/testing/platform-checklist.md`. With the Phase 2 adapter and `dark-clipboard --headless` on Windows 11 10.0.26300, these Windows cells are now **T**: Rich text (`HTML Format` from Chrome 158), Images (`PNG` registered format from Snipping Tool, and a Windows-synthesised `CF_DIBV5`), File lists (`CF_HDROP` from Explorer), Concealed/private markers (KeePassXC 2.8.0 and Darkshot Copy image / Copy link set all three markers and are not stored; Snipping Tool's allowing DWORD values are read and do not skip), Write clipboard (copy-back with post-close sequence suppression, automated). Source application: **T** for chrome.exe, explorer.exe, SnippingTool.exe, powershell.exe; **F** for OLE writers whose final phase has no owner (Notepad): stored with no source (F-14). Not tested: Bitwarden, 1Password, Office, RDP, elevated source, Win+V after copy-back (manual), `Rich Text Format`.
+
 ## 3. Known restrictions and design responses
 
 | Restriction | Response |
