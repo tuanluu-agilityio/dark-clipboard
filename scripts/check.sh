@@ -33,6 +33,10 @@ echo "== clipboard read/write only from the capture actor (GC-03)"
 hits="$(rs_files | grep -vE '^(crates/darkclip-app/src/capture\.rs|crates/darkclip-platform/src/.*|crates/darkclip-(windows|macos|linux)/src/.*)$' \
   | xargs -r grep -nE '\b(access|acc|clipboard_access)\s*\.\s*(read|write)\s*\(' || true)"
 [ -z "$hits" ] || { echo "CHECK FAILED: clipboard access outside capture actor:"; echo "$hits"; exit 1; }
+# Hardening (Task 010 review): ClipboardAccess type or `.access` field outside the allowed files; comment lines ignored.
+hits="$(rs_files | grep -vE '^(crates/darkclip-app/src/capture\.rs|crates/darkclip-platform/src/.*|crates/darkclip-(windows|macos|linux)/src/.*)$' \
+  | xargs -r grep -nE '\bClipboardAccess\b|\.access\b' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)"
+[ -z "$hits" ] || { echo "CHECK FAILED: ClipboardAccess used outside capture actor:"; echo "$hits"; exit 1; }
 
 echo "== no window-title capture (SR-11)"
 hits="$(rs_files | xargs -r grep -nE '\bGetWindowText(W|A|Length[A-Za-z]*)?\b|_NET_WM_NAME|\bkCGWindowName\b' || true)"

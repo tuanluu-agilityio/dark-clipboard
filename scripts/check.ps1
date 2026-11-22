@@ -69,6 +69,18 @@ foreach ($f in $rs) {
     }
 }
 if ($bad) { exit 1 }
+# Hardening (Task 010 review): any use of the ClipboardAccess type or a bundle's `.access` field outside the
+# allowed files fails, whatever the variable name. Comment lines are ignored.
+$typeUse = '\bClipboardAccess\b|\.access\b'
+foreach ($f in $rs) {
+    $rel = Rel $f
+    if ($rel -match $allowed) { continue }
+    foreach ($h in @(Select-String -LiteralPath $f.FullName -Pattern $typeUse)) {
+        if ($h.Line -match '^\s*//') { continue }
+        Write-Host "CHECK FAILED: ClipboardAccess used outside capture actor in ${rel}:$($h.LineNumber)"; $bad = $true
+    }
+}
+if ($bad) { exit 1 }
 
 Write-Host '== no window-title capture (SR-11)'
 foreach ($f in $rs) {
