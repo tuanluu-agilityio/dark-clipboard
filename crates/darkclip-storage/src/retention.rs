@@ -22,7 +22,7 @@
 
 use crate::blobs::{self, Cleanup};
 use crate::{ClipId, Storage, StorageError};
-use darkclip_core::RetentionPolicy;
+use darkclip_core::{RetentionPolicy, Timestamp};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 const MS_PER_DAY: i64 = 86_400_000;
@@ -276,6 +276,17 @@ impl Storage {
         self.ensure_writable()?;
         let Cleanup { removed, .. } = blobs::sweep(&mut self.conn, &self.dir);
         Ok(removed)
+    }
+
+    /// The earliest `expires_at` of any clip (pinned included, D-025), so the capture actor
+    /// can run retention when it falls due. Works on read-only stores.
+    pub fn next_expiry(&self) -> Result<Option<Timestamp>, StorageError> {
+        let t: Option<i64> = self.conn.query_row(
+            "SELECT MIN(expires_at) FROM clips WHERE expires_at IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(t.map(Timestamp))
     }
 }
 
@@ -620,6 +631,29 @@ mod tests {
         let r = s.apply_retention(&no_limits()).unwrap();
         assert_eq!(r.expired, 1);
         assert!(s.get_clip(&id).unwrap().is_none());
+    }
+
+    #[test]
+    fn next_expiry_is_the_earliest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = clock();
+        let mut s = open(tmp.path(), c.clone());
+        assert_eq!(s.next_expiry(), Ok(None));
+        ins(&mut s, text_clip("never expires"));
+        assert_eq!(s.next_expiry(), Ok(None));
+        let mut late = text_clip("late");
+        late.expires_at = Some(Timestamp(T0 + 5_000));
+        ins(&mut s, late);
+        let mut early = text_clip("early");
+        early.expires_at = Some(Timestamp(T0 + 1_000));
+        ins(&mut s, early);
+        assert_eq!(s.next_expiry(), Ok(Some(Timestamp(T0 + 1_000))));
+        set(&c, T0 + 1_000);
+        s.apply_retention(&no_limits()).unwrap();
+        assert_eq!(s.next_expiry(), Ok(Some(Timestamp(T0 + 5_000))));
+        // Read-only stores answer too (no write needed).
+        let ro = crate::Storage::open(tmp.path(), crate::OpenMode::ReadOnly, c).unwrap();
+        assert_eq!(ro.next_expiry(), Ok(Some(Timestamp(T0 + 5_000))));
     }
 
     #[test]

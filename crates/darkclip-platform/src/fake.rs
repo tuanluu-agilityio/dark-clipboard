@@ -33,6 +33,9 @@ struct State {
     busy: u32,
     read_calls: u32,
     snapshot_meta_calls: u32,
+    resolve_calls: u32,
+    /// Test hook: the next `read` bumps `seq` (a change whose signal is not delivered yet).
+    bump_on_read: bool,
     tx: Option<Sender<ChangeSignal>>,
 }
 
@@ -197,6 +200,17 @@ impl FakeHandle {
     pub fn read_calls(&self) -> u32 {
         lock(&self.state).read_calls
     }
+
+    /// How many times `SourceResolver::resolve` was invoked (sync point for timing tests).
+    pub fn resolve_calls(&self) -> u32 {
+        lock(&self.state).resolve_calls
+    }
+
+    /// The next `read` returns its data and then bumps `seq` without a signal: another app
+    /// changed the clipboard while it was being read.
+    pub fn bump_seq_on_next_read(&self) {
+        lock(&self.state).bump_on_read = true;
+    }
 }
 
 struct FakeMonitor {
@@ -220,7 +234,9 @@ struct FakeSource {
 
 impl SourceResolver for FakeSource {
     fn resolve(&self) -> Option<ClipboardSource> {
-        lock(&self.state).source.clone()
+        let mut st = lock(&self.state);
+        st.resolve_calls += 1;
+        st.source.clone()
     }
 }
 
@@ -279,6 +295,10 @@ impl ClipboardAccess for FakeAccess {
                 height: None,
                 truncated,
             });
+        }
+        if st.bump_on_read {
+            st.bump_on_read = false;
+            st.seq += 1;
         }
         Ok(out)
     }

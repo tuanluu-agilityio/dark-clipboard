@@ -12,3 +12,7 @@ workspace = true
 darkclip-core = { path = "../darkclip-core" }
 darkclip-platform = { path = "../darkclip-platform" }
 darkclip-storage = { path = "../darkclip-storage" }
+
+[dev-dependencies]
+darkclip-platform = { path = "../darkclip-platform", features = ["fake"] }
+tempfile = "3.27.0"
