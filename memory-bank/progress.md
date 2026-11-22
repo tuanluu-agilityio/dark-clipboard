@@ -15,7 +15,7 @@ Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers sub
 | Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
 |---|---|---|---|---|---|---|---|---|
 | 001 Workspace bootstrap | task/001-workspace-bootstrap | scaffolder | sonnet | done | 59,266 | 29,555 (reviewer sonnet; fix verified by orchestrator) | 65,321 | 154,142 |
-| 002 Core model, i18n | task/002-core-model-i18n | builder | sonnet | pending | | | | |
+| 002 Core model, i18n | task/002-core-model-i18n | builder | sonnet | in progress | | | | |
 | 003 Core policy | task/003-core-policy | specialist | opus | pending | | | | |
 | 004 Classify, hash | task/004-core-classify-hash | builder | sonnet | pending | | | | |
 | 005 Sensitive detection | task/005-core-sensitive | specialist | opus | pending | | | | |
