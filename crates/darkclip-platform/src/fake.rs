@@ -65,11 +65,16 @@ fn now() -> Timestamp {
 
 /// Sends a signal carrying the current owner, as a monitor resolving at signal time does.
 fn emit(st: &State) {
+    emit_at(st, now());
+}
+
+/// `emit` with a given signal time.
+fn emit_at(st: &State, at: Timestamp) {
     if let Some(tx) = &st.tx {
         // A closed receiver is a normal shutdown.
         let _ = tx.send(ChangeSignal {
             seq: st.seq,
-            at: now(),
+            at,
             source: st.source.clone(),
         });
     }
@@ -163,6 +168,27 @@ impl FakeHandle {
         st.source = c.source;
         emit(&st);
         st.source = later;
+        st.seq
+    }
+
+    /// Several copies applied atomically, one new seq and one signal each (signal time now):
+    /// e.g. an OLE writer's copy with an owner, then its ownerless flush. The actor can never
+    /// inspect the clipboard between them; it sees the last copy. Returns the last seq.
+    pub fn copy_burst(&self, copies: Vec<FakeCopy>) -> u64 {
+        let at = now();
+        self.copy_burst_at(copies.into_iter().map(|c| (at, c)).collect())
+    }
+
+    /// Like `copy_burst`, with an explicit `ChangeSignal::at` per copy (signal timing tests).
+    pub fn copy_burst_at(&self, copies: Vec<(Timestamp, FakeCopy)>) -> u64 {
+        let mut st = lock(&self.state);
+        for (at, c) in copies {
+            st.seq += 1;
+            st.formats = c.formats;
+            st.markers = c.markers;
+            st.source = c.source;
+            emit_at(&st, at);
+        }
         st.seq
     }
 
@@ -434,6 +460,40 @@ mod tests {
         assert!(b.source.resolve().is_none());
         h.copy(text_copy("z"));
         assert_eq!(rx.try_recv().unwrap().source, None);
+    }
+
+    #[test]
+    fn copy_burst_emits_one_signal_per_copy_with_its_owner_and_time() {
+        let (mut b, h, rx) = started();
+        let a = darkclip_core::ClipboardSource {
+            app_id: "a.exe".to_string(),
+            app_name: None,
+            platform: darkclip_core::Platform::Windows,
+            confidence: darkclip_core::SourceConfidence::Owner,
+        };
+        let mut first = text_copy("x");
+        first.source = Some(a.clone());
+        let last = h.copy_burst_at(vec![
+            (Timestamp(1_000), first),
+            (Timestamp(1_040), text_copy("y")),
+        ]);
+        let sigs: Vec<_> = rx.try_iter().collect();
+        assert_eq!(sigs.len(), 2);
+        assert_eq!(
+            (sigs[0].seq, sigs[0].at, sigs[0].source.clone()),
+            (last - 1, Timestamp(1_000), Some(a))
+        );
+        assert_eq!(
+            (sigs[1].seq, sigs[1].at, sigs[1].source.clone()),
+            (last, Timestamp(1_040), None)
+        );
+        // The clipboard holds the last copy.
+        let meta = b.access.snapshot_meta().unwrap();
+        assert_eq!(meta.seq, last);
+        assert!(meta.source.is_none());
+        let seq = h.copy_burst(vec![text_copy("z")]);
+        assert_eq!(seq, last + 1);
+        assert_eq!(rx.try_iter().count(), 1);
     }
 
     #[test]

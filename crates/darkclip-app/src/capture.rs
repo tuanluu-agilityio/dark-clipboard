@@ -433,6 +433,54 @@ struct Pending {
     /// First signal of the burst, for the `max_burst_wait` cap.
     first_at: Instant,
     due: Instant,
+    /// Signal time (`ChangeSignal::at`) of the burst's first signal.
+    burst_signal_at: Timestamp,
+    /// Signal time of this change's first signal.
+    signal_at: Timestamp,
+    /// Signal time of this change's latest signal.
+    last_signal_at: Timestamp,
+    /// F-14 rule 1: every source of the changes this burst superseded before they were
+    /// inspected. Checked against the excluded apps when this change has no source of its own.
+    superseded: Vec<ClipboardSource>,
+    /// F-14 rule 2: the latest superseded change that had a source; the only candidate for
+    /// the stored source of an ownerless OLE flush.
+    heir: Option<Superseded>,
+}
+
+/// A change replaced by a newer seq before it was inspected.
+struct Superseded {
+    seq: u64,
+    /// Its primary source.
+    source: ClipboardSource,
+    last_signal_at: Timestamp,
+    /// A snapshot of this seq completed earlier (delayed rendering, `carried`).
+    inspected: bool,
+}
+
+/// Largest seq distance between a superseded change and the ownerless flush that may inherit
+/// its source (F-14 rule 2).
+const MAX_HEIR_SEQ_GAP: u64 = 8;
+
+/// Windows OLE placeholders; their presence in the final snapshot is the flush signature.
+const OLE_SIGNATURE_FORMATS: [&str; 2] = ["DataObject", "Ole Private Data"];
+
+/// The snapshot still offers an OLE placeholder (reported with no MIME).
+fn has_ole_signature(meta: &ClipboardMeta) -> bool {
+    meta.formats.iter().any(|f| {
+        f.mime.is_none()
+            && OLE_SIGNATURE_FORMATS
+                .iter()
+                .any(|n| f.name.eq_ignore_ascii_case(n))
+    })
+}
+
+/// `later - earlier` in ms, if `later` is not before `earlier` and at most `max_ms` after it.
+fn within_ms(earlier: Timestamp, later: Timestamp, max_ms: u64) -> bool {
+    later
+        .0
+        .checked_sub(earlier.0)
+        .and_then(|d| u64::try_from(d).ok())
+        .is_some_and(|d| d <= max_ms)
 }
 
 struct Actor {
@@ -605,6 +653,7 @@ impl Actor {
                 let due = self.due_at(now, p.first_at);
                 if let Some(p) = &mut self.pending {
                     p.due = due;
+                    p.last_signal_at = s.at;
                     // A later signal of the same change may name another owner: it is
                     // checked too (`decide_all_sources`), never made primary.
                     if let Some(src) = s.source {
@@ -620,9 +669,19 @@ impl Actor {
         if self.last_processed_seq == Some(s.seq) {
             return;
         }
-        // A different change: never carry the previous change's source over to it. The
-        // burst start is kept so the cap still bounds the wait.
-        let first_at = self.pending.take().map_or(now, |p| p.first_at);
+        // A different change: the previous change's sources never become this change's own
+        // sources. The burst start is kept so the cap still bounds the wait.
+        let prev = self.pending.take();
+        let first_at = prev.as_ref().map_or(now, |p| p.first_at);
+        // F-14: within the burst cap, the superseded change joins the chain (rule 1: its
+        // sources are checked for exclusion; rule 2: it may name an ownerless flush's source).
+        let in_cap = first_at
+            .checked_add(self.max_burst_wait)
+            .is_some_and(|cap| now <= cap);
+        let (superseded, heir, burst_signal_at) = match prev {
+            Some(p) if in_cap => self.supersede(p),
+            _ => (Vec::new(), None, s.at),
+        };
         // The signal's source (resolved at notification time) is primary; resolving now is
         // only the fallback for backends that cannot resolve at signal time (D-031).
         let source = s.source.or_else(|| self.source.resolve());
@@ -631,7 +690,59 @@ impl Actor {
             sources: source.into_iter().collect(),
             first_at,
             due: self.due_at(now, first_at),
+            burst_signal_at,
+            signal_at: s.at,
+            last_signal_at: s.at,
+            superseded,
+            heir,
         });
+    }
+
+    /// The chain a superseded, never-processed change hands to the change that replaces it:
+    /// every source seen in the burst so far, the latest change with a source, and the
+    /// burst's first signal time.
+    fn supersede(&self, p: Pending) -> (Vec<ClipboardSource>, Option<Superseded>, Timestamp) {
+        let mut superseded = p.superseded;
+        for s in &p.sources {
+            if !superseded.contains(s) {
+                superseded.push(s.clone());
+            }
+        }
+        let inspected = self.last_processed_seq == Some(p.seq)
+            || self.carried.as_ref().is_some_and(|(s, _)| *s == p.seq);
+        let heir = match p.sources.into_iter().next() {
+            Some(source) => Some(Superseded {
+                seq: p.seq,
+                source,
+                last_signal_at: p.last_signal_at,
+                inspected,
+            }),
+            None => p.heir,
+        };
+        (superseded, heir, p.burst_signal_at)
+    }
+
+    /// F-14 rule 2: the stored source of an ownerless change, taken from the change it
+    /// superseded, only for the OLE flush shape: never inspected, same seq as the snapshot,
+    /// at most `MAX_HEIR_SEQ_GAP` seqs and `debounce_ms` after it, inside the burst cap, no
+    /// self-write in between, and the snapshot still offers an OLE placeholder. The caller
+    /// asks only when the change has no source of its own.
+    fn heir_source(&self, p: &Pending, meta: &ClipboardMeta) -> Option<ClipboardSource> {
+        let heir = p.heir.as_ref()?;
+        let cap_ms = u64::try_from(self.max_burst_wait.as_millis()).unwrap_or(u64::MAX);
+        let eligible = meta.seq == p.seq
+            && !heir.inspected
+            && self.last_processed_seq != Some(heir.seq)
+            && p.seq
+                .checked_sub(heir.seq)
+                .is_some_and(|gap| (1..=MAX_HEIR_SEQ_GAP).contains(&gap))
+            && !self
+                .last_self_write_seq
+                .is_some_and(|w| w > heir.seq && w <= p.seq)
+            && within_ms(heir.last_signal_at, p.signal_at, self.cfg.debounce_ms)
+            && within_ms(p.burst_signal_at, p.signal_at, cap_ms)
+            && has_ole_signature(meta);
+        eligible.then(|| heir.source.clone())
     }
 
     /// Debounce deadline, capped at `max_burst_wait` after the burst's first signal.
@@ -707,14 +818,29 @@ impl Actor {
         };
         // Every source seen for this change; the first one seen is the primary.
         let mut seen: Vec<ClipboardSource> = Vec::new();
-        for s in carried.into_iter().chain(p.sources).chain(meta.source) {
-            if !seen.contains(&s) {
-                seen.push(s);
+        for s in carried.iter().chain(&p.sources).chain(meta.source.as_ref()) {
+            if !seen.contains(s) {
+                seen.push(s.clone());
             }
         }
+        // F-14, an ownerless change (e.g. an OLE flush): rule 2 may name the stored source;
+        // rule 1 checks every source the burst superseded, never as the primary (only adds
+        // skips).
+        let ownerless = seen.is_empty();
         let mut seen = seen.into_iter();
-        let source = seen.next();
-        let others: Vec<ClipboardSource> = seen.collect();
+        let source = if ownerless {
+            self.heir_source(&p, &meta)
+        } else {
+            seen.next()
+        };
+        let mut others: Vec<ClipboardSource> = seen.collect();
+        if ownerless {
+            for s in &p.superseded {
+                if source.as_ref() != Some(s) && !others.contains(s) {
+                    others.push(s.clone());
+                }
+            }
+        }
         let others: Vec<&ClipboardSource> = others.iter().collect();
         let available: Vec<AvailableFormat> = meta
             .formats
@@ -2694,5 +2820,203 @@ mod tests {
         let rep = &clip.representations[0];
         assert_eq!((rep.width, rep.height), (Some(600), Some(40)));
         assert_eq!(clip.preview, "Image 600\u{00d7}40");
+    }
+
+    // F-14 (Task 109): OLE writers bump the seq at each phase; the final flush has no owner.
+
+    /// Debounce wide enough that signal gaps in these tests stay inside it; the 500 ms burst
+    /// cap still bounds every wait.
+    fn ole_cfg() -> CaptureConfig {
+        CaptureConfig {
+            debounce_ms: 1_000,
+            ..test_cfg()
+        }
+    }
+
+    /// A copy with an owner, offering the OLE placeholder next to its text.
+    fn ole_owned(app: &str, text: &str) -> FakeCopy {
+        FakeCopy {
+            formats: vec![
+                (pf("DataObject", None, 8), Vec::new()),
+                (
+                    pf("CF_UNICODETEXT", Some(Mime::TextPlain), text.len()),
+                    text.as_bytes().to_vec(),
+                ),
+            ],
+            markers: Vec::new(),
+            source: Some(src(app)),
+        }
+    }
+
+    /// The ownerless flush phase: the OLE placeholders and the rendered text, no owner.
+    fn ole_flush(text: &str) -> FakeCopy {
+        FakeCopy {
+            formats: vec![
+                (pf("DataObject", None, 8), Vec::new()),
+                (pf("Ole Private Data", None, 8), Vec::new()),
+                (
+                    pf("CF_UNICODETEXT", Some(Mime::TextPlain), text.len()),
+                    text.as_bytes().to_vec(),
+                ),
+            ],
+            markers: Vec::new(),
+            source: None,
+        }
+    }
+
+    fn app_of(h: &H, id: &ClipId) -> Option<String> {
+        h.ro()
+            .get_clip(id)
+            .unwrap()
+            .unwrap()
+            .source
+            .map(|s| s.app_id)
+    }
+
+    #[test]
+    fn ole_flush_follow_up_keeps_source() {
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            ole_cfg(),
+            |_| {},
+        );
+        h.fake.copy_burst(vec![
+            ole_owned("notepad.exe", "flushed text"),
+            ole_flush("flushed text"),
+        ]);
+        let (id, before) = h.wait_added();
+        assert!(no_store_events(&before), "{before:?}");
+        assert_eq!(app_of(&h, &id).as_deref(), Some("notepad.exe"));
+        assert_eq!(h.fake.snapshot_meta_calls(), 1);
+        let between = h.sentinel();
+        assert!(no_store_events(&between), "{between:?}");
+        assert_eq!(h.clip_count(), 2);
+    }
+
+    #[test]
+    fn excluded_app_ole_flush_without_markers_is_skipped() {
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            ole_cfg(),
+            |_| {},
+        );
+        // KeePassXC.exe is on the default excluded list; no markers on either phase.
+        h.fake.copy_burst(vec![
+            ole_owned("KeePassXC.exe", "vault entry"),
+            ole_flush("vault entry"),
+        ]);
+        let seen = h.wait_skip(SkipReason::ExcludedApp);
+        assert!(no_store_events(&seen), "{seen:?}");
+        assert_eq!(h.fake.read_calls(), 0);
+        let between = h.sentinel();
+        assert!(no_store_events(&between), "{between:?}");
+        assert_eq!(h.clip_count(), 1);
+        assert!(!h.stored_previews().iter().any(|p| p == "vault entry"));
+    }
+
+    #[test]
+    fn ownerless_write_without_ole_signature_does_not_inherit() {
+        // Not excluded: stored, but the source is not inherited.
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            ole_cfg(),
+            |_| {},
+        );
+        h.fake.copy_burst(vec![
+            ole_owned("notepad.exe", "first writer"),
+            text_copy("other writer"),
+        ]);
+        let (id, before) = h.wait_added();
+        assert!(no_store_events(&before), "{before:?}");
+        let clip = h.ro().get_clip(&id).unwrap().unwrap();
+        assert_eq!(clip.preview, "other writer");
+        assert!(clip.source.is_none());
+        // Excluded: the superseded source is still checked, so the change is skipped unread.
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            ole_cfg(),
+            |_| {},
+        );
+        h.fake.copy_burst(vec![
+            ole_owned("KeePassXC.exe", "vault entry"),
+            text_copy("other writer"),
+        ]);
+        let seen = h.wait_skip(SkipReason::ExcludedApp);
+        assert!(no_store_events(&seen), "{seen:?}");
+        assert_eq!(h.fake.read_calls(), 0);
+    }
+
+    #[test]
+    fn processed_change_is_never_carried() {
+        // A short burst cap processes the first change long before the debounce would.
+        let h = start_full(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            ole_cfg(),
+            Duration::from_millis(20),
+            |_| {},
+        );
+        h.fake.copy(ole_owned("notepad.exe", "first text"));
+        let (first, _) = h.wait_added();
+        assert_eq!(app_of(&h, &first).as_deref(), Some("notepad.exe"));
+        // Within the debounce of the first signal, OLE signature, seq + 1: still not carried.
+        h.fake.copy(ole_flush("second text"));
+        let (second, before) = h.wait_added();
+        assert!(no_store_events(&before), "{before:?}");
+        assert_eq!(app_of(&h, &second), None);
+        assert_eq!(h.clip_count(), 2);
+    }
+
+    #[test]
+    fn self_write_seq_breaks_the_chain() {
+        let h = start_with(
+            PrivacyPolicy::default(),
+            RetentionPolicy::default(),
+            ole_cfg(),
+            |_| {},
+        );
+        h.fake.copy(text_copy("stored earlier"));
+        let (earlier, _) = h.wait_added();
+        h.fake.copy(ole_owned("notepad.exe", "before copy back"));
+        h.copy_back(earlier, false).unwrap();
+        h.fake.copy(ole_flush("after copy back"));
+        let (id, before) = h.wait_added();
+        assert!(
+            before.contains(&AppEvent::Skipped(SkipReason::SelfWrite)),
+            "{before:?}"
+        );
+        let clip = h.ro().get_clip(&id).unwrap().unwrap();
+        assert_eq!(clip.preview, "after copy back");
+        assert!(clip.source.is_none());
+    }
+
+    #[test]
+    fn burst_cap_bounds_the_chain() {
+        // Signal times are explicit; both signals are queued together, so only their times
+        // differ. Debounce 1 s, burst cap 500 ms.
+        let run = |gap_ms: i64| {
+            let h = start_with(
+                PrivacyPolicy::default(),
+                RetentionPolicy::default(),
+                ole_cfg(),
+                |_| {},
+            );
+            h.fake.copy_burst_at(vec![
+                (Timestamp(T0), ole_owned("notepad.exe", "flushed text")),
+                (Timestamp(T0 + gap_ms), ole_flush("flushed text")),
+            ]);
+            let (id, before) = h.wait_added();
+            assert!(no_store_events(&before), "{before:?}");
+            assert_eq!(h.fake.snapshot_meta_calls(), 1);
+            app_of(&h, &id)
+        };
+        // Inside the cap: inherited.
+        assert_eq!(run(400).as_deref(), Some("notepad.exe"));
+        // Beyond the cap (but inside the debounce): not inherited.
+        assert_eq!(run(600), None);
     }
 }
