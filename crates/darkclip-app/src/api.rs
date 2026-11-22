@@ -1440,15 +1440,17 @@ mod tests {
         let (saved, o) = Settings::load(&h.dir.path().join("settings.json"));
         assert_eq!(o, crate::settings::LoadOutcome::Loaded);
         assert!(saved.privacy.capture_enabled && !saved.needs_welcome());
-        // A copy after Start is captured; the one from before is not in the history.
-        h.fake.copy(text_copy("copied after Start"));
+        // A copy after Start is captured; the one from before is not in the history. The policy
+        // update reaches the capture actor asynchronously, so a copy made in the same instant
+        // can still be dropped (never backfilled); copy again until the actor has the new policy.
         let deadline = Instant::now() + WAIT;
         let rows = loop {
+            h.fake.copy(text_copy("copied after Start"));
+            std::thread::sleep(Duration::from_millis(100));
             let page = a.search_clips(&Caller::Ui, query(None)).unwrap();
             if !page.items.is_empty() || Instant::now() > deadline {
                 break page.items;
             }
-            std::thread::sleep(Duration::from_millis(20));
         };
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].preview, "copied after Start");
