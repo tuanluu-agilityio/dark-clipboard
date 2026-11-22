@@ -6,14 +6,15 @@
 //! - Loads are on demand and run on the worker thread; this model only says *what* to load.
 //!   Decoded images are cached in an LRU bounded by bytes (`CACHE_BUDGET`, 32 MiB). The host
 //!   clears it when the popup hides, so decoded clipboard images do not stay in memory.
-//! - Displayed text is capped at 100 KiB.
+//! - Displayed text is capped at 32 KiB (`TEXT_DISPLAY_CAP`; the app cuts at the same size).
 //! - File paths are shown (the user copied them) and never logged; `Debug` prints none.
 
 use super::list::Item;
 use darkclip_core::{ClipId, ClipType};
 
-/// Text shown in the detail pane is cut at this many bytes (on a character boundary).
-pub const TEXT_DISPLAY_CAP: usize = 100 * 1024;
+/// Text shown in the detail pane is cut at this many bytes (keep equal to the app's
+/// `UI_TEXT_MAX_BYTES`) (on a character boundary).
+pub const TEXT_DISPLAY_CAP: usize = 32 * 1024;
 /// Decoded images cached at most (bytes of RGBA pixels).
 pub const CACHE_BUDGET: usize = 32 * 1024 * 1024;
 /// The "larger preview" is downscaled to at most this many pixels on its longest side.
@@ -181,6 +182,11 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Invisible direction controls: a name like `invoice<RLO>fdp.exe` would read as `invoiceexe.pdf`.
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
 /// A line of a `text/uri-list` as a display path. `file:///C:/a%20b.txt` becomes
 /// `C:\a b.txt`, `file://server/share/x` becomes `\\server\share\x`, a POSIX path stays
 /// POSIX. Control characters are replaced so a name cannot move the text around.
@@ -205,7 +211,15 @@ pub fn display_path(uri: &str) -> String {
     };
     decoded
         .chars()
-        .map(|c| if c.is_control() { '?' } else { c })
+        .map(|c| {
+            if c.is_control() {
+                '?'
+            } else if is_bidi_control(c) {
+                '\u{FFFD}'
+            } else {
+                c
+            }
+        })
         .collect()
 }
 
@@ -341,12 +355,31 @@ impl<P: Clone> DetailModel<P> {
         self.failed = false;
     }
 
+    /// The current clip turned out to be masked: nothing loaded for it may stay.
+    fn become_masked(&mut self) {
+        self.masked = true;
+        self.text = None;
+        self.files.clear();
+        self.file_total = 0;
+        self.dims = None;
+        self.detail_loaded = false;
+        self.text_pending = false;
+        self.image_pending = false;
+        if let Some(id) = self.clip {
+            self.cache.remove(&(id, Size::Thumb));
+            self.cache.remove(&(id, Size::Full));
+        }
+    }
+
     /// The selected item (or the pane's open state) changed: what to load now. Idempotent:
     /// a clip already loading or loaded asks for nothing again.
     pub fn sync(&mut self, item: Option<&Item>) -> Vec<DetailRequest> {
         if self.clip != item.map(|i| i.id) {
             self.reset_clip(item);
         } else if let Some(i) = item {
+            if i.masked && !self.masked {
+                self.become_masked();
+            }
             self.masked = i.masked;
         }
         let Some(item) = item.filter(|_| self.open) else {
@@ -411,9 +444,7 @@ impl<P: Clone> DetailModel<P> {
         }
         if d.masked {
             // The row said unmasked but storage says masked: show it as masked, drop the rest.
-            self.masked = true;
-            self.cache.remove(&(id, Size::Thumb));
-            self.cache.remove(&(id, Size::Full));
+            self.become_masked();
             return true;
         }
         self.detail_loaded = true;
@@ -498,14 +529,22 @@ impl<P: Clone> DetailModel<P> {
         let larger_exists = self.dims.is_some_and(|(w, h)| w.max(h) > shown_side);
         DetailView {
             masked,
-            text: self.text.as_ref().map(|t| t.0.clone()),
-            text_cut: self.text.as_ref().is_some_and(|t| t.1),
+            text: self.text.as_ref().filter(|_| !masked).map(|t| t.0.clone()),
+            text_cut: !masked && self.text.as_ref().is_some_and(|t| t.1),
             image,
             image_is_full,
-            dims: self.dims,
-            files: self.files.clone(),
-            files_more: self.file_total.saturating_sub(self.files.len()),
-            file_total: self.file_total,
+            dims: self.dims.filter(|_| !masked),
+            files: if masked {
+                Vec::new()
+            } else {
+                self.files.clone()
+            },
+            files_more: if masked {
+                0
+            } else {
+                self.file_total.saturating_sub(self.files.len())
+            },
+            file_total: if masked { 0 } else { self.file_total },
             loading: self.detail_pending || self.text_pending || self.image_pending,
             failed: self.failed,
             can_load_text: !masked
@@ -614,6 +653,64 @@ mod tests {
     }
 
     #[test]
+    fn a_row_turning_masked_drops_loaded_text_files_and_pictures() {
+        // Loaded full text, then the same clip arrives masked (sync with a masked row).
+        let mut it = item(ClipType::Text, false);
+        let mut m: DetailModel<u8> = DetailModel::default();
+        m.set_open(true, Some(&it));
+        m.load_full_text(&it);
+        assert!(m.on_text(it.id, Ok(("secret body".into(), false))));
+        assert!(m.view().text.is_some());
+        it.masked = true;
+        assert!(m.sync(Some(&it)).is_empty());
+        let v = m.view();
+        assert!(v.masked && v.text.is_none() && !v.can_load_text);
+
+        // Loaded file list and thumbnail, then masked.
+        let mut f = item(ClipType::Files, false);
+        let mut m: DetailModel<u8> = DetailModel::default();
+        m.set_open(true, Some(&f));
+        let d = DetailData {
+            masked: false,
+            dims: Some((5, 5)),
+            thumb: Some(pic(10)),
+            files: file_entries(&["file:///a/b.txt".to_string()]),
+            file_total: 1,
+        };
+        assert!(m.on_detail(f.id, Ok(d), 400));
+        assert_eq!(m.view().files.len(), 1);
+        f.masked = true;
+        m.sync(Some(&f));
+        let v = m.view();
+        assert!(v.files.is_empty() && v.dims.is_none() && v.image.is_none());
+        assert_eq!(v.files_more, 0);
+        assert_eq!(m.cache_bytes(), 0);
+
+        // The worker answering "masked" for an unmasked row clears text and files too.
+        let g = item(ClipType::Files, false);
+        let mut m: DetailModel<u8> = DetailModel::default();
+        m.set_open(true, Some(&g));
+        let d = DetailData {
+            masked: false,
+            dims: None,
+            thumb: None,
+            files: file_entries(&["file:///x".to_string()]),
+            file_total: 1,
+        };
+        m.on_detail(g.id, Ok(d), 0);
+        let masked = DetailData {
+            masked: true,
+            dims: None,
+            thumb: None,
+            files: Vec::new(),
+            file_total: 0,
+        };
+        assert!(m.on_detail(g.id, Ok(masked), 0));
+        let v = m.view();
+        assert!(v.masked && v.files.is_empty());
+    }
+
+    #[test]
     fn requests_follow_kind_and_are_not_repeated() {
         let text = item(ClipType::Text, false);
         let img = item(ClipType::Image, false);
@@ -662,7 +759,7 @@ mod tests {
             })
         );
         assert!(m.view().loading && !m.view().can_load_text);
-        // The app already cut at 100 KiB; a longer answer is cut again here.
+        // The app already cut at the cap; a longer answer is cut again here.
         let long = "é".repeat(TEXT_DISPLAY_CAP);
         assert!(m.on_text(it.id, Ok((long, false))));
         let v = m.view();
@@ -686,7 +783,7 @@ mod tests {
         assert_eq!((s.len(), cut), (TEXT_DISPLAY_CAP, false));
         let (s, cut) = cap_display("a".repeat(TEXT_DISPLAY_CAP + 1));
         assert_eq!((s.len(), cut), (TEXT_DISPLAY_CAP, true));
-        // Three-byte characters: 100 KiB is not a multiple of 3.
+        // Three-byte characters: the cap is not a multiple of 3.
         let (s, cut) = cap_display("€".repeat(40_000));
         assert!(cut && s.len() <= TEXT_DISPLAY_CAP && s.len() % 3 == 0);
         assert!(!s.contains('\u{FFFD}'));
@@ -736,14 +833,22 @@ mod tests {
         assert_eq!(CACHE_BUDGET, 32 * 1024 * 1024);
         let mb = 1024 * 1024;
         let mut last = None;
-        for _ in 0..40 {
+        for i in 0..40 {
             let it = item(ClipType::Image, false);
             m.set_open(true, Some(&it));
             m.load_full_image(&it);
             // Pretend the thumbnail arrived so the full image can be asked for.
             m.on_detail(it.id, Ok(thumb_data(4000, 3000)), 1000);
             m.load_full_image(&it);
-            m.on_full_image(it.id, Ok(pic(1024)), 4 * mb);
+            m.on_full_image(
+                it.id,
+                Ok(Pic {
+                    pixels: u8::try_from(i).unwrap(),
+                    width: 1024,
+                    height: 768,
+                }),
+                4 * mb,
+            );
             assert!(m.cache_bytes() <= CACHE_BUDGET);
             last = Some(it);
         }
@@ -751,8 +856,9 @@ mod tests {
         assert!(m.cache_bytes() <= CACHE_BUDGET);
         assert!(m.cache_bytes() >= 7 * 4 * mb);
         // The newest is still shown from the cache.
-        let _ = last;
-        assert!(m.view().image.is_some());
+        // The selected (newest) clip is the one shown, not some older cached picture.
+        assert!(last.is_some());
+        assert_eq!(m.view().image, Some(39));
         m.clear();
         assert_eq!(m.cache_bytes(), 0);
         assert!(!m.is_open());
@@ -849,6 +955,27 @@ mod tests {
         // Never more than the cap.
         let many: Vec<String> = (0..300).map(|i| format!("file:///f{i}")).collect();
         assert_eq!(file_entries(&many).len(), MAX_FILES_SHOWN);
+    }
+
+    #[test]
+    fn bidi_controls_in_names_are_replaced() {
+        // "invoice<RLO>fdp.exe" would read as "invoiceexe.pdf".
+        let raw = "file:///tmp/invoice\u{202E}fdp.exe";
+        assert_eq!(display_path(raw), "/tmp/invoice\u{FFFD}fdp.exe");
+        let escaped = "file:///tmp/invoice%E2%80%AEfdp.exe";
+        assert_eq!(display_path(escaped), "/tmp/invoice\u{FFFD}fdp.exe");
+        for c in [
+            '\u{200E}', '\u{200F}', '\u{202A}', '\u{202D}', '\u{2066}', '\u{2069}',
+        ] {
+            assert_eq!(display_path(&format!("file:///a{c}b")), "/a\u{FFFD}b");
+        }
+        let e = file_entries(&[raw.to_string()]);
+        assert!(!e[0].name.contains('\u{202E}') && !e[0].path.contains('\u{202E}'));
+    }
+
+    #[test]
+    fn display_cap_is_32_kib() {
+        assert_eq!(TEXT_DISPLAY_CAP, 32 * 1024);
     }
 
     #[test]

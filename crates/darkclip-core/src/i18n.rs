@@ -160,8 +160,8 @@ messages! {
     UiDetailLabel => ("Details", "Chi tiết"),
     UiLoadFullText => ("Load full text", "Tải toàn bộ văn bản"),
     UiTextCut => (
-        "Showing the first 100 KiB only.",
-        "Chỉ hiển thị 100 KiB đầu tiên."
+        "Showing the first {n} KiB only.",
+        "Chỉ hiển thị {n} KiB đầu tiên."
     ),
     UiLoadLargerImage => ("Load larger preview", "Tải ảnh xem trước lớn hơn"),
     UiNoImagePreview => ("No preview image stored", "Không có ảnh xem trước"),

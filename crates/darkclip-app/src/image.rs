@@ -140,7 +140,9 @@ pub fn downscale(img: &DecodedImage, max_side: u32) -> Option<DecodedImage> {
             ((h * max_side + long / 2) / long).max(1),
         )
     };
-    let mut out = Zeroizing::new(Vec::with_capacity((tw * th * 4) as usize));
+    // A plain Vec: it is handed to the caller as the result, so zeroizing it on drop would
+    // be a no-op (the old Zeroizing wrapper only ever wiped an emptied vector).
+    let mut out = Vec::with_capacity((tw * th * 4) as usize);
     for ty in 0..th {
         let y0 = ty * h / th;
         let y1 = ((ty + 1) * h).div_ceil(th).clamp(y0 + 1, h);
@@ -163,7 +165,7 @@ pub fn downscale(img: &DecodedImage, max_side: u32) -> Option<DecodedImage> {
         }
     }
     Some(DecodedImage {
-        rgba: std::mem::take(&mut *out),
+        rgba: out,
         width: tw as u32,
         height: th as u32,
     })

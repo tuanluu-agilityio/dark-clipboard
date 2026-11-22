@@ -8,7 +8,7 @@
 //! touches the clipboard. Rows hold previews only.
 //!
 //! Detail pane (Task 206): `popup::detail::DetailModel` says what to load; the loads (full
-//! text up to 100 KiB, the image thumbnail and file list, the downscaled full image) run on
+//! text up to 32 KiB, the image thumbnail and file list, the downscaled full image) run on
 //! the worker and arrive here as generation-free answers keyed by clip id (stale ones are
 //! dropped by the model). Images are decoded on the worker into `SharedPixelBuffer`s; the UI
 //! thread only wraps them. Masked clips never request anything. Paths are shown, never logged.
@@ -27,13 +27,14 @@ use super::{Chip, ClipRow, FileRow, MainWindow, Poster, Seg, Strings};
 use crate::log::{Log, Val};
 use crate::popup::detail::{
     file_entries, DetailData, DetailModel, DetailRequest, Pic, Want, FULL_IMAGE_SIDE,
+    TEXT_DISPLAY_CAP,
 };
 use crate::popup::highlight::row_segments;
 use crate::popup::keys::{self, Action, ChipFocus, CopyKind, KeyCtx, Mods};
 use crate::popup::list::{Applied, Filters, Item, ListModel, Request, TimeFilter, View};
 use crate::popup::paste::{self as paste_rules, AfterCopy, Via};
 use crate::popup::row::{fill, kind_msg, row_text, split_two_lines, LINE_CHARS, MONO_LINE_CHARS};
-use darkclip_app::api::{Caller, CopyMode, GetOptions};
+use darkclip_app::api::{Caller, CopyMode};
 use darkclip_app::{ClipApi, ClipSummaryView, Page, PixelsView};
 use darkclip_core::i18n::{t, Lang, Msg};
 use darkclip_core::{ClipId, ClipType, Clock};
@@ -123,7 +124,7 @@ pub fn set_strings(w: &MainWindow, lang: Lang) {
     s.set_load_larger_image(t(lang, Msg::UiLoadLargerImage).into());
     s.set_no_image_preview(t(lang, Msg::UiNoImagePreview).into());
     s.set_masked_detail(t(lang, Msg::UiMaskedDetail).into());
-    s.set_text_cut(t(lang, Msg::UiTextCut).into());
+    s.set_text_cut(fill(t(lang, Msg::UiTextCut), (TEXT_DISPLAY_CAP / 1024) as u64).into());
 }
 
 struct Host {
@@ -150,6 +151,9 @@ struct Host {
     pasting: bool,
     /// The detail pane's state and its decoded-image cache.
     detail: DetailModel<Px>,
+    /// The clip the pane wants loaded now. Worker jobs for any other clip are skipped before
+    /// they do their work (the selection moved on while they were queued).
+    wanted: Arc<Mutex<Option<ClipId>>>,
     log: Arc<Log>,
 }
 
@@ -368,59 +372,60 @@ impl Host {
     fn run_detail(&mut self, r: DetailRequest) {
         let DetailRequest { id, want } = r;
         let ui = self.window.clone();
-        self.poster.post_quiet(move |app| match want {
-            Want::Detail => {
-                let (res, bytes) = match app.ui_clip_detail(id) {
-                    Ok(d) => {
-                        let (data, bytes) = detail_data(d);
-                        (Ok(data), bytes)
-                    }
-                    Err(_) => (Err(()), 0),
-                };
-                let _ = ui.upgrade_in_event_loop(move |_| {
-                    with_host(|h| {
-                        if h.detail.on_detail(id, res, bytes) {
-                            h.render_detail();
-                        }
-                    });
-                });
+        if let Ok(mut w) = self.wanted.lock() {
+            *w = Some(id);
+        }
+        let wanted = Arc::clone(&self.wanted);
+        self.poster.post_quiet(move |app| {
+            if !wanted.lock().is_ok_and(|w| *w == Some(id)) {
+                return;
             }
-            Want::FullText => {
-                let res = app
-                    .get_clip(
-                        &Caller::Ui,
-                        id,
-                        GetOptions {
-                            include_content: true,
-                        },
-                    )
-                    .ok()
-                    .and_then(|v| v.content)
-                    .map(|c| (c.text, c.truncated))
-                    .ok_or(());
-                let _ = ui.upgrade_in_event_loop(move |_| {
-                    with_host(|h| {
-                        if h.detail.on_text(id, res) {
-                            h.render_detail();
+            match want {
+                Want::Detail => {
+                    let (res, bytes) = match app.ui_clip_detail(&Caller::Ui, id) {
+                        Ok(d) => {
+                            let (data, bytes) = detail_data(d);
+                            (Ok(data), bytes)
                         }
+                        Err(_) => (Err(()), 0),
+                    };
+                    let _ = ui.upgrade_in_event_loop(move |_| {
+                        with_host(|h| {
+                            if h.detail.on_detail(id, res, bytes) {
+                                h.render_detail();
+                            }
+                        });
                     });
-                });
-            }
-            Want::FullImage => {
-                let (res, bytes) = match app.ui_clip_image(id, FULL_IMAGE_SIDE) {
-                    Ok(p) => {
-                        let (pic, bytes) = pic_of(p);
-                        (Ok(pic), bytes)
-                    }
-                    Err(_) => (Err(()), 0),
-                };
-                let _ = ui.upgrade_in_event_loop(move |_| {
-                    with_host(|h| {
-                        if h.detail.on_full_image(id, res, bytes) {
-                            h.render_detail();
+                }
+                Want::FullText => {
+                    let res = app
+                        .ui_clip_text(&Caller::Ui, id)
+                        .map(|c| (c.text, c.truncated))
+                        .map_err(|_| ());
+                    let _ = ui.upgrade_in_event_loop(move |_| {
+                        with_host(|h| {
+                            if h.detail.on_text(id, res) {
+                                h.render_detail();
+                            }
+                        });
+                    });
+                }
+                Want::FullImage => {
+                    let (res, bytes) = match app.ui_clip_image(&Caller::Ui, id, FULL_IMAGE_SIDE) {
+                        Ok(p) => {
+                            let (pic, bytes) = pic_of(p);
+                            (Ok(pic), bytes)
                         }
+                        Err(_) => (Err(()), 0),
+                    };
+                    let _ = ui.upgrade_in_event_loop(move |_| {
+                        with_host(|h| {
+                            if h.detail.on_full_image(id, res, bytes) {
+                                h.render_detail();
+                            }
+                        });
                     });
-                });
+                }
             }
         });
     }
@@ -433,7 +438,19 @@ impl Host {
         let item = self.model.selected_item().cloned();
         let open = self.detail.is_open() && item.is_some();
         w.set_detail_open(open);
+        if let Ok(mut wanted) = self.wanted.lock() {
+            *wanted = item.as_ref().filter(|_| open).map(|i| i.id);
+        }
         let Some(item) = item.filter(|_| open) else {
+            // Nothing stays in the hidden window: no text, picture or file names.
+            w.set_detail_text(SharedString::new());
+            w.set_detail_picture(Image::default());
+            w.set_detail_has_picture(false);
+            w.set_detail_files(ModelRc::new(VecModel::<FileRow>::default()));
+            w.set_detail_files_more(SharedString::new());
+            w.set_detail_picture_info(SharedString::new());
+            w.set_detail_status(SharedString::new());
+            w.set_detail_note(SharedString::new());
             return;
         };
         let v = self.detail.view();
@@ -462,17 +479,20 @@ impl Host {
             note = t(lang, Msg::UiLoading).to_string();
         }
         let status = if v.failed {
-            t(lang, Msg::UiActionFailed)
+            t(lang, Msg::UiActionFailed).to_string()
         } else if v.loading {
-            t(lang, Msg::UiLoading)
+            t(lang, Msg::UiLoading).to_string()
         } else if kind == 0 && v.text_cut {
-            t(lang, Msg::UiTextCut)
+            fill(t(lang, Msg::UiTextCut), (TEXT_DISPLAY_CAP / 1024) as u64)
         } else {
-            ""
+            String::new()
         };
         w.set_detail_kind(kind);
         w.set_detail_title(title.into());
-        w.set_detail_text(text.into());
+        // Only when it changed: re-setting a large text re-lays it out.
+        if w.get_detail_text().as_str() != text {
+            w.set_detail_text(text.into());
+        }
         w.set_detail_note(note.into());
         w.set_detail_status(status.into());
         w.set_detail_can_load_text(v.can_load_text);
@@ -1000,6 +1020,7 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
         injector: None,
         pasting: false,
         detail: DetailModel::default(),
+        wanted: Arc::new(Mutex::new(None)),
         log: Arc::clone(&log),
     };
     host.rebuild_chips();
