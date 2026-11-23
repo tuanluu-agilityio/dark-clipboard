@@ -751,6 +751,14 @@ impl Host {
             }
             HistoryAction::CopyAs => self.open_copy_as(),
             HistoryAction::Edit => self.open_edit(),
+            HistoryAction::ToggleFavorite
+            | HistoryAction::EditNote
+            | HistoryAction::EditTags
+            | HistoryAction::AddToCollection
+            | HistoryAction::RemoveFromCollection
+            | HistoryAction::NewCollection
+            | HistoryAction::RenameCollection
+            | HistoryAction::DeleteCollection => {}
             HistoryAction::Swallow => {}
         }
         true

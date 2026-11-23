@@ -662,6 +662,8 @@ mod tests {
             masked,
             source: None,
             at: T,
+            favorite: false,
+            tags: Vec::new(),
         }
     }
 

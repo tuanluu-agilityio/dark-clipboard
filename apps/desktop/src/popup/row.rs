@@ -64,6 +64,8 @@ pub struct RowText {
     /// Screen-reader description: the meta without the shortcut, plus the badges.
     pub description: String,
     pub pin_badge: Option<&'static str>,
+    /// A star for a favorite clip (decoration; the screen-reader description says "Favorite").
+    pub favorite_badge: Option<&'static str>,
     pub masked_badge: Option<&'static str>,
     /// Code clips use the monospace font.
     pub mono: bool,
@@ -104,6 +106,7 @@ pub fn row_text(item: &Item, index: usize, lang: Lang, now: Timestamp) -> RowTex
         meta,
         description,
         pin_badge,
+        favorite_badge: None,
         masked_badge,
         mono: item.kind == ClipType::Code,
     }
@@ -164,6 +167,8 @@ mod tests {
             masked: false,
             source: None,
             at: Timestamp(NOW.0 - 5 * 60_000),
+            favorite: false,
+            tags: Vec::new(),
         }
     }
 
@@ -224,6 +229,21 @@ mod tests {
         let vi = row_text(&i, 0, Lang::Vi, NOW);
         assert_eq!(vi.pin_badge, Some("Đã ghim"));
         assert_eq!(vi.masked_badge, Some("Đã che"));
+    }
+
+    #[test]
+    fn a_favorite_row_has_a_star_and_says_favorite_for_screen_readers() {
+        let plain = row_text(&item(ClipType::Text), 0, Lang::En, NOW);
+        assert_eq!(plain.favorite_badge, None);
+        assert!(!plain.description.contains("Favorite"));
+        let mut i = item(ClipType::Text);
+        i.favorite = true;
+        i.pinned = true;
+        let en = row_text(&i, 0, Lang::En, NOW);
+        assert_eq!(en.favorite_badge, Some("★"));
+        assert!(en.description.ends_with("Pinned · Favorite"));
+        let vi = row_text(&i, 0, Lang::Vi, NOW);
+        assert!(vi.description.ends_with("Đã ghim · Yêu thích"));
     }
 
     #[test]

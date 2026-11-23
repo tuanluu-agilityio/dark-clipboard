@@ -85,6 +85,8 @@ pub enum Action {
     OpenHistory,
     /// Ctrl+T: "Copy as..." for the selected clip (Task 404).
     CopyAs,
+    /// Ctrl+D: favorite or unfavorite the selected clip (Task 403).
+    ToggleFavorite,
 }
 
 /// Which filter chip has the keyboard focus, from per-chip gained/lost reports. The reports of
@@ -235,6 +237,35 @@ mod tests {
 
     fn text(k: SlintKey) -> String {
         char::from(k).to_string()
+    }
+
+    #[test]
+    fn ctrl_d_toggles_the_favorite_of_the_selected_clip() {
+        for c in ['d', 'D', '\u{4}'] {
+            assert_eq!(
+                map_key(Key::Char(c), CTRL, TYPING),
+                Some(Action::ToggleFavorite),
+                "{c:?}"
+            );
+            assert_eq!(
+                map_key(Key::Char(c), CTRL, LIST),
+                Some(Action::ToggleFavorite)
+            );
+        }
+        // Plain "d" is typing; Alt+D and Ctrl+Shift+D are not the favorite key.
+        assert_eq!(map_key(Key::Char('d'), NONE, TYPING), None);
+        assert_eq!(map_key(Key::Char('d'), ALT, TYPING), None);
+        let ctrl_shift = Mods {
+            shift: true,
+            ..CTRL
+        };
+        assert_eq!(map_key(Key::Char('d'), ctrl_shift, TYPING), None);
+        // A focused chip keeps its keys.
+        let chips = KeyCtx {
+            chips_focused: true,
+            ..LIST
+        };
+        assert_eq!(map_key(Key::Char('d'), CTRL, chips), None);
     }
 
     #[test]

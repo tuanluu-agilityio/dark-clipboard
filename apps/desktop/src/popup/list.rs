@@ -7,7 +7,7 @@
 
 use super::keys::Move;
 use darkclip_app::{ClipSummaryView, Page};
-use darkclip_core::{ClipId, ClipType, Timestamp};
+use darkclip_core::{ClipId, ClipType, CollectionId, Timestamp};
 use darkclip_storage::{Cursor, SearchQuery};
 
 /// Rows per search request.
@@ -41,6 +41,10 @@ pub struct Filters {
     pub pinned_only: bool,
     pub time: TimeFilter,
     pub source: Option<String>,
+    /// Only members of this collection (Favorites is the system collection; Task 403).
+    pub collection: Option<CollectionId>,
+    /// Only clips with this tag (a normalised tag name).
+    pub tag: Option<String>,
 }
 
 /// Never prints the query text or the source name (GC-06).
@@ -52,6 +56,8 @@ impl std::fmt::Debug for Filters {
             .field("pinned_only", &self.pinned_only)
             .field("time", &self.time)
             .field("source", &self.source.is_some())
+            .field("collection", &self.collection)
+            .field("tag", &self.tag.is_some())
             .finish()
     }
 }
@@ -64,6 +70,8 @@ impl Filters {
             && !self.pinned_only
             && self.time == TimeFilter::Any
             && self.source.is_none()
+            && self.collection.is_none()
+            && self.tag.is_none()
     }
 }
 
@@ -80,6 +88,8 @@ pub struct Request {
     pub cursor: Option<String>,
     /// Rows asked for (a refresh asks for as many as were loaded, in requests of ≤ 200).
     pub limit: u16,
+    pub collection: Option<CollectionId>,
+    pub tag: Option<String>,
 }
 
 /// Never prints the query text (GC-06).
@@ -93,6 +103,8 @@ impl std::fmt::Debug for Request {
             .field("pinned_only", &self.pinned_only)
             .field("since", &self.since)
             .field("has_cursor", &self.cursor.is_some())
+            .field("collection", &self.collection)
+            .field("has_tag", &self.tag.is_some())
             .finish()
     }
 }
@@ -108,8 +120,8 @@ impl Request {
             include_masked: false,
             limit: self.limit,
             cursor: self.cursor.as_deref().and_then(Cursor::decode),
-            collection: None,
-            tag: None,
+            collection: self.collection,
+            tag: self.tag.clone(),
         }
     }
 }
@@ -125,6 +137,10 @@ pub struct Item {
     pub source: Option<String>,
     /// When the clip was last copied (for the relative time on the row).
     pub at: Timestamp,
+    /// Member of Favorites (Task 403).
+    pub favorite: bool,
+    /// Tag names, sorted. Names are user metadata, never printed in `Debug`.
+    pub tags: Vec<String>,
 }
 
 /// Never prints the preview or the source name (GC-06).
@@ -135,6 +151,7 @@ impl std::fmt::Debug for Item {
             .field("kind", &self.kind)
             .field("pinned", &self.pinned)
             .field("masked", &self.masked)
+            .field("favorite", &self.favorite)
             .finish_non_exhaustive()
     }
 }
@@ -149,6 +166,8 @@ impl From<ClipSummaryView> for Item {
             masked: v.masked,
             source: v.source_app,
             at: v.last_copied_at,
+            favorite: v.favorite,
+            tags: v.tags,
         }
     }
 }
@@ -254,6 +273,8 @@ impl ListModel {
             since: self.since,
             cursor: None,
             limit: PAGE_SIZE,
+            collection: self.filters.collection,
+            tag: self.filters.tag.clone(),
         }
     }
 
@@ -301,6 +322,8 @@ impl ListModel {
             since: self.since,
             cursor: Some(cursor),
             limit: PAGE_SIZE,
+            collection: self.filters.collection,
+            tag: self.filters.tag.clone(),
         })
     }
 
@@ -406,6 +429,8 @@ impl ListModel {
                     since: self.since,
                     cursor: Some(cursor),
                     limit: request_limit(self.target - self.staged.len()),
+                    collection: self.filters.collection,
+                    tag: self.filters.tag.clone(),
                 });
             }
         }
@@ -604,6 +629,42 @@ mod tests {
     }
 
     #[test]
+    fn collection_and_tag_filters_reach_the_query_on_every_page() {
+        let col = darkclip_core::CollectionId::new_v7(NOW);
+        let f = Filters {
+            collection: Some(col),
+            tag: Some("todo".into()),
+            ..Filters::default()
+        };
+        assert!(!f.is_empty(), "a collection or tag filter is a filter");
+        let mut m = ListModel::new();
+        let r = m.search(f, NOW, 0);
+        let q = r.to_query();
+        assert_eq!(q.collection, Some(col));
+        assert_eq!(q.tag.as_deref(), Some("todo"));
+        let gen = r.gen;
+        let cur = cursor();
+        m.apply(gen, false, Ok(page(items(0..3), Some(&cur))));
+        let next = m.load_more().unwrap().to_query();
+        assert_eq!(next.collection, Some(col));
+        assert_eq!(next.tag.as_deref(), Some("todo"));
+        // The Debug output never prints the tag name.
+        let dbg = format!("{:?}", m.filters());
+        assert!(!dbg.contains("todo"));
+    }
+
+    #[test]
+    fn rows_carry_the_favorite_flag_and_the_tags() {
+        let mut v = view_item(1, false, None);
+        v.favorite = true;
+        v.tags = vec!["todo".to_string(), "urgent".to_string()];
+        let item = Item::from(v);
+        assert!(item.favorite);
+        assert_eq!(item.tags, ["todo", "urgent"]);
+        assert!(!format!("{item:?}").contains("urgent"));
+    }
+
+    #[test]
     fn empty_query_lists_recent_clips() {
         let mut m = ListModel::new();
         let r = m.search(text("   "), NOW, 0);
@@ -626,6 +687,7 @@ mod tests {
             pinned_only: true,
             time: TimeFilter::Week,
             source: Some("editor.exe".into()),
+            ..Filters::default()
         };
         let q = m.search(f, NOW, 0).to_query();
         assert_eq!(q.text.as_deref(), Some("kubectl get"));

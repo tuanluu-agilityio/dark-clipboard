@@ -15,6 +15,7 @@
 
 mod history;
 mod log;
+mod organize;
 mod popup;
 mod prefs;
 mod renderer;

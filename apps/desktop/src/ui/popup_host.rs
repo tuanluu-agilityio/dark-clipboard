@@ -792,6 +792,7 @@ impl Host {
             Action::ToggleDetail => self.toggle_detail(),
             Action::OpenDetail => self.set_detail_open(true),
             Action::CopyAs => self.open_copy_as(),
+            Action::ToggleFavorite => {}
             Action::CloseDetail => self.set_detail_open(false),
             Action::OpenHistory => {
                 // Close the popup (without returning the focus: the history is a window of its

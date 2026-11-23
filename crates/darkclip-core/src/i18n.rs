@@ -134,17 +134,17 @@ messages! {
     UiUndo => ("Undo", "Hoàn tác"),
     UiClose => ("Close", "Đóng"),
     UiKeyHints => (
-        "Enter copy · Shift+Enter plain · Ctrl+P pin · Del delete · → details · Esc close",
-        "Enter sao chép · Shift+Enter văn bản thuần · Ctrl+P ghim · Del xóa · → chi tiết · Esc đóng"
+        "Enter copy · Shift+Enter plain · Ctrl+P pin · Ctrl+D favorite · Del delete · → details · Esc close",
+        "Enter sao chép · Shift+Enter văn bản thuần · Ctrl+P ghim · Ctrl+D yêu thích · Del xóa · → chi tiết · Esc đóng"
     ),
     // Copy back and paste (Task 205)
     UiKeyHintsPaste => (
-        "Enter copy · Ctrl+Enter paste · Shift+Enter plain · Ctrl+P pin · Del delete · → details · Esc close",
-        "Enter sao chép · Ctrl+Enter dán · Shift+Enter văn bản thuần · Ctrl+P ghim · Del xóa · → chi tiết · Esc đóng"
+        "Enter copy · Ctrl+Enter paste · Shift+Enter plain · Ctrl+P pin · Ctrl+D favorite · Del delete · → details · Esc close",
+        "Enter sao chép · Ctrl+Enter dán · Shift+Enter văn bản thuần · Ctrl+P ghim · Ctrl+D yêu thích · Del xóa · → chi tiết · Esc đóng"
     ),
     UiKeyHintsEnterPastes => (
-        "Enter paste · Shift+Enter plain · Ctrl+P pin · Del delete · → details · Esc close",
-        "Enter dán · Shift+Enter văn bản thuần · Ctrl+P ghim · Del xóa · → chi tiết · Esc đóng"
+        "Enter paste · Shift+Enter plain · Ctrl+P pin · Ctrl+D favorite · Del delete · → details · Esc close",
+        "Enter dán · Shift+Enter văn bản thuần · Ctrl+P ghim · Ctrl+D yêu thích · Del xóa · → chi tiết · Esc đóng"
     ),
     UiPasteManual => ("Copied — paste manually", "Đã sao chép — hãy tự dán"),
     UiPasteElevated => (
@@ -621,6 +621,120 @@ messages! {
     TfNotSavedPrivate => (
         "Not saved: private mode is on.",
         "Không lưu: chế độ riêng tư đang bật."
+    ),
+    // Organisation: collections, tags, notes, favorites (Task 403)
+    OrgFavorites => ("Favorites", "Yêu thích"),
+    OrgFavoriteBadge => ("Favorite", "Yêu thích"),
+    OrgGroupCollections => ("Collections", "Bộ sưu tập"),
+    OrgGroupTags => ("Tags", "Thẻ"),
+    OrgNewCollection => ("New collection", "Bộ sưu tập mới"),
+    OrgRenameCollection => ("Rename collection", "Đổi tên bộ sưu tập"),
+    OrgDeleteCollection => ("Delete collection", "Xóa bộ sưu tập"),
+    OrgCollectionName => ("Collection name", "Tên bộ sưu tập"),
+    OrgNameEmpty => ("Enter a name.", "Hãy nhập tên."),
+    OrgNameTooLong => (
+        "The name is too long (80 characters at most).",
+        "Tên quá dài (tối đa 80 ký tự)."
+    ),
+    OrgNameExists => (
+        "A collection with this name already exists.",
+        "Đã có bộ sưu tập với tên này."
+    ),
+    OrgConfirmDeleteCollection => (
+        "Delete the collection \"{name}\"? Its {n} clips stay in your history.",
+        "Xóa bộ sưu tập \"{name}\"? {n} mục trong đó vẫn còn trong lịch sử."
+    ),
+    OrgCollectionCreated => ("Collection created", "Đã tạo bộ sưu tập"),
+    OrgCollectionRenamed => ("Collection renamed", "Đã đổi tên bộ sưu tập"),
+    OrgCollectionDeleted => ("Collection deleted", "Đã xóa bộ sưu tập"),
+    OrgAddFavorite => ("Add to Favorites", "Thêm vào Yêu thích"),
+    OrgRemoveFavorite => ("Remove from Favorites", "Bỏ khỏi Yêu thích"),
+    OrgNote => ("Note", "Ghi chú"),
+    OrgNoNote => ("No note", "Chưa có ghi chú"),
+    OrgEditNote => ("Edit note...", "Sửa ghi chú..."),
+    OrgNoteTooLong => (
+        "The note is too long (4,000 characters at most).",
+        "Ghi chú quá dài (tối đa 4.000 ký tự)."
+    ),
+    OrgNoteHint => (
+        "Ctrl+Enter save · Esc cancel",
+        "Ctrl+Enter lưu · Esc hủy"
+    ),
+    OrgSave => ("Save", "Lưu"),
+    OrgApply => ("Apply", "Áp dụng"),
+    OrgSaved => ("Saved", "Đã lưu"),
+    OrgTagsEdit => ("Edit tags...", "Sửa thẻ..."),
+    OrgAddTag => ("Add tag", "Thêm thẻ"),
+    OrgTagPlaceholder => ("Type a tag and press Enter", "Nhập thẻ rồi nhấn Enter"),
+    OrgTagInvalid => (
+        "A tag may use letters, digits, - and _ only.",
+        "Thẻ chỉ gồm chữ, số, - và _."
+    ),
+    OrgTagTooLong => (
+        "A tag has 40 characters at most.",
+        "Thẻ tối đa 40 ký tự."
+    ),
+    OrgTagsFull => (
+        "A clip can have 20 tags at most.",
+        "Mỗi mục có tối đa 20 thẻ."
+    ),
+    OrgTagsHint => (
+        "Enter add · Backspace on empty removes the last tag · Esc close",
+        "Enter thêm · Backspace khi trống bỏ thẻ cuối · Esc đóng"
+    ),
+    OrgRemoveTag => ("Remove tag", "Bỏ thẻ"),
+    OrgNoTags => ("No tags", "Chưa có thẻ"),
+    OrgAddToCollection => ("Add to collection...", "Thêm vào bộ sưu tập..."),
+    OrgRemoveFromCollection => ("Remove from collection...", "Bỏ khỏi bộ sưu tập..."),
+    OrgNoCollections => (
+        "No collections yet. Create one with Ctrl+Shift+N.",
+        "Chưa có bộ sưu tập. Tạo bằng Ctrl+Shift+N."
+    ),
+    OrgPickHint => (
+        "Up/Down choose · Enter confirm · Esc cancel",
+        "Lên/Xuống chọn · Enter xác nhận · Esc hủy"
+    ),
+    OrgConfirmAddToCollection => (
+        "Add {n} clips to \"{name}\"?",
+        "Thêm {n} mục vào \"{name}\"?"
+    ),
+    OrgConfirmRemoveFromCollection => (
+        "Remove {n} clips from \"{name}\"? The clips stay in your history.",
+        "Bỏ {n} mục khỏi \"{name}\"? Các mục vẫn còn trong lịch sử."
+    ),
+    OrgConfirmAddTag => (
+        "Add the tag \"{name}\" to {n} clips?",
+        "Thêm thẻ \"{name}\" vào {n} mục?"
+    ),
+    OrgConfirmFavorite => (
+        "Add {n} clips to Favorites?",
+        "Thêm {n} mục vào Yêu thích?"
+    ),
+    OrgConfirmUnfavorite => (
+        "Remove {n} clips from Favorites?",
+        "Bỏ {n} mục khỏi Yêu thích?"
+    ),
+    OrgSkippedMasked => (
+        "{n} masked clips were skipped.",
+        "Đã bỏ qua {n} mục bị che."
+    ),
+    OrgSkippedFull => (
+        "{n} clips already have 20 tags.",
+        "{n} mục đã đủ 20 thẻ."
+    ),
+    OrgNothingToDo => (
+        "Nothing to change. Masked clips cannot be favorited, tagged or added to a collection.",
+        "Không có gì để đổi. Mục bị che không thể yêu thích, gắn thẻ hay thêm vào bộ sưu tập."
+    ),
+    OrgDone => ("{n} clips updated", "Đã cập nhật {n} mục"),
+    OrgKeyHintsConfirm => ("Enter apply · Esc cancel", "Enter áp dụng · Esc hủy"),
+    OrgKeyHintsHistory => (
+        "Ctrl+D favorite · Ctrl+N note · Ctrl+G tags · Ctrl+L add to collection · Ctrl+Shift+L remove · Ctrl+Shift+N new collection",
+        "Ctrl+D yêu thích · Ctrl+N ghi chú · Ctrl+G thẻ · Ctrl+L thêm vào bộ sưu tập · Ctrl+Shift+L bỏ khỏi · Ctrl+Shift+N bộ sưu tập mới"
+    ),
+    OrgCollectionKeys => (
+        "Ctrl+Shift+R rename the shown collection · Ctrl+Shift+Del delete it",
+        "Ctrl+Shift+R đổi tên bộ sưu tập đang xem · Ctrl+Shift+Del xóa"
     ),
 }
 
