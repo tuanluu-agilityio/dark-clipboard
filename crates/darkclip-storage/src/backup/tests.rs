@@ -985,3 +985,83 @@ fn a_no_export_clip_survives_backup_and_restore_with_its_flag() {
     b.restore_backup(&out, FREE).unwrap();
     assert!(b.is_no_export(&id).unwrap());
 }
+
+// ---- Task 405 round-2 review ----
+
+/// Plants objects with `writable_schema` (hidden from a `name NOT LIKE 'sqlite_%'` filter
+/// when named `sqlite_*`), then checks the backup is refused and the live store is clean.
+fn planted_refused(table: &str, trigger: &str) {
+    let (tmp, out, _) = make_backup();
+    let dst = tmp.path().join("dst");
+    let (mut b, id) = live(&dst);
+    let scratch = tmp.path().join("planted.db");
+    let crafted = tmp.path().join("planted.dcbackup");
+    rebuild(&out, &crafted, true, |e| {
+        let db = e.iter_mut().find(|(n, _)| n == "history.db").unwrap();
+        std::fs::write(&scratch, &db.1).unwrap();
+        {
+            let c = rusqlite::Connection::open(&scratch).unwrap();
+            c.execute_batch("CREATE TABLE hold_tmp(p TEXT);").unwrap();
+            c.execute_batch("PRAGMA writable_schema = ON;").unwrap();
+            c.execute(
+                "UPDATE sqlite_master SET name = ?1, tbl_name = ?1, \
+                 sql = 'CREATE TABLE ' || ?1 || '(p TEXT)' WHERE name = 'hold_tmp'",
+                [table],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO sqlite_master VALUES ('trigger', ?1, 'clips', 0, \
+                 'CREATE TRIGGER ' || ?1 || ' AFTER DELETE ON clips BEGIN \
+                 INSERT INTO ' || ?2 || ' VALUES (OLD.preview); END')",
+                [trigger, table],
+            )
+            .unwrap();
+            c.execute_batch("PRAGMA writable_schema = OFF;").unwrap();
+        }
+        {
+            // The file is sound to SQLite: the planted objects pass its integrity check.
+            let c = rusqlite::Connection::open(&scratch).unwrap();
+            let ok: String = c
+                .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(ok, "ok");
+        }
+        db.1 = std::fs::read(&scratch).unwrap();
+    });
+    assert_eq!(
+        b.restore_backup(&crafted, FREE),
+        Err(StorageError::Archive(ArchiveError::Corrupt))
+    );
+    assert_live_unchanged(&b, &id);
+    let planted: i64 = b
+        .conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name IN (?1, ?2)",
+            [table, trigger],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(planted, 0);
+    assert_no_staging(&dst);
+}
+
+#[test]
+fn a_hidden_sqlite_named_trigger_and_table_are_refused() {
+    planted_refused("sqlite_hold", "sqlite_keep");
+}
+
+#[test]
+fn a_planted_ordinary_trigger_and_table_are_refused() {
+    planted_refused("hold", "keep_deleted");
+}
+
+#[test]
+fn sqlite_statistics_tables_are_allowed() {
+    let (tmp, out, f) = make_backup();
+    let dst = tmp.path().join("dst");
+    let (mut b, _) = live(&dst);
+    let crafted = tmp.path().join("stat.dcbackup");
+    with_db_edit(&out, &crafted, &tmp.path().join("stat.db"), "ANALYZE;");
+    assert_eq!(b.restore_backup(&crafted, FREE).unwrap().clips, 3);
+    assert!(b.get_clip(&f.text).unwrap().is_some());
+}

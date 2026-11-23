@@ -632,3 +632,60 @@ fn a_merge_onto_a_masked_clip_never_organises_it() {
         .iter()
         .all(|c| c.clip_count == 0));
 }
+
+// ---- Task 405 round-2 review ----
+
+/// `start` with a long debounce, so a copy can still be pending when a transfer begins.
+fn start_slow_debounce(debounce_ms: u64) -> H {
+    let dir = tempfile::tempdir().unwrap();
+    let clock: Arc<dyn Clock> = Arc::new(TestClock(AtomicI64::new(T0)));
+    let settings_path = dir.path().join("settings.json");
+    Settings::default().save(&settings_path).unwrap();
+    let (platform, fake) = FakePlatform::new();
+    let (tx, events) = mpsc::channel();
+    let cfg = CaptureConfig {
+        debounce_ms,
+        open_retries: 10,
+        retry_delay_ms: 1,
+        lang: darkclip_core::Lang::En,
+    };
+    let (app, _) = App::start(
+        platform.bundle(),
+        dir.path(),
+        &settings_path,
+        clock,
+        cfg,
+        tx,
+    )
+    .unwrap();
+    H {
+        dir,
+        app: Some(app),
+        fake,
+        events,
+        ids: Vec::new(),
+    }
+}
+
+#[test]
+fn a_change_pending_before_a_transfer_is_not_read_after_a_queued_private_mode() {
+    let h = start_slow_debounce(300);
+    let a = h.app();
+    // A copy whose debounce is still running when the transfer starts.
+    h.fake.copy(text_copy("copied before"));
+    std::thread::sleep(Duration::from_millis(60));
+    a.cap.set_transfer_stall(700);
+    let out = h.dir.path().join("slow.dcbackup");
+    let wait = a.ui_start(&ui(), UiTransfer::Backup(out)).unwrap();
+    // During the transfer: private mode, then another copy (now on the clipboard).
+    std::thread::sleep(Duration::from_millis(50));
+    a.set_capture_mode(&ui(), CaptureMode::Private).unwrap();
+    h.fake.copy(text_copy("copied after private"));
+    assert!(matches!(wait.wait(), Ok(TransferReply::Backup(_))));
+    // Longer than the debounce: anything still pending has been processed by now.
+    std::thread::sleep(Duration::from_millis(800));
+    assert!(
+        texts(a).iter().all(|t| t != "copied after private"),
+        "nothing on the clipboard after Private is stored"
+    );
+}
