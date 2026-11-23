@@ -239,6 +239,44 @@ All rows **untested** until the owner runs them (agents never click, type, take 
 | Vietnamese interface, open the History section and each dialog | All labels, questions and results are Vietnamese | **untested** |
 | Esc with a cleanup dialog open | The dialog closes without deleting | **untested** |
 
+## Windows: collections, tags, notes and favorites (Task 403)
+
+All rows **untested** until the owner runs them (agents never click, type, take screenshots or write the real clipboard, GC-19). Use a scratch history (`--seed-demo-clips 200 --data-dir <empty folder>`, then `--data-dir <same folder>`), never the real one. Keyboard rows: use no mouse.
+
+| Row | Expected | Result |
+|---|---|---|
+| History window, select a clip, `Ctrl+D` | A star appears on the row and in the detail strip; the strip button now says "Remove from Favorites"; the left pane shows "Favorites (1)" | **untested** |
+| `Ctrl+D` again | The star goes; Favorites (0) | **untested** |
+| `Ctrl+Shift+N`, type `Work`, Enter | Toast "Collection created"; "Collections" heading with "Work (0)" in the left pane | **untested** |
+| `Ctrl+Shift+N`, press Enter with an empty box; type `work` (existing name) | The Save button is hidden; the box shows "A collection with this name already exists." for a duplicate; a name of 81 characters shows the too-long message | **untested** |
+| Select a clip, `Ctrl+L`, Down/Up, Enter | The clip joins the chosen collection; the left pane count goes up; selecting the collection in the left pane lists the clip | **untested** |
+| With no collection yet, `Ctrl+L` | The dialog says there are no collections and offers Cancel only; Esc closes | **untested** |
+| Collection selected in the left pane, `Ctrl+Shift+L`, Enter | The clip leaves the collection; the clip stays in the history | **untested** |
+| Collection selected in the left pane, `Ctrl+Shift+R`, change the name, Enter | Toast "Collection renamed"; the left pane shows the new name | **untested** |
+| Collection selected in the left pane, `Ctrl+Shift+Del` | A dialog names the collection and says its N clips stay; Esc cancels and nothing changes | **untested** |
+| Same, press Enter | The collection disappears from the pane, the list shows all clips again, the clips are still in the history; Favorites cannot be renamed or deleted (the keys do nothing on it) | **untested** |
+| Select a clip, `Ctrl+N`, type a note, Ctrl+Enter | Toast "Saved"; the strip shows the note | **untested** |
+| `Ctrl+N`, type more than 4,000 characters (paste a long text) | The counter turns red and a message appears; Save is hidden; Esc cancels and the note is unchanged | **untested** |
+| `Ctrl+N`, edit, Esc | The old note stays | **untested** |
+| `Ctrl+G`, type `Todo`, Enter | A chip `todo` appears (lowercase); the box clears; the left pane lists "todo (1)" under Tags | **untested** |
+| `Ctrl+G`, type `two words` or `a/b` | The box shows "A tag may use letters, digits, - and _ only."; no chip is added | **untested** |
+| `Ctrl+G` with the box empty, Backspace | The last chip is removed | **untested** |
+| In the detail strip click the x of a tag | The tag is removed (mouse) | **untested** |
+| Add 20 tags to one clip, then a 21st | The message says a clip can have 20 tags at most | **untested** |
+| Click "todo" in the left pane | The list shows the clips with that tag; click again to clear; with a collection also selected both filters apply | **untested** |
+| Mark 3 clips (Space), `Ctrl+D` | A confirmation says "Add 3 clips to Favorites?"; Esc cancels and nothing changes; Enter applies and the toast says 3 clips updated | **untested** |
+| Mark 3 clips, `Ctrl+L`, choose a collection, Enter | The confirmation names the count and the collection; Enter adds them | **untested** |
+| Mark 3 clips, `Ctrl+G`, type `bulk`, Enter | The confirmation says "Add the tag "bulk" to 3 clips?"; Enter tags them; a clip that already had the tag is not counted | **untested** |
+| A masked clip (copy a synthetic token such as one made by the seed tool or a password-manager-style secret from a scratch file; shown "Masked") selected: `Ctrl+D`, `Ctrl+N`, `Ctrl+G`, `Ctrl+L` | None of them acts: a toast says masked clips cannot be favorited, tagged or added; the strip has no edit buttons | **untested** |
+| Mark a masked clip with two normal clips, `Ctrl+L` | The confirmation counts 2 (not 3) and the result toast mentions that 1 masked clip was skipped | **untested** |
+| Popup (`Ctrl+Shift+V`): a favorite row | A star shows on the row; a Favorites chip and one chip per collection follow the Pinned chip | **untested** |
+| Popup: Tab to the Favorites chip, Enter | Only favorites are listed; Enter again clears it | **untested** |
+| Popup: select a row, `Ctrl+D` | The star appears (or disappears) within a moment; the key hint line mentions Ctrl+D | **untested** |
+| Popup: masked row, `Ctrl+D` | A toast says masked clips cannot be favorited; no star | **untested** |
+| Close and reopen the history window and the popup | Collection and tag names, notes and dialogs from before are not visible until the lists reload | **untested** |
+| Vietnamese interface: repeat the dialogs | Every label, hint, error and confirmation is Vietnamese | **untested** |
+| Screen reader (Narrator): the dialog, the pane strip, a favorite row | The dialog title is announced; the row description ends with "Favorite" ("Yêu thích") | **untested** |
+
 ## macOS
 
 All rows **untested** (no hardware, Q-04).

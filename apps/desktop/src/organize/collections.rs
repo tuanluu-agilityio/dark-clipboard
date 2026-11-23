@@ -45,10 +45,6 @@ impl std::fmt::Debug for CollectionDelete {
 }
 
 impl CollectionDelete {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Opens the confirmation. False (nothing opens) for the system collection.
     pub fn request(&mut self, id: CollectionId, name: &str, clips: u64, system: bool) -> bool {
         if system {
@@ -163,7 +159,7 @@ mod tests {
 
     #[test]
     fn delete_asks_first_and_names_the_collection_and_that_clips_stay() {
-        let mut d = CollectionDelete::new();
+        let mut d = CollectionDelete::default();
         assert!(!d.is_confirming());
         assert_eq!(d.confirm(), None, "nothing to confirm before a request");
         assert!(d.request(id(1), "Work", 3, false));
@@ -182,7 +178,7 @@ mod tests {
 
     #[test]
     fn cancel_drops_the_request_and_the_system_collection_cannot_be_deleted() {
-        let mut d = CollectionDelete::new();
+        let mut d = CollectionDelete::default();
         assert!(d.request(id(1), "Work", 0, false));
         d.cancel();
         assert_eq!(d.confirm(), None);

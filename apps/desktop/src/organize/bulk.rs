@@ -212,18 +212,18 @@ impl BulkPlan {
     /// "2 masked clips were skipped." and "1 clips already have 20 tags.", when any.
     pub fn skipped_text(&self, lang: Lang) -> Option<String> {
         let mut parts = Vec::new();
-        if self.skipped_masked > 0 {
+        if self.skipped_masked() > 0 {
             parts.push(fill_name(
                 t(lang, Msg::OrgSkippedMasked),
                 "",
-                self.skipped_masked as u64,
+                self.skipped_masked() as u64,
             ));
         }
-        if self.skipped_full > 0 {
+        if self.skipped_full() > 0 {
             parts.push(fill_name(
                 t(lang, Msg::OrgSkippedFull),
                 "",
-                self.skipped_full as u64,
+                self.skipped_full() as u64,
             ));
         }
         (!parts.is_empty()).then(|| parts.join(" "))
@@ -237,10 +237,6 @@ pub struct BulkFlow {
 }
 
 impl BulkFlow {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Opens the confirmation. False for a plan that changes nothing.
     pub fn request(&mut self, plan: BulkPlan) -> bool {
         if plan.jobs.is_empty() {
@@ -480,7 +476,7 @@ mod tests {
     fn the_flow_confirms_once_and_cancel_drops_the_plan() {
         let ts = [target(1, false, false, &[]), target(2, false, false, &[])];
         let plan = BulkPlan::new(BulkOp::Favorite(true), &ts).unwrap();
-        let mut f = BulkFlow::new();
+        let mut f = BulkFlow::default();
         assert!(!f.is_confirming());
         assert_eq!(f.confirm(), None);
         assert!(f.request(plan.clone()));
@@ -504,7 +500,7 @@ mod tests {
             target(2, false, false, &[]),
             target(3, false, false, &[]),
         ];
-        let mut f = BulkFlow::new();
+        let mut f = BulkFlow::default();
         assert!(f.request(BulkPlan::new(BulkOp::Favorite(true), &ts).unwrap()));
         f.retain(&[ts[0].id, ts[2].id]);
         assert_eq!(
@@ -517,7 +513,7 @@ mod tests {
 
     #[test]
     fn a_plan_that_changes_nothing_does_not_open_the_flow() {
-        let mut f = BulkFlow::new();
+        let mut f = BulkFlow::default();
         let empty = BulkPlan {
             op: BulkOp::Favorite(true),
             jobs: Vec::new(),

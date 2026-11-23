@@ -24,7 +24,7 @@ mod generated {
 }
 pub use generated::{
     AppRow, Chip, ClipRow, DetailState, FileRow, FilterItem, HistoryWindow, KindItem, MainWindow,
-    SText, Seg, SettingsWindow, Strings, Theme, WText, WelcomeWindow,
+    OrgDialogState, OrgStrings, SText, Seg, SettingsWindow, Strings, Theme, WText, WelcomeWindow,
 };
 
 mod common;

@@ -22,6 +22,8 @@ export struct ClipRow {
     icon: string,
     // Empty when the clip is not pinned / not masked.
     pin-badge: string,
+    // A star for a favorite (Task 403); empty otherwise.
+    favorite-badge: string,
     masked-badge: string,
     mono: bool,
     pinned: bool,
@@ -263,6 +265,13 @@ export component RowView inherits Rectangle {
                     vertical-alignment: center;
                     horizontal-stretch: 1;
                     min-width: 0px;
+                }
+                if data.favorite-badge != "": Text {
+                    text: data.favorite-badge;
+                    color: Theme.warning;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                    accessible-role: none;
                 }
                 if data.pin-badge != "": Badge {
                     text: data.pin-badge;
