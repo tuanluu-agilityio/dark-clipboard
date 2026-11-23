@@ -263,6 +263,10 @@ All rows **untested** until the owner runs them (agents never click, type, take 
 | Private mode on, Import clips... | Red status: private mode is on, nothing is imported | **untested** |
 | Vietnamese interface: the buttons, dialog titles, question and every result | All Vietnamese | **untested** |
 | Open Back up now... and, while the dialog is open, press Restore or Import | The buttons are greyed out; only one file dialog at a time | **untested** |
+| On a large scratch history (`--seed-demo-clips 5000`), start Back up now... and at once choose Private mode in the tray, then copy a line from a scratch file | The tray switches to private at once; after "Backup saved" the copied line is not in the history | **untested** |
+| Restore with the data folder on a nearly full volume (less free space than twice the backup) | Red status: not enough free disk space, nothing was changed | **untested** |
+| With a scratch tool, put a synthetic text on the clipboard with only the `CanUploadToCloudClipboard` = 0 format (no other privacy marker: the clip is captured), then mark it and press `Ctrl+Shift+E` | The message counts it as left out; the export does not contain it | **untested** |
+| Kill the app (Task Manager) while a large backup is being written | A `<file>.dark-clipboard-partial` may remain next to the chosen name; no file with the chosen name appears | **untested** |
 
 ## Windows: collections, tags, notes and favorites (Task 403)
 
