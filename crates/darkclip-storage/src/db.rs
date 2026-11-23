@@ -123,6 +123,9 @@ impl Storage {
             dir: dir.to_path_buf(),
             mode,
             clock,
+            fts_dirty: 0,
+            #[cfg(test)]
+            optimize_runs: 0,
             #[cfg(test)]
             fail_before_commit: false,
         }

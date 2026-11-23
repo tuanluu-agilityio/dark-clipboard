@@ -86,6 +86,7 @@ pub(crate) fn map_storage(e: &StorageError) -> ApiError {
         StorageError::InvalidArgument(what) => ApiError::InvalidArgument(what),
         // A name, tag or note that breaks a schema rule; the field is not echoed.
         StorageError::Invalid(_) => ApiError::InvalidArgument("invalid value"),
+        StorageError::InsufficientSpace => ApiError::InvalidArgument("not enough free disk space"),
         _ => ApiError::Storage,
     }
 }

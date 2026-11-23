@@ -420,12 +420,49 @@ messages! {
     SkipBusy => ("Clipboard busy", "Bảng nhớ tạm bận"),
     SettingsClear => ("Clear history...", "Xóa lịch sử..."),
     SettingsClearConfirm => (
-        "Delete the clipboard history? This cannot be undone.",
-        "Xóa lịch sử bảng nhớ tạm? Không thể hoàn tác."
+        "Delete {n} clips from the history? This cannot be undone.",
+        "Xóa {n} mục khỏi lịch sử? Không thể hoàn tác."
     ),
-    SettingsKeepPinned => ("Keep pinned clips", "Giữ các mục đã ghim"),
+    SettingsKeepPinned => ("Keep pinned and favorite clips", "Giữ các mục đã ghim và yêu thích"),
     SettingsClearDo => ("Delete", "Xóa"),
     SettingsClearFailed => ("History could not be cleared", "Không xóa được lịch sử"),
+    SettingsStatsFavorites => ("{n} favorites", "{n} yêu thích"),
+    SettingsStatsDb => ("Database {n}", "Cơ sở dữ liệu {n}"),
+    SettingsStatsBlobs => ("Files {n}", "Tệp {n}"),
+    SettingsCleanupHeading => ("Clean up", "Dọn dẹp"),
+    SettingsOlderLabel => ("Delete clips older than (days)", "Xóa các mục cũ hơn (ngày)"),
+    SettingsOlderDo => ("Delete old clips...", "Xóa các mục cũ..."),
+    SettingsOlderConfirm => (
+        "Delete {n} clips older than the chosen number of days? Pinned and favorite clips are kept. This cannot be undone.",
+        "Xóa {n} mục cũ hơn số ngày đã chọn? Các mục đã ghim và yêu thích được giữ lại. Không thể hoàn tác."
+    ),
+    SettingsDaysInvalid => (
+        "Enter a whole number of days from 1 to 3650",
+        "Nhập số ngày nguyên từ 1 đến 3650"
+    ),
+    SettingsOrphansDo => ("Remove orphaned files...", "Xóa tệp mồ côi..."),
+    SettingsOrphansConfirm => (
+        "Remove {n} orphaned data files that no clip uses? This cannot be undone.",
+        "Xóa {n} tệp dữ liệu mồ côi không mục nào dùng? Không thể hoàn tác."
+    ),
+    SettingsOrphansDone => (
+        "{n} orphaned files removed, {b} freed",
+        "Đã xóa {n} tệp mồ côi, giải phóng {b}"
+    ),
+    SettingsCompactDo => ("Compact database...", "Thu gọn cơ sở dữ liệu..."),
+    SettingsCompactConfirm => (
+        "Compact the database ({n})? It needs about that much free disk space and may take a moment.",
+        "Thu gọn cơ sở dữ liệu ({n})? Cần khoảng chừng đó dung lượng đĩa trống và có thể mất một lúc."
+    ),
+    SettingsCompactDone => (
+        "Database compacted: {n} before, {b} after",
+        "Đã thu gọn cơ sở dữ liệu: trước {n}, sau {b}"
+    ),
+    SettingsCompactNoSpace => (
+        "Not enough free disk space to compact the database",
+        "Không đủ dung lượng đĩa trống để thu gọn cơ sở dữ liệu"
+    ),
+    SettingsCleanupFailed => ("The cleanup failed", "Dọn dẹp không thành công"),
     SettingsVersion => ("Version", "Phiên bản"),
     SettingsCapabilities => (
         "What works on this system",

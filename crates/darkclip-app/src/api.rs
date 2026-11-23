@@ -8,7 +8,7 @@
 //!
 //! Errors carry no clip content (GC-06); `Caller::Mcp` never sees masked clips.
 
-use crate::capture::{ActorCommand, CaptureHandle, OrganizeOp, OrganizeReply};
+use crate::capture::{ActorCommand, CaptureHandle, MaintOp, MaintReply, OrganizeOp, OrganizeReply};
 use crate::config::CaptureConfig;
 use crate::envelope::Page;
 use crate::events::{
@@ -235,6 +235,7 @@ pub struct KindCount {
 pub struct StorageStatsView {
     pub clips: u64,
     pub pinned: u64,
+    pub favorites: u64,
     pub by_kind: Vec<KindCount>,
     pub db_bytes: u64,
     pub blob_bytes: u64,
@@ -725,6 +726,73 @@ impl App {
         })
     }
 
+    /// How many clips `clear_history(keep_pinned)` would delete: the count the confirmation
+    /// shows. With `keep_pinned`, pinned clips and favorites stay.
+    pub fn count_clearable(&self, c: &Caller, keep_pinned: bool) -> Result<u64, ApiError> {
+        PermissionGuard::check(c, Operation::ClearHistory)?;
+        self.reader()
+            .count_clearable(keep_pinned)
+            .map_err(|e| map_storage(&e))
+    }
+
+    /// How many clips `delete_older_than(days)` would delete.
+    pub fn count_older_than(&self, c: &Caller, days: u32) -> Result<u64, ApiError> {
+        PermissionGuard::check(c, Operation::ClearHistory)?;
+        self.reader()
+            .count_older_than(days)
+            .map_err(|e| map_storage(&e))
+    }
+
+    /// Deletes clips last copied more than `days` days ago (`days >= 1`), except pinned clips
+    /// and favorites. Runs on the actor thread.
+    pub fn delete_older_than(&self, c: &Caller, days: u32) -> Result<u64, ApiError> {
+        match self.maintain(c, MaintOp::DeleteOlderThan(days))? {
+            MaintReply::Deleted(n) => Ok(n),
+            _ => Err(ApiError::Internal),
+        }
+    }
+
+    /// Orphaned blob files and their size, without removing anything.
+    pub fn scan_orphans(&self, c: &Caller) -> Result<darkclip_storage::OrphanReport, ApiError> {
+        PermissionGuard::check(c, Operation::ClearHistory)?;
+        self.reader().scan_orphans().map_err(|e| map_storage(&e))
+    }
+
+    /// Removes orphaned blob files now (the startup sweep on demand); reports what it freed.
+    pub fn sweep_orphan_blobs(
+        &self,
+        c: &Caller,
+    ) -> Result<darkclip_storage::OrphanReport, ApiError> {
+        match self.maintain(c, MaintOp::SweepOrphans)? {
+            MaintReply::Orphans(r) => Ok(r),
+            _ => Err(ApiError::Internal),
+        }
+    }
+
+    /// `VACUUM`. `free_bytes` is the free disk space of the data folder as the caller measured
+    /// it; `None` (unknown) and anything below the database size are refused.
+    pub fn compact_database(
+        &self,
+        c: &Caller,
+        free_bytes: Option<u64>,
+    ) -> Result<darkclip_storage::CompactReport, ApiError> {
+        PermissionGuard::check(c, Operation::ClearHistory)?;
+        let free = free_bytes.ok_or(ApiError::InvalidArgument("free disk space unknown"))?;
+        match self.maintain(c, MaintOp::Compact(free))? {
+            MaintReply::Compacted(r) => Ok(r),
+            _ => Err(ApiError::Internal),
+        }
+    }
+
+    fn maintain(&self, c: &Caller, op: MaintOp) -> Result<MaintReply, ApiError> {
+        PermissionGuard::check(c, Operation::ClearHistory)?;
+        self.ask(|reply, deadline| ActorCommand::Maintenance {
+            op,
+            deadline,
+            reply,
+        })
+    }
+
     fn reader(&self) -> MutexGuard<'_, Storage> {
         lock(&self.reader)
     }
@@ -1020,6 +1088,7 @@ impl ClipApi for App {
         Ok(StorageStatsView {
             clips: st.clips,
             pinned: st.pinned,
+            favorites: st.favorites,
             by_kind: st
                 .by_kind
                 .into_iter()
@@ -1428,6 +1497,60 @@ mod tests {
         assert_eq!(a.get_storage_stats(&Caller::Ui).unwrap().clips, 0);
     }
 
+    #[test]
+    fn clear_history_keeps_favorites_and_pinned_through_the_actor() {
+        let h = start(
+            &[("pin", false), ("fav", false), ("a", false), ("b", false)],
+            None,
+        );
+        let a = h.app();
+        let ui = &Caller::Ui;
+        a.pin_clip(ui, h.ids[0], true).unwrap();
+        a.set_favorite(ui, h.ids[1], true).unwrap();
+        assert_eq!(a.count_clearable(ui, true).unwrap(), 2);
+        assert_eq!(a.count_clearable(ui, false).unwrap(), 4);
+        assert_eq!(a.clear_history(ui, true).unwrap(), 2);
+        let st = a.get_storage_stats(ui).unwrap();
+        assert_eq!((st.clips, st.pinned, st.favorites), (2, 1, 1));
+        assert_eq!(a.clear_history(ui, false).unwrap(), 2);
+        assert_eq!(a.get_storage_stats(ui).unwrap().clips, 0);
+    }
+
+    #[test]
+    fn data_management_runs_on_the_actor_and_is_denied_to_other_callers() {
+        let h = start(&[("one", false), ("two", false)], None);
+        let a = h.app();
+        let ui = &Caller::Ui;
+        // Everything in the seed is fresh: nothing is older than a day.
+        assert_eq!(a.count_older_than(ui, 1).unwrap(), 0);
+        assert_eq!(a.delete_older_than(ui, 1).unwrap(), 0);
+        assert_eq!(
+            a.delete_older_than(ui, 0).unwrap_err(),
+            ApiError::InvalidArgument("days must be 1 or more")
+        );
+        let shard = h.dir.path().join("blobs").join("ab");
+        std::fs::create_dir_all(&shard).unwrap();
+        std::fs::write(shard.join("c".repeat(64)), vec![0u8; 500]).unwrap();
+        let scan = a.scan_orphans(ui).unwrap();
+        assert_eq!((scan.files, scan.bytes), (1, 500));
+        let done = a.sweep_orphan_blobs(ui).unwrap();
+        assert_eq!((done.files, done.bytes), (1, 500));
+        assert!(!shard.join("c".repeat(64)).exists());
+        // Compaction: refused without a free-space figure or with too little of it.
+        assert!(a.compact_database(ui, None).is_err());
+        assert!(a.compact_database(ui, Some(0)).is_err());
+        let r = a.compact_database(ui, Some(u64::MAX)).unwrap();
+        assert!(r.bytes_after <= r.bytes_before);
+        assert_eq!(a.get_storage_stats(ui).unwrap().clips, 2);
+        let denied = |e: ApiError| matches!(e, ApiError::PermissionDenied(_));
+        let m = &mcp();
+        assert!(denied(a.count_clearable(m, true).unwrap_err()));
+        assert!(denied(a.count_older_than(m, 1).unwrap_err()));
+        assert!(denied(a.delete_older_than(m, 1).unwrap_err()));
+        assert!(denied(a.scan_orphans(m).unwrap_err()));
+        assert!(denied(a.sweep_orphan_blobs(m).unwrap_err()));
+        assert!(denied(a.compact_database(m, Some(u64::MAX)).unwrap_err()));
+    }
     #[test]
     fn get_clip_content_only_when_asked() {
         let h = start(&[("some body text", false), ("secret", true)], None);

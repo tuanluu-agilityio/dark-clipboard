@@ -19,6 +19,7 @@ use super::{status_msg, Poster, SText, SettingsWindow};
 use super::{AppRow, KindItem};
 use crate::popup::row::fill;
 use crate::prefs::about::{self, CapValue};
+use crate::prefs::data::{self, CleanupAction, CleanupFlow, ClearCounts};
 use crate::prefs::model::{
     self, can_save, limits_lowered, login_availability, run_save_with_login, ClearFlow, Draft,
     Field, Problem, RemoveOutcome, SaveResult, ALL_KINDS,
@@ -58,6 +59,8 @@ struct Host {
     lang: Lang,
     apps: model::AppList,
     clear: ClearFlow,
+    clear_counts: ClearCounts,
+    cleanup: CleanupFlow,
     saving: bool,
     app_rows: Rc<VecModel<AppRow>>,
     kind_rows: Rc<VecModel<KindItem>>,
@@ -204,6 +207,11 @@ fn set_strings(w: &SettingsWindow, lang: Lang, snap: Option<&Snapshot>) {
     s.set_clear_confirm(m(Msg::SettingsClearConfirm));
     s.set_keep_pinned(m(Msg::SettingsKeepPinned));
     s.set_clear_do(m(Msg::SettingsClearDo));
+    s.set_cleanup_heading(m(Msg::SettingsCleanupHeading));
+    s.set_older_label(m(Msg::SettingsOlderLabel));
+    s.set_older_do(m(Msg::SettingsOlderDo));
+    s.set_orphans_do(m(Msg::SettingsOrphansDo));
+    s.set_compact_do(m(Msg::SettingsCompactDo));
     s.set_version(m(Msg::SettingsVersion));
     s.set_caps_label(m(Msg::SettingsCapabilities));
     s.set_licences_label(m(Msg::SettingsLicences));
@@ -362,10 +370,33 @@ impl Host {
         }
     }
 
+    /// The clear dialog's question, naming how many clips the current checkbox state deletes.
+    fn show_clear_question(&self, keep_pinned: bool) {
+        let n = self.clear_counts.for_choice(keep_pinned);
+        self.win
+            .set_clear_question(fill(t(self.lang, Msg::SettingsClearConfirm), n).into());
+    }
+
+    /// Opens the cleanup dialog for `action`, naming `shown`.
+    fn open_cleanup(&mut self, action: CleanupAction, shown: u64) {
+        self.cleanup.ask(action, shown);
+        if let Some((msg, n)) = self.cleanup.prompt() {
+            let text = if matches!(action, CleanupAction::Compact) {
+                t(self.lang, msg).replace("{n}", &data::format_bytes(n))
+            } else {
+                fill(t(self.lang, msg), n)
+            };
+            self.win.set_cleanup_question(text.into());
+            self.win.set_cleanup_open(true);
+        }
+    }
+
     /// Cancels every open question (Esc, closing).
     fn close_overlays(&mut self) {
         self.apps.cancel_remove();
         self.clear.cancel();
+        self.cleanup.cancel();
+        self.win.set_cleanup_open(false);
         self.win.set_clear_open(false);
         self.win.set_picker_open(false);
         self.picker_rows.set_vec(Vec::new());
@@ -541,12 +572,29 @@ fn on_stats(stats: Option<StorageStatsView>) {
             return;
         };
         let mb = (s.db_bytes.saturating_add(s.blob_bytes)) / (1024 * 1024);
-        let line = format!(
+        let counts = format!(
             "{}  |  {}  |  {}",
             fill(t(lang, Msg::SettingsStatsClips), s.clips),
             fill(t(lang, Msg::SettingsStatsPinned), s.pinned),
+            fill(t(lang, Msg::SettingsStatsFavorites), s.favorites)
+        );
+        let sizes = format!(
+            "{}  |  {}  |  {}",
+            t(lang, Msg::SettingsStatsDb).replace("{n}", &data::format_bytes(s.db_bytes)),
+            t(lang, Msg::SettingsStatsBlobs).replace("{n}", &data::format_bytes(s.blob_bytes)),
             fill(t(lang, Msg::SettingsStatsMb), mb)
         );
+        let kinds = s
+            .by_kind
+            .iter()
+            .map(|k| format!("{} {}", t(lang, kind_msg(k.kind)), k.count))
+            .collect::<Vec<_>>()
+            .join("  |  ");
+        let line = [counts, sizes, kinds]
+            .into_iter()
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
         h.win.set_stats_text(line.into());
         let rows = model::skip_rows(&s.skipped);
         let skip = if rows.is_empty() {
@@ -587,6 +635,8 @@ fn create() -> Option<()> {
             lang,
             apps: model::AppList::default(),
             clear: ClearFlow::default(),
+            clear_counts: ClearCounts::default(),
+            cleanup: CleanupFlow::default(),
             saving: false,
             app_rows,
             kind_rows,
@@ -645,6 +695,142 @@ fn open_picker() {
     if started.is_err() {
         with_host(|h| h.win.set_picker_loading(false));
     }
+}
+
+/// "Clear history...": counts both choices on the worker, then asks.
+fn clear_ask() {
+    let Some(poster) = with_host(|h| h.poster.clone()) else {
+        return;
+    };
+    poster.post_quiet(|app: &App| {
+        let keeping = app.count_clearable(&Caller::Ui, true);
+        let everything = app.count_clearable(&Caller::Ui, false);
+        let counts = keeping
+            .and_then(|k| {
+                everything.map(|e| ClearCounts {
+                    keeping: k,
+                    everything: e,
+                })
+            })
+            .ok();
+        let _ = slint::invoke_from_event_loop(move || {
+            with_host(|h| match counts {
+                Some(c) => {
+                    h.clear_counts = c;
+                    h.clear.ask();
+                    h.win.set_clear_keep_pinned(true);
+                    h.show_clear_question(true);
+                    h.win.set_clear_open(true);
+                }
+                None => h.set_status(Some((
+                    t(h.lang, Msg::SettingsCleanupFailed).to_string(),
+                    true,
+                ))),
+            });
+        });
+    });
+}
+
+/// "Delete old clips...": checks the days, counts what would go on the worker, then asks.
+fn older_ask(days_text: SharedString) {
+    let Some(days) = data::parse_days(days_text.as_str()) else {
+        with_host(|h| {
+            h.set_status(Some((
+                t(h.lang, Msg::SettingsDaysInvalid).to_string(),
+                true,
+            )))
+        });
+        return;
+    };
+    let Some(poster) = with_host(|h| h.poster.clone()) else {
+        return;
+    };
+    poster.post_quiet(move |app: &App| {
+        let n = app.count_older_than(&Caller::Ui, days).ok();
+        let _ =
+            slint::invoke_from_event_loop(move || ask_cleanup(CleanupAction::OlderThan(days), n));
+    });
+}
+
+/// "Remove orphaned files...": counts them on the worker, then asks.
+fn orphans_ask() {
+    let Some(poster) = with_host(|h| h.poster.clone()) else {
+        return;
+    };
+    poster.post_quiet(|app: &App| {
+        let n = app.scan_orphans(&Caller::Ui).ok().map(|r| r.files);
+        let _ = slint::invoke_from_event_loop(move || ask_cleanup(CleanupAction::Orphans, n));
+    });
+}
+
+/// "Compact database...": names the current database size.
+fn compact_ask() {
+    let size =
+        with_host(|h| std::fs::metadata(h.data_dir.join("history.db")).map_or(0, |m| m.len()));
+    ask_cleanup(CleanupAction::Compact, size);
+}
+
+fn ask_cleanup(action: CleanupAction, shown: Option<u64>) {
+    with_host(|h| match shown {
+        Some(n) => h.open_cleanup(action, n),
+        None => h.set_status(Some((
+            t(h.lang, Msg::SettingsCleanupFailed).to_string(),
+            true,
+        ))),
+    });
+}
+
+/// The confirmed cleanup: runs on the worker and reports in the status line.
+fn cleanup_confirm() {
+    let Some((action, poster, data_dir)) = with_host(|h| {
+        let action = h.cleanup.confirm()?;
+        h.win.set_cleanup_open(false);
+        Some((action, h.poster.clone(), h.data_dir.clone()))
+    })
+    .flatten() else {
+        return;
+    };
+    // Measured here, on the UI thread: a quick OS call, and the worker has no OS access.
+    let free = sys::free_disk_bytes(&data_dir);
+    poster.post(move |app: &App| {
+        let ui = &Caller::Ui;
+        let outcome = match action {
+            CleanupAction::OlderThan(days) => app
+                .delete_older_than(ui, days)
+                .map(|n| (Msg::UiDeletedMany, n, 0)),
+            CleanupAction::Orphans => app
+                .sweep_orphan_blobs(ui)
+                .map(|r| (Msg::SettingsOrphansDone, r.files, r.bytes)),
+            CleanupAction::Compact => app
+                .compact_database(ui, free)
+                .map(|r| (Msg::SettingsCompactDone, r.bytes_before, r.bytes_after)),
+        };
+        let _ = slint::invoke_from_event_loop(move || {
+            with_host(|h| {
+                let lang = h.lang;
+                let msg = match outcome {
+                    Ok((Msg::SettingsOrphansDone, files, bytes)) => (
+                        fill(t(lang, Msg::SettingsOrphansDone), files)
+                            .replace("{b}", &data::format_bytes(bytes)),
+                        false,
+                    ),
+                    Ok((Msg::SettingsCompactDone, before, after)) => (
+                        t(lang, Msg::SettingsCompactDone)
+                            .replace("{n}", &data::format_bytes(before))
+                            .replace("{b}", &data::format_bytes(after)),
+                        false,
+                    ),
+                    Ok((done, n, _)) => (fill(t(lang, done), n), false),
+                    Err(darkclip_app::ApiError::InvalidArgument(
+                        "not enough free disk space" | "free disk space unknown",
+                    )) => (t(lang, Msg::SettingsCompactNoSpace).to_string(), true),
+                    Err(_) => (t(lang, Msg::SettingsCleanupFailed).to_string(), true),
+                };
+                h.set_status(Some(msg));
+            });
+            request_stats();
+        });
+    });
 }
 
 fn clear_history() {
@@ -757,11 +943,21 @@ fn connect(w: &SettingsWindow) {
     w.on_limits_cancel(|| {
         with_host(|h| h.win.set_limits_open(false));
     });
-    w.on_clear_ask(|| {
+    w.on_clear_ask(clear_ask);
+    w.on_clear_toggled(|keep| {
         with_host(|h| {
-            h.clear.ask();
-            h.win.set_clear_keep_pinned(true);
-            h.win.set_clear_open(true);
+            h.clear.set_keep_pinned(keep);
+            h.show_clear_question(keep);
+        });
+    });
+    w.on_older_ask(older_ask);
+    w.on_orphans_ask(orphans_ask);
+    w.on_compact_ask(compact_ask);
+    w.on_cleanup_confirm(cleanup_confirm);
+    w.on_cleanup_cancel(|| {
+        with_host(|h| {
+            h.cleanup.cancel();
+            h.win.set_cleanup_open(false);
         });
     });
     w.on_clear_confirm(clear_history);
@@ -783,6 +979,7 @@ fn connect(w: &SettingsWindow) {
     w.on_escape(|| {
         let closed = with_host(|h| {
             let open = h.clear.is_open()
+                || h.cleanup.is_open()
                 || h.apps.pending().is_some()
                 || h.win.get_limits_open()
                 || h.win.get_picker_open();

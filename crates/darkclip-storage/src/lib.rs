@@ -17,6 +17,7 @@ mod blobs;
 mod clips;
 mod db;
 mod error;
+mod maintenance;
 mod migrate;
 mod organize;
 mod retention;
@@ -30,6 +31,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub use error::StorageError;
+pub use maintenance::{CompactReport, OrphanReport};
 pub use organize::TagCount;
 pub use retention::RetentionReport;
 pub use search::{ClipSummary, Cursor, SearchQuery};
@@ -41,6 +43,11 @@ pub struct Storage {
     dir: PathBuf,
     mode: OpenMode,
     clock: Arc<dyn Clock>,
+    /// Note and tag changes not yet merged into the FTS index (F-20).
+    fts_dirty: u32,
+    /// Test hook: how many times the FTS index was merged.
+    #[cfg(test)]
+    optimize_runs: u32,
     /// Test hook: fail `upsert_clip` after blobs are written, before commit.
     #[cfg(test)]
     fail_before_commit: bool,

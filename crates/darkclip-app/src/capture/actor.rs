@@ -61,6 +61,9 @@ pub(super) struct Actor {
     /// F-14 rule 3: the last excluded-app skip, for a following ownerless flush.
     pub(super) excluded_recent: Option<ExcludedRecent>,
     pub(super) next_retention: Instant,
+    /// Clock time by which pending search-index changes must be merged: set when the first one
+    /// becomes pending, never pushed back by later evictions or retention runs (F-20).
+    pub(super) fts_merge_due: Option<Timestamp>,
     /// Earliest `expires_at` in storage (clock time); retention runs when it falls due so a
     /// masked clip does not outlive its TTL.
     pub(super) next_expiry: Option<Timestamp>,
@@ -99,18 +102,24 @@ impl Actor {
         }
         let _ = ready.send(Ok(()));
         self.run_retention();
+        // Words of clips evicted or edited before an unclean exit may still be in the index.
+        self.storage.optimize_fts_now();
         self.run(&rx);
     }
 
     fn run(&mut self, rx: &Receiver<Msg>) {
         loop {
-            let mut wake = self.next_retention.min(self.expiry_wake());
+            let mut wake = self
+                .next_retention
+                .min(self.expiry_wake())
+                .min(self.fts_wake());
             if let Some(p) = &self.pending {
                 wake = wake.min(p.due);
             }
             match rx.recv_timeout(wake.saturating_duration_since(Instant::now())) {
                 Ok(Msg::Signal(s)) => self.on_signal(s),
                 Ok(Msg::Cmd(ActorCommand::Shutdown { reply })) => {
+                    self.storage.optimize_fts_if_dirty();
                     self.monitor.stop();
                     let _ = reply.send(());
                     return;
@@ -131,9 +140,16 @@ impl Actor {
                     self.process(p);
                 }
             }
-            if self.next_retention <= now || self.expiry_due() {
+            let tick = self.next_retention <= now;
+            if tick || self.expiry_due() {
                 self.run_retention();
             }
+            if tick {
+                // Automatic evictions and note or tag edits are merged here (F-20), off the
+                // capture path.
+                self.storage.optimize_fts_if_dirty();
+            }
+            self.fts_housekeeping();
         }
     }
 
@@ -285,6 +301,18 @@ impl Actor {
                     self.storage
                         .clear_history(keep_pinned)
                         .map_err(|e| map_storage(&e))
+                };
+                let _ = reply.send(r);
+            }
+            ActorCommand::Maintenance {
+                op,
+                deadline,
+                reply,
+            } => {
+                let r = if late(deadline) {
+                    Err(ApiError::Internal)
+                } else {
+                    self.maintain(op)
                 };
                 let _ = reply.send(r);
             }

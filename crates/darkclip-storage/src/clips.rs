@@ -205,6 +205,8 @@ impl Storage {
         let expires = clip.expires_at.map(|t| t.0);
 
         let mut stale = Vec::new();
+        let masked_recapture =
+            existing.is_some() && clip.sensitivity.level == SensitivityLevel::Masked;
         if let Some(e) = &existing {
             stale.extend(e.old_blobs.iter().copied());
             tx.execute("DELETE FROM representations WHERE clip_id = ?1", [&id_s])?;
@@ -313,6 +315,11 @@ impl Storage {
             return Err(StorageError::Io(std::io::ErrorKind::Interrupted));
         }
         tx.commit()?;
+        if masked_recapture {
+            // The former plain body, note and tags must leave the index and the file now.
+            self.fts_merge();
+            crate::retention::checkpoint(&self.conn);
+        }
 
         // After commit: unlink blobs the old representations or thumbnail used and
         // nothing references any more (under BEGIN IMMEDIATE). A failure here only

@@ -220,6 +220,25 @@ All rows **untested** until the owner runs them (agents never click, type, take 
 | History: edit a clip, change nothing, Save as new clip | The editor closes, "Already in history" shows and the original clip is selected; its time and counts did not change | **untested** |
 | Tray > Private mode on, then edit and save in the history window | The editor stays open with "Not saved: private mode is on."; with Pause instead, the save works | **untested** |
 
+## Windows: data management (Task 411)
+
+All rows **untested** until the owner runs them (agents never click, type, take screenshots or write the real clipboard, GC-19). Use a scratch history (`--seed-demo-clips 200 --data-dir <empty folder>`, then `--data-dir <same folder>`), never the real one.
+
+| Row | Expected | Result |
+|---|---|---|
+| Settings > History | The storage lines show clips, pinned, favorites, database size, file size and clips per kind (in the language chosen) | **untested** |
+| Pin one clip and favorite another (history window), Clear history... with the box ticked | The dialog names the number of clips that will go (all except the pinned and favorite ones); after Delete the two stay | **untested** |
+| Clear history..., untick "Keep pinned and favorite clips" | The number in the question changes to the total; after Delete the history is empty | **untested** |
+| Type 30 in "older than", Delete old clips... | The dialog names a count; clips copied less than 30 days ago, pinned clips and favorites stay (seeded demo clips are all recent: the count is 0) | **untested** |
+| Type 0, abc or an empty value, Delete old clips... | A red note asks for 1 to 3650 days; no dialog | **untested** |
+| Remove orphaned files... on a clean folder | The dialog says 0 files; Delete reports 0 files removed | **untested** |
+| With the app closed put an unreferenced 64-letter hex file in `blobs\ab\`, start, Remove orphaned files... | The dialog counts it (the startup sweep may already have removed it: then 0); the status line reports files removed and the space freed | **untested** |
+| Compact database... after deleting many clips | The dialog names the database size; afterwards the status shows the size before and after; search still finds the remaining clips | **untested** |
+| Fill the disk volume of the data folder so that free space is below twice the database size, Compact database... | The status says there is not enough free disk space; nothing changes | **untested** |
+| Delete a clip whose text had a unique word, then search for the word and look in `history.db` with a hex viewer (app closed) | Not found in the list; the word is not in `history.db` or `history.db-wal` | **untested** |
+| Vietnamese interface, open the History section and each dialog | All labels, questions and results are Vietnamese | **untested** |
+| Esc with a cleanup dialog open | The dialog closes without deleting | **untested** |
+
 ## macOS
 
 All rows **untested** (no hardware, Q-04).

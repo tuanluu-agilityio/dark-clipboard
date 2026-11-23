@@ -67,6 +67,10 @@ With `--data-dir <folder>` the history, log and settings all live in that folder
 
 Select a text clip and press `Ctrl+T` (popup or history window) or use "Copy as...": pick a transform (trim, line endings, upper or lower case, JSON pretty or minify, URL or Base64 encode or decode, HTML to text), check the result in the preview and press Copy. The result goes to the clipboard as Dark Clipboard's own write; nothing is stored. In the history window, "Edit..." (`Ctrl+E`) opens a copy of a text clip in an editor and "Save as new clip" stores the edit as a new clip; the original never changes. A text that looks like a secret follows your sensitive-content setting (dropped by default). Masked clips, images and files have neither. All of this runs locally.
 
+### Data management
+
+Settings > History shows what is stored (clips, pinned, favorites, database size, blob size, clips per kind) and has cleanup tools. Each one asks first and names how many clips or files it will touch: **Clear history** (keeps pinned clips and favorites unless you untick the box), **Delete old clips** (older than N days; pinned clips and favorites are kept), **Remove orphaned files** (data files no clip uses; reports how many and how much space it freed) and **Compact database** (needs free disk space of twice the database size, otherwise it refuses). Deletions are real: when you delete (a clip, Clear history, Delete old clips, Compact), the search index is merged and the write-ahead log truncated at once, so the deleted words are gone from the database file as well. Clips removed automatically by the retention limits leave the database file within about 10 minutes (the next periodic merge, or at shutdown). Everything runs locally.
+
 ### Known limits
 
 See "Known issues" in the [CHANGELOG](CHANGELOG.md). In short: the Windows build has no console, so `--toggle`, `--quit` and `--help` do not set a shell exit code interactively; a popup opened from the tray only copies; the context menu in the history window is mouse only; an Explorer restart may remove the tray icon; GNOME on Wayland may not support background capture later.
