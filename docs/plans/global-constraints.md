@@ -14,7 +14,7 @@ Every task package links here. A reviewer treats a violation as **blocking**.
 
 - GC-06 Never log, print, `Debug`-format, or include in error messages: clip content, previews, file paths from `files` clips, search queries, window titles. Model types implement `Debug` manually. No `println!`, `eprintln!`, `dbg!` or `log`/`tracing` macros in any file under `darkclip-app/src/capture/`, `darkclip-core/src/sensitive/`, `darkclip-core/src/policy.rs` (check enforced). (Changed by D-044, 2026-11-23: was `darkclip-app/src/capture.rs` before Task 200.)
 - GC-07 The mandatory marker list (`docs/security/privacy-design.md` §3) is never made configurable. No flag, setting, env var or debug mode bypasses it.
-- GC-08 No network access in any crate in P0/P1. No telemetry. No crash upload.
+- GC-08 No network access in any crate in P0/P1. No telemetry. No crash upload. (Changed by D-057, 2026-11-23: the only exception before 0.1.0 is the opt-in update check of Task 412, in `apps/desktop` only, off by default; crates under `crates/` stay network-free.)
 - GC-09 Test data is synthetic. Secret-shaped test strings are assembled at runtime (`concat!`/`format!`) so secret scanners do not fire (Darkshot practice).
 - GC-19 Agents work on the owner's live desktop: never take screenshots or screen captures, never read other windows, never simulate keyboard or mouse input, never write the real clipboard, and never run the app against the default data dir. UI checks are owner manual rows. (Added by D-048, 2026-11-23, after a screen capture in Task 204 caught part of another window.)
 

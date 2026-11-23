@@ -67,6 +67,22 @@ Phase 2 complete 2026-11-23 (Bitwarden/1Password rows n/a on the test machine; s
 
 Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; see activeContext).
 
+## Phase 5: P1 organization, hardening (Windows scope first, D-057)
+
+| Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
+|---|---|---|---|---|---|---|---|---|
+| 401 Migration 2 | task/401-migration-2 | specialist | opus | in progress | | | | |
+| 402 Organization API | task/402-organization-api | builder | sonnet | pending | | | | |
+| 404 Transforms + edit copy | task/404-transforms-edit | builder | sonnet | pending | | | | |
+| 411 Data management | task/411-data-management | builder | sonnet | pending | | | | |
+| 403 Organization UI | task/403-organization-ui | builder | sonnet | pending | | | | |
+| 405 Backup / export / import | task/405-backup-export | specialist | opus | pending | | | | |
+| 406 Fuzzing | task/406-fuzzing | specialist | opus | pending | | | | |
+| 412 Update check | task/412-update-check | builder | sonnet | pending | | | | |
+| 407 Security re-review | task/407-security-review | security-reviewer | opus | pending | | | | |
+| 409 Licence | — | — | — | done in Task 201 (D-045) | | | | |
+| 408, 410 Release workflow, 0.1.0 docs | — | — | — | waiting for the owner (release request; Phase 4) | | | | |
+
 ## Totals by model
 
 | Model | Tokens |
