@@ -18,8 +18,9 @@ pub struct CompactReport {
     pub bytes_after: u64,
 }
 
-/// Note and tag changes before the index is merged (batched, never per keystroke).
-const FTS_BATCH: u32 = 20;
+/// Pending changes (notes, tags, automatic evictions) before the index is merged (batched,
+/// never per keystroke or per capture).
+pub(crate) const FTS_BATCH: u32 = 100;
 
 /// Merges the contentless FTS5 index so the tokens of deleted rows leave `clips_fts_data`
 /// (F-20). Best-effort: a failure leaves the rows deleted and the next merge retries.
@@ -65,6 +66,16 @@ impl Storage {
         self.fts_dirty = 0;
     }
 
+    /// Merges the index and truncates the WAL regardless of the pending count (startup).
+    pub fn optimize_fts_now(&mut self) {
+        if self.ensure_writable().is_err() {
+            return;
+        }
+        self.fts_merge();
+        checkpoint(&self.conn);
+        self.fts_dirty = 0;
+    }
+
     /// Blob files nothing references: how many and how many bytes (nothing is removed).
     pub fn scan_orphans(&self) -> Result<OrphanReport, StorageError> {
         let c = blobs::scan(&self.conn, &self.dir)?;
@@ -86,19 +97,27 @@ impl Storage {
     }
 
     /// `VACUUM` on the writer. Refused with `InsufficientSpace` when `free_bytes` (the free
-    /// disk space, measured by the caller: this crate has no OS access) is below the size of
-    /// the database file. The index is merged first so leftover tokens go too.
+    /// disk space, measured by the caller: this crate has no OS access) is below twice the
+    /// size of the database file (VACUUM writes a full copy next to it). The index is merged first so leftover tokens go too.
     pub fn compact(&mut self, free_bytes: u64) -> Result<CompactReport, StorageError> {
         self.ensure_writable()?;
         let path = self.dir.join(db::DB_FILE);
         let bytes_before = file_len(&path);
-        if free_bytes < bytes_before {
+        if free_bytes < bytes_before.saturating_mul(2) {
             return Err(StorageError::InsufficientSpace);
         }
         self.fts_merge();
         self.fts_dirty = 0;
         checkpoint(&self.conn);
-        self.conn.execute_batch("VACUUM")?;
+        // VACUUM must not park its working copy in the system temp folder (a plain copy of the
+        // history outside the data folder): keep temporary files in memory meanwhile.
+        let prev: i64 = self
+            .conn
+            .pragma_query_value(None, "temp_store", |r| r.get(0))?;
+        self.conn.pragma_update(None, "temp_store", "MEMORY")?;
+        let vacuum = self.conn.execute_batch("VACUUM");
+        let _ = self.conn.pragma_update(None, "temp_store", prev);
+        vacuum?;
         checkpoint(&self.conn);
         Ok(CompactReport {
             bytes_before,
@@ -374,9 +393,13 @@ mod tests {
     }
 
     fn evictable_store(dir: &Path) -> (Storage, darkclip_core::RetentionPolicy) {
-        let mut s = open(dir, clock());
+        let c = clock();
+        let mut s = open(dir, c.clone());
+        // Distinct times: the oldest clip is the one evicted.
         ins(&mut s, text_clip(&format!("oldest {TOKEN}")));
+        set(&c, T0 + 1000);
         ins(&mut s, text_clip("middle"));
+        set(&c, T0 + 2000);
         ins(&mut s, text_clip("newest"));
         let p = darkclip_core::RetentionPolicy {
             max_items: 2,
@@ -433,7 +456,16 @@ mod tests {
         ins(&mut s, text_clip("b"));
         ins(&mut s, text_clip("c"));
         let runs = s.optimize_runs;
-        s.delete_clip(&a).unwrap();
+        let _ = a;
+        ins(&mut s, text_clip("newest"));
+        let p = darkclip_core::RetentionPolicy {
+            max_items: 2,
+            max_age_days: 0,
+            max_storage_mb: 0,
+            ..darkclip_core::RetentionPolicy::default()
+        };
+        s.apply_retention(&p).unwrap();
+        s.optimize_fts_if_dirty();
         assert_eq!(s.optimize_runs, runs + 1);
         s.clear_history(false).unwrap();
         assert_eq!(s.optimize_runs, runs + 2);
@@ -444,7 +476,8 @@ mod tests {
         use darkclip_core::{SensitiveCategory, Sensitivity, SensitivityLevel, Timestamp};
         let tmp = tempfile::tempdir().unwrap();
         let mut s = open(tmp.path(), clock());
-        let text = format!("plain body {TOKEN}");
+        // Over 64 KiB: the body lives in a blob file, so only the index and preview hold the word.
+        let text = format!("plain body {TOKEN} {}", "x".repeat(70 * 1024));
         let id = ins(&mut s, text_clip(&text));
         assert!(contains(&db_bytes_on_disk(tmp.path()), TOKEN));
         let mut m = text_clip(&text);

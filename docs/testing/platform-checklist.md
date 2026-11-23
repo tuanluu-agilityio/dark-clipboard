@@ -234,7 +234,7 @@ All rows **untested** until the owner runs them (agents never click, type, take 
 | Remove orphaned files... on a clean folder | The dialog says 0 files; Delete reports 0 files removed | **untested** |
 | With the app closed put an unreferenced 64-letter hex file in `blobs\ab\`, start, Remove orphaned files... | The dialog counts it (the startup sweep may already have removed it: then 0); the status line reports files removed and the space freed | **untested** |
 | Compact database... after deleting many clips | The dialog names the database size; afterwards the status shows the size before and after; search still finds the remaining clips | **untested** |
-| Fill the disk volume of the data folder so that free space is below the database size, Compact database... | The status says there is not enough free disk space; nothing changes | **untested** |
+| Fill the disk volume of the data folder so that free space is below twice the database size, Compact database... | The status says there is not enough free disk space; nothing changes | **untested** |
 | Delete a clip whose text had a unique word, then search for the word and look in `history.db` with a hex viewer (app closed) | Not found in the list; the word is not in `history.db` or `history.db-wal` | **untested** |
 | Vietnamese interface, open the History section and each dialog | All labels, questions and results are Vietnamese | **untested** |
 | Esc with a cleanup dialog open | The dialog closes without deleting | **untested** |

@@ -370,7 +370,6 @@ impl Host {
         }
     }
 
-    /// Cancels every open question (Esc, closing).
     /// The clear dialog's question, naming how many clips the current checkbox state deletes.
     fn show_clear_question(&self, keep_pinned: bool) {
         let n = self.clear_counts.for_choice(keep_pinned);
@@ -392,6 +391,7 @@ impl Host {
         }
     }
 
+    /// Cancels every open question (Esc, closing).
     fn close_overlays(&mut self) {
         self.apps.cancel_remove();
         self.clear.cancel();

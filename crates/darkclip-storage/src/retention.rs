@@ -168,17 +168,34 @@ pub(crate) fn checkpoint(conn: &Connection) {
 
 impl Storage {
     /// Post-commit cleanup shared by every deletion path.
-    fn finish_delete(&mut self, d: &Deleted, force_checkpoint: bool) {
+    /// `user`: a deletion the user asked for merges the search index and truncates the WAL at
+    /// once (F-20). Automatic evictions only mark the index dirty: a full merge costs 100 ms
+    /// or more at 10k clips and would run after every capture; the actor merges on its tick.
+    fn finish_delete(&mut self, d: &Deleted, force_checkpoint: bool, user: bool) {
         if !d.shas.is_empty() {
             let _ = blobs::remove_unreferenced(&mut self.conn, &self.dir, &d.shas);
         }
         // Contentless FTS5 keeps the tokens of deleted rows until its segments merge, and
         // neither `secure_delete` nor `VACUUM` removes them (F-20): merge, then truncate the
         // WAL so the old pages are gone from both files.
-        if d.count > 0 {
-            self.fts_merge();
+        if user {
+            if d.count > 0 {
+                self.fts_merge();
+            }
+            if force_checkpoint || d.count > 0 {
+                checkpoint(&self.conn);
+            }
+            return;
         }
-        if force_checkpoint || d.count > 0 {
+        if d.count > 0 {
+            self.fts_dirty = self
+                .fts_dirty
+                .saturating_add(u32::try_from(d.count).unwrap_or(u32::MAX));
+            if self.fts_dirty >= crate::maintenance::FTS_BATCH {
+                self.optimize_fts_if_dirty();
+            }
+        }
+        if force_checkpoint || d.count > CHECKPOINT_THRESHOLD {
             checkpoint(&self.conn);
         }
     }
@@ -193,7 +210,7 @@ impl Storage {
             return Err(StorageError::NotFound);
         }
         tx.commit()?;
-        self.finish_delete(&d, false);
+        self.finish_delete(&d, false, true);
         Ok(())
     }
 
@@ -207,7 +224,7 @@ impl Storage {
         let ids = select_ids(&tx, &clearable_sql(keep_pinned), [])?;
         let d = delete_ids(&tx, &ids)?;
         tx.commit()?;
-        self.finish_delete(&d, true);
+        self.finish_delete(&d, true, true);
         Ok(d.count)
     }
 
@@ -267,7 +284,7 @@ impl Storage {
             }
         }
         tx.commit()?;
-        self.finish_delete(&all, false);
+        self.finish_delete(&all, false, false);
         let mut deleted_total = all.count;
         let mut freed = all.bytes;
 
@@ -310,7 +327,7 @@ impl Storage {
                 report.evicted_size += d.count;
                 freed = freed.saturating_add(d.bytes);
                 deleted_total += d.count;
-                self.finish_delete(&d, false);
+                self.finish_delete(&d, false, false);
             }
         }
         report.bytes_freed = freed;
@@ -347,7 +364,7 @@ impl Storage {
         let ids = select_ids(&tx, &older_than_sql("id"), [cut])?;
         let d = delete_ids(&tx, &ids)?;
         tx.commit()?;
-        self.finish_delete(&d, true);
+        self.finish_delete(&d, true, true);
         Ok(d.count)
     }
 

@@ -99,6 +99,8 @@ impl Actor {
         }
         let _ = ready.send(Ok(()));
         self.run_retention();
+        // Words of clips evicted or edited before an unclean exit may still be in the index.
+        self.storage.optimize_fts_now();
         self.run(&rx);
     }
 
@@ -132,8 +134,14 @@ impl Actor {
                     self.process(p);
                 }
             }
-            if self.next_retention <= now || self.expiry_due() {
+            let tick = self.next_retention <= now;
+            if tick || self.expiry_due() {
                 self.run_retention();
+            }
+            if tick {
+                // Automatic evictions and note or tag edits are merged here (F-20), off the
+                // capture path.
+                self.storage.optimize_fts_if_dirty();
             }
         }
     }
