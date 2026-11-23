@@ -93,6 +93,14 @@ pub enum ActorCommand {
     },
 }
 
+/// What saving an edited text produced (Task 404).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveOutcome {
+    Saved(ClipId),
+    /// Capture's own rules refused it (a secret under "drop", a disabled kind); nothing stored.
+    Dropped(darkclip_core::policy::SkipReason),
+}
+
 /// An organisation mutation (Task 402). Names and notes are user text, so the manual `Debug`
 /// below prints the variant name only (the derived `Debug` of `ActorCommand` uses it).
 pub enum OrganizeOp {

@@ -18,6 +18,7 @@ pub mod preview;
 pub mod redact;
 pub mod sensitive;
 pub mod time;
+pub mod transform;
 
 pub use classify::{classify, Classified, RawRepresentation};
 pub use error::CoreError;
