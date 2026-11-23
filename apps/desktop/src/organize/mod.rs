@@ -20,3 +20,17 @@ pub fn fill_name(template: &str, name: &str, n: u64) -> String {
         .replace("{name}", name)
         .replace("{n}", &n.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_name_containing_a_placeholder_stays_literal() {
+        assert_eq!(
+            fill_name("Add {n} clips to \"{name}\"?", "Top {n}", 3),
+            "Add 3 clips to \"Top {n}\"?"
+        );
+        assert_eq!(fill_name("{name} {n}", "{name}", 2), "{name} 2");
+    }
+}

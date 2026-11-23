@@ -181,6 +181,12 @@ impl BulkPlan {
         self.jobs.len()
     }
 
+    /// False for "remove from collection": the marked clips that are not in it are counted
+    /// but unchanged, so the result must not claim a number.
+    pub fn count_is_exact(&self) -> bool {
+        true
+    }
+
     pub fn skipped_masked(&self) -> usize {
         self.skipped_masked
     }
@@ -336,6 +342,21 @@ mod tests {
         assert_eq!(favorite_target(&[]), None);
         // Only masked non-favorites: nothing can change.
         assert_eq!(favorite_target(&[target(1, true, false, &[])]), None);
+        // An unmasked favorite next to a masked non-favorite: the eligible clip is unfavorited.
+        let ts = [target(1, false, true, &[]), target(2, true, false, &[])];
+        assert_eq!(favorite_target(&ts), Some(false));
+        let p = BulkPlan::new(BulkOp::Favorite(false), &ts).unwrap();
+        assert_eq!(p.count(), 1);
+    }
+
+    #[test]
+    fn only_remove_from_collection_has_an_inexact_count() {
+        let (id, name) = col();
+        let ts = [target(1, false, false, &[])];
+        let rm = BulkPlan::new(BulkOp::RemoveFromCollection { id, name }, &ts).unwrap();
+        assert!(!rm.count_is_exact());
+        assert!(BulkPlan::new(add_col(), &ts).unwrap().count_is_exact());
+        assert!(BulkPlan::new(BulkOp::Favorite(true), &ts).unwrap().count_is_exact());
     }
 
     #[test]
@@ -373,7 +394,7 @@ mod tests {
         assert_eq!(p.skipped_masked(), 2);
         assert_eq!(
             p.skipped_text(Lang::En).as_deref(),
-            Some("2 masked clips were skipped.")
+            Some("Masked clips skipped: 2")
         );
     }
 
@@ -420,7 +441,7 @@ mod tests {
         assert_eq!(p.skipped_full(), 1);
         assert_eq!(
             p.skipped_text(Lang::En).as_deref(),
-            Some("1 clips already have 20 tags.")
+            Some("Clips already at 20 tags, skipped: 1")
         );
     }
 
@@ -465,9 +486,10 @@ mod tests {
             "Remove 2 clips from Favorites?"
         );
         let rm = BulkPlan::new(BulkOp::RemoveFromCollection { id, name }, &ts).unwrap();
-        assert!(rm
-            .confirm_text(Lang::En)
-            .starts_with("Remove 3 clips from \"Work\""));
+        assert_eq!(
+            rm.confirm_text(Lang::En),
+            "Remove the 3 marked clips from \"Work\"? Clips not in it are unchanged."
+        );
         let tag = BulkPlan::new(BulkOp::AddTag("x".into()), &ts).unwrap();
         assert_eq!(tag.confirm_text(Lang::En), "Add the tag \"x\" to 2 clips?");
     }
