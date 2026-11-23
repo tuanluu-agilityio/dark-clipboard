@@ -123,11 +123,11 @@ fn tag_names(s: &Storage) -> Vec<(String, u64)> {
 fn migration_1_to_2_keeps_10k_clips_and_creates_favorites() {
     let tmp = tempfile::tempdir().unwrap();
     v1_store(tmp.path(), CLIPS_10K);
-    let bak = tmp.path().join("history.db.pre-v2.bak");
+    let bak = tmp.path().join("history.db.pre-v3.bak");
     assert!(!bak.exists());
 
     let s = open(tmp.path(), clock());
-    assert_eq!(s.schema_version().unwrap(), 2);
+    assert_eq!(s.schema_version().unwrap(), 3);
     assert_eq!(count(&s, "SELECT count(*) FROM clips"), CLIPS_10K);
     assert_eq!(count(&s, "SELECT count(*) FROM representations"), CLIPS_10K);
     assert_eq!(count(&s, "SELECT count(*) FROM clip_rowid"), CLIPS_10K);
@@ -165,7 +165,7 @@ fn migration_1_to_2_keeps_10k_clips_and_creates_favorites() {
     let fresh = tempfile::tempdir().unwrap();
     let f = open(fresh.path(), clock());
     favorites(&f);
-    assert!(!fresh.path().join("history.db.pre-v2.bak").exists());
+    assert!(!fresh.path().join("history.db.pre-v3.bak").exists());
 }
 
 #[test]
@@ -223,7 +223,7 @@ fn migration_2_failure_mid_transaction_keeps_v1_and_backup() {
         }
         // A later run with the real migration succeeds from the intact version 1.
         let s = open(tmp.path(), clock());
-        assert_eq!(s.schema_version().unwrap(), 2);
+        assert_eq!(s.schema_version().unwrap(), 3);
         assert_eq!(count(&s, "SELECT count(*) FROM clips"), CLIPS_10K);
         favorites(&s);
     }

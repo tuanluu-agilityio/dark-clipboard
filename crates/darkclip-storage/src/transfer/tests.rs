@@ -332,3 +332,132 @@ fn import_created_at_is_clamped_to_now() {
     );
     let _ = blobs::hex(&[0; 32]);
 }
+
+// ---- Task 405 security review ----
+
+#[test]
+fn a_no_export_clip_is_never_exported_and_the_flag_is_sticky() {
+    let (tmp, mut s, f, out) = made();
+    let mut n = text_clip("the source said: no cloud");
+    n.no_export = true;
+    let flagged = ins(&mut s, n);
+    assert!(s.is_no_export(&flagged).unwrap());
+    assert!(!s.is_no_export(&f.text).unwrap());
+    // A later copy of the same content without the marker does not clear it.
+    let mut again = text_clip("the source said: no cloud");
+    again.no_export = false;
+    s.upsert_clip(&again).unwrap();
+    assert!(s.is_no_export(&flagged).unwrap());
+    // A marked copy of an unflagged clip sets it.
+    let mut marked = text_clip("export me please");
+    marked.no_export = true;
+    s.upsert_clip(&marked).unwrap();
+    assert!(s.is_no_export(&f.text).unwrap());
+    let r = s
+        .write_export(&[flagged, f.text, f.image], &f.col, &out, "0.0.1")
+        .unwrap();
+    assert_eq!((r.exported, r.excluded_sensitive), (1, 2));
+    let a = ExportArchive::open(&out, ArchiveLimits::EXPORT).unwrap();
+    assert_eq!(a.clips().len(), 1);
+    assert_eq!(a.clips()[0].id, f.image);
+    let _ = tmp;
+}
+
+#[test]
+fn an_export_its_own_import_would_refuse_is_not_written() {
+    let (_tmp, s, f, out) = made();
+    for limits in [
+        ArchiveLimits {
+            max_entries: 2,
+            ..ArchiveLimits::EXPORT
+        },
+        ArchiveLimits {
+            max_total_bytes: 32,
+            ..ArchiveLimits::EXPORT
+        },
+        ArchiveLimits {
+            max_json_bytes: 64,
+            ..ArchiveLimits::EXPORT
+        },
+    ] {
+        assert_eq!(
+            s.write_export_with(&[f.text, f.image], &f.col, &out, "0.0.1", limits),
+            Err(StorageError::Archive(ArchiveError::TooLargeToWrite)),
+            "{limits:?}"
+        );
+        assert!(!out.exists());
+    }
+}
+
+#[test]
+fn a_shared_blob_counts_once_against_the_total() {
+    let (_tmp, mut s, f, out) = made();
+    // A second clip with the same picture: one blob in the file, read twice by an import.
+    let mut img = raw(Mime::ImagePng, &f.png);
+    img.width = Some(1);
+    img.height = Some(1);
+    let twin = ins(
+        &mut s,
+        new_clip(vec![raw(Mime::TextPlain, b"caption"), img]),
+    );
+    s.write_export(&[f.image, twin], &f.col, &out, "0.0.1")
+        .unwrap();
+    let json_len = entries_of(&out)
+        .into_iter()
+        .find(|(n, _)| n == "export.json")
+        .unwrap()
+        .1
+        .len() as u64;
+    let limits = ArchiveLimits {
+        max_total_bytes: json_len + f.png.len() as u64 + 16,
+        ..ArchiveLimits::EXPORT
+    };
+    let mut a = ExportArchive::open(&out, limits).unwrap();
+    let sha = a.clips()[0].representations[0].blob_sha256.unwrap();
+    assert_eq!(a.blob_size(&sha), Some(f.png.len() as u64));
+    assert_eq!(a.blob_size(&[1; 32]), None);
+    assert_eq!(a.blob(&sha).unwrap(), f.png);
+    assert_eq!(
+        a.blob(&sha).unwrap(),
+        f.png,
+        "a second read is not counted again"
+    );
+}
+
+#[test]
+fn migration_3_adds_the_no_export_flag_to_a_v2_store() {
+    let tmp = tempfile::tempdir().unwrap();
+    let id = "01900000-0000-7000-8000-000000000002";
+    {
+        let v2 = &crate::migrate::MIGRATIONS[..2];
+        let s = crate::db::open_with(tmp.path(), crate::OpenMode::ReadWrite, clock(), v2).unwrap();
+        assert_eq!(s.schema_version().unwrap(), 2);
+        s.conn
+            .execute(
+                "INSERT INTO clips (id, kind, preview, content_hash, size_bytes, created_at, \
+                 last_copied_at) VALUES (?1, 'text', 'kept', ?2, 4, ?3, ?3)",
+                rusqlite::params![id, [5u8; 32], T0],
+            )
+            .unwrap();
+        s.conn
+            .execute_batch(
+                "INSERT INTO representations (clip_id, ord, mime, size_bytes, inline_data) \
+                 SELECT id, 0, 'text/plain;charset=utf-8', 4, CAST('kept' AS BLOB) FROM clips; \
+                 INSERT INTO clip_rowid (clip_id) SELECT id FROM clips;",
+            )
+            .unwrap();
+    }
+    let s = open(tmp.path(), clock());
+    assert_eq!(s.schema_version().unwrap(), 3);
+    assert!(tmp.path().join("history.db.pre-v3.bak").is_file());
+    let cid = ClipId::parse(id).unwrap();
+    assert!(
+        !s.is_no_export(&cid).unwrap(),
+        "clips from before carry no flag"
+    );
+    assert_eq!(s.read_representation(&cid, 0).unwrap(), b"kept");
+    drop(s);
+    let s = open(tmp.path(), clock());
+    assert!(!tmp.path().join("history.db.pre-v3.bak").exists());
+    assert_eq!(s.schema_version().unwrap(), 3);
+}

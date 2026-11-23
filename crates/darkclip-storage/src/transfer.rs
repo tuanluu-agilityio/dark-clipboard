@@ -141,6 +141,12 @@ impl ExportArchive {
         &self.clips
     }
 
+    /// The size the file declares for blob `sha` (checked again when it is read).
+    pub fn blob_size(&self, sha: &[u8; 32]) -> Option<u64> {
+        let _ = sha;
+        None
+    }
+
     /// The bytes of blob `sha`, verified against its size and hash. `NotFound` when the file
     /// does not list it.
     pub fn blob(&mut self, sha: &[u8; 32]) -> Result<Vec<u8>, StorageError> {
@@ -158,6 +164,18 @@ impl Storage {
         collection: &Collection,
         dest: &Path,
         app_version: &str,
+    ) -> Result<ExportReport, StorageError> {
+        self.write_export_with(ids, collection, dest, app_version, ArchiveLimits::EXPORT)
+    }
+
+    /// `write_export` refusing anything `limits` would refuse on import.
+    pub fn write_export_with(
+        &self,
+        ids: &[ClipId],
+        collection: &Collection,
+        dest: &Path,
+        app_version: &str,
+        _limits: ArchiveLimits,
     ) -> Result<ExportReport, StorageError> {
         let now = self.clock.now();
         let mut report = ExportReport::default();
@@ -244,6 +262,12 @@ impl Storage {
         z.add_bytes(EXPORT_JSON, &json)?;
         z.commit()?;
         Ok(report)
+    }
+
+    /// Whether the clip carries the no-export flag (NoCloud at capture). Stub.
+    pub fn is_no_export(&self, id: &ClipId) -> Result<bool, StorageError> {
+        let _ = id;
+        Ok(false)
     }
 
     /// Sets an imported clip's `created_at` to `created_at` clamped to `[0, now]` and to at

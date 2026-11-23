@@ -970,7 +970,7 @@ fn restore_confirm() {
         return;
     };
     run_transfer(
-        move |app| app.ui_restore(&Caller::Ui, &path),
+        move |app| app.ui_restore(&Caller::Ui, &path, None),
         |lang, r| fill(t(lang, Msg::TransferRestoreDone), r.clips),
     );
 }

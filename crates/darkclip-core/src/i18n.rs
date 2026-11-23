@@ -777,6 +777,14 @@ messages! {
         "This file is too large to open safely. Nothing was changed.",
         "Tệp này quá lớn để mở an toàn. Không có gì thay đổi."
     ),
+    TransferTooLargeToWrite => (
+        "This is more than Dark Clipboard could open again from one file. Nothing was written; export fewer clips.",
+        "Dữ liệu này nhiều hơn mức Dark Clipboard có thể mở lại từ một tệp. Không có gì được ghi; hãy xuất ít mục hơn."
+    ),
+    TransferNoSpace => (
+        "Not enough free disk space to restore this backup safely. Nothing was changed.",
+        "Không đủ dung lượng đĩa trống để khôi phục an toàn bản sao lưu này. Không có gì thay đổi."
+    ),
     TransferPrivate => (
         "Private mode is on: nothing is imported.",
         "Chế độ riêng tư đang bật: không nhập gì."

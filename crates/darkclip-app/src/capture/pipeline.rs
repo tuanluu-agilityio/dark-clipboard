@@ -429,6 +429,7 @@ impl Actor {
             sensitivity,
             expires_at,
             thumbnail_png,
+            no_export: false,
         })
     }
 

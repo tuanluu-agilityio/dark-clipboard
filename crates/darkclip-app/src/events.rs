@@ -81,6 +81,8 @@ impl std::error::Error for ApiError {}
 /// `InvalidArgument` texts of a refused backup or export file (Task 405).
 pub const FILE_TOO_LARGE: &str = "file too large";
 pub const FILE_INVALID: &str = "not a valid file";
+/// `InvalidArgument` text of a backup or export that its own reader would refuse.
+pub const FILE_TOO_LARGE_TO_WRITE: &str = "file would be too large";
 /// `InvalidArgument` text of an import refused in Private mode.
 pub const IMPORT_PRIVATE: &str = "private mode";
 

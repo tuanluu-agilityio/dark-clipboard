@@ -144,6 +144,17 @@ mod tests {
             )),
             Msg::TransferPrivate
         );
+        assert_eq!(
+            error_msg(&ApiError::InvalidArgument(
+                darkclip_app::events::FILE_TOO_LARGE_TO_WRITE
+            )),
+            Msg::TransferTooLargeToWrite
+        );
+        assert_eq!(
+            error_msg(&ApiError::InvalidArgument("not enough free disk space")),
+            Msg::TransferNoSpace
+        );
+        assert_eq!(error_msg(&ApiError::AppNotRunning), Msg::TransferFailed);
         for e in [ApiError::Storage, ApiError::Internal, ApiError::NotFound] {
             assert_eq!(error_msg(&e), Msg::TransferFailed);
         }
@@ -191,7 +202,7 @@ mod tests {
         };
         assert_eq!(
             export_text(Lang::En, &r),
-            "Exported 4 clips. Masked or sensitive clips left out: 2"
+            "Exported 4 clips. Masked, sensitive or no-export clips left out: 2"
         );
     }
 

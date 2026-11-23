@@ -209,6 +209,10 @@ struct RetentionHooks {
     /// preempted), before it looks at the clock.
     #[cfg(test)]
     stall_on_signal: Mutex<Option<(u64, Duration)>>,
+    /// Tests: every transfer command sleeps this long first (milliseconds), so a test can act
+    /// while one runs (Task 405).
+    #[cfg(test)]
+    transfer_stall_ms: std::sync::atomic::AtomicU64,
 }
 
 /// What the actor's queue carries.
@@ -320,6 +324,14 @@ impl CaptureHandle {
                 Err(ApiError::Internal)
             }
         }
+    }
+
+    /// Tests: makes every following transfer command sleep `ms` first.
+    #[cfg(test)]
+    pub(crate) fn set_transfer_stall(&self, ms: u64) {
+        self.hooks
+            .transfer_stall_ms
+            .store(ms, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn send(&self, cmd: ActorCommand) -> Result<(), ApiError> {

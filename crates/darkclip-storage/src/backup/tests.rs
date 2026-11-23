@@ -11,6 +11,8 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 const SECRET_TAIL: &str = "Zq9Xw8Vu7Ts6Rp5On4Ml3Kj2";
+/// Free disk space the tests report: plenty.
+const FREE: Option<u64> = Some(u64::MAX);
 
 fn secret() -> String {
     // Runtime-assembled (GC-09).
@@ -121,7 +123,13 @@ fn rebuild(
     edit(&mut e);
     if remanifest {
         e.retain(|(n, _)| n != "manifest.json");
-        let m = manifest(&e, 1, 2);
+        // The schema version the database itself carries (header bytes 60..64).
+        let schema = e
+            .iter()
+            .find(|(n, _)| n == "history.db")
+            .and_then(|(_, b)| b.get(60..64))
+            .map_or(3, |v| u32::from_be_bytes([v[0], v[1], v[2], v[3]]));
+        let m = manifest(&e, 1, schema);
         e.push(("manifest.json".into(), m));
     }
     write_zip(dst, &e);
@@ -198,7 +206,7 @@ fn backup_restore_round_trip_with_image_collections_and_tags() {
     assert_eq!(a.write_backup(&out, "0.0.1").unwrap().clips, 3);
     let dst = tmp.path().join("dst");
     let (mut b, old) = live(&dst);
-    let r = b.restore_backup(&out).unwrap();
+    let r = b.restore_backup(&out, FREE).unwrap();
     assert_eq!(r.clips, 3);
 
     assert_eq!(count(&b, "SELECT count(*) FROM clips"), 3);
@@ -261,7 +269,13 @@ fn backup_restore_round_trip_with_image_collections_and_tags() {
 #[test]
 fn backup_lists_every_file_and_leaves_no_partial_file() {
     let (tmp, out, f) = make_backup();
-    assert!(!tmp.path().join("history.dcbackup.partial").exists());
+    assert!(!tmp
+        .path()
+        .join(format!(
+            "history.dcbackup{}",
+            crate::archive::PARTIAL_SUFFIX
+        ))
+        .exists());
     let entries = entries_of(&out);
     let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();
     assert!(names.contains(&"manifest.json"));
@@ -277,7 +291,7 @@ fn backup_lists_every_file_and_leaves_no_partial_file() {
     )
     .unwrap();
     assert_eq!(m["format"], 1);
-    assert_eq!(m["schema_version"], 2);
+    assert_eq!(m["schema_version"], 3);
     assert_eq!(m["app_version"], "0.0.1");
     assert_eq!(m["clip_count"], 3);
     assert!(m["created_at"].as_str().unwrap().ends_with('Z'));
@@ -319,7 +333,7 @@ fn zip_slip_and_unknown_entries_are_refused_and_nothing_is_written() {
             e.push((bad.clone(), b"payload".to_vec()));
         });
         assert_eq!(
-            b.restore_backup(&crafted),
+            b.restore_backup(&crafted, FREE),
             Err(StorageError::Archive(ArchiveError::BadEntryName)),
             "{bad}"
         );
@@ -380,7 +394,7 @@ fn too_many_or_too_large_entries_are_refused() {
     ];
     for (limits, want) in cases {
         assert_eq!(
-            b.restore_backup_with(&out, limits),
+            b.restore_backup_with(&out, limits, FREE),
             Err(StorageError::Archive(want)),
             "{limits:?}"
         );
@@ -397,7 +411,7 @@ fn too_many_or_too_large_entries_are_refused() {
         ..base
     };
     assert_eq!(
-        b.restore_backup_with(&bomb, small),
+        b.restore_backup_with(&bomb, small, FREE),
         Err(StorageError::Archive(ArchiveError::TooLarge))
     );
     assert_live_unchanged(&b, &id);
@@ -405,7 +419,7 @@ fn too_many_or_too_large_entries_are_refused() {
     let junk = tmp.path().join("junk.dcbackup");
     std::fs::write(&junk, b"definitely not a zip").unwrap();
     assert_eq!(
-        b.restore_backup(&junk),
+        b.restore_backup(&junk, FREE),
         Err(StorageError::Archive(ArchiveError::NotAnArchive))
     );
     assert_live_unchanged(&b, &id);
@@ -424,7 +438,7 @@ fn checksum_or_manifest_mismatch_is_refused() {
         blob.1[0] ^= 0xff;
     });
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::Archive(ArchiveError::ChecksumMismatch))
     );
     assert_live_unchanged(&b, &id);
@@ -436,7 +450,7 @@ fn checksum_or_manifest_mismatch_is_refused() {
         db.1[last] ^= 0x01;
     });
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::Archive(ArchiveError::ChecksumMismatch))
     );
     assert_live_unchanged(&b, &id);
@@ -446,14 +460,14 @@ fn checksum_or_manifest_mismatch_is_refused() {
         e.push((format!("blobs/cd/cd{}", "1".repeat(62)), b"extra".to_vec()));
     });
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::Archive(ArchiveError::BadManifest))
     );
     rebuild(&out, &crafted, false, |e| {
         e.retain(|(n, _)| !n.starts_with("blobs/"));
     });
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::Archive(ArchiveError::BadManifest))
     );
     // No manifest, no database, a manifest that is not JSON, an unknown manifest field.
@@ -461,14 +475,14 @@ fn checksum_or_manifest_mismatch_is_refused() {
         e.retain(|(n, _)| n != "manifest.json")
     });
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::Archive(ArchiveError::NotAnArchive))
     );
     rebuild(&out, &crafted, true, |e| {
         e.retain(|(n, _)| n != "history.db")
     });
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::Archive(ArchiveError::BadManifest))
     );
     rebuild(&out, &crafted, false, |e| {
@@ -476,7 +490,7 @@ fn checksum_or_manifest_mismatch_is_refused() {
         m.1 = b"{ not json".to_vec();
     });
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::Archive(ArchiveError::BadManifest))
     );
     rebuild(&out, &crafted, false, |e| {
@@ -486,7 +500,7 @@ fn checksum_or_manifest_mismatch_is_refused() {
         m.1 = serde_json::to_vec(&v).unwrap();
     });
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::Archive(ArchiveError::BadManifest))
     );
     assert_live_unchanged(&b, &id);
@@ -508,16 +522,16 @@ fn newer_backup_is_refused_and_live_data_is_unchanged() {
     };
     with_manifest(2, 2);
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::Archive(ArchiveError::NewerFormat))
     );
     assert_live_unchanged(&b, &id);
-    with_manifest(1, 3);
+    with_manifest(1, 4);
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::SchemaTooNew {
-            found: 3,
-            supported: 2
+            found: 4,
+            supported: 3
         })
     );
     assert_live_unchanged(&b, &id);
@@ -533,10 +547,10 @@ fn newer_backup_is_refused_and_live_data_is_unchanged() {
         db.1 = std::fs::read(&tmpdb).unwrap();
     });
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::SchemaTooNew {
             found: 99,
-            supported: 2
+            supported: 3
         })
     );
     assert_live_unchanged(&b, &id);
@@ -546,32 +560,41 @@ fn newer_backup_is_refused_and_live_data_is_unchanged() {
 
 #[test]
 fn an_older_backup_is_migrated_on_restore() {
-    let (tmp, out, f) = make_backup();
+    let (tmp, out, _) = make_backup();
     let dst = tmp.path().join("dst");
     let (mut b, _) = live(&dst);
-    // A version-1 database (no organisation tables) is accepted and migrated.
+    // A genuine version-1 database (migration 1 only) with one clip.
+    let v1 = tmp.path().join("v1.db");
+    let id = "01900000-0000-7000-8000-000000000001";
+    {
+        let mut c = rusqlite::Connection::open(&v1).unwrap();
+        crate::migrate::run(&mut c, &crate::migrate::MIGRATIONS[..1]).unwrap();
+        c.execute(
+            "INSERT INTO clips (id, kind, preview, content_hash, size_bytes, created_at, \
+             last_copied_at) VALUES (?1, 'text', 'old words', ?2, 9, ?3, ?3)",
+            rusqlite::params![id, [7u8; 32], T0],
+        )
+        .unwrap();
+        c.execute_batch(
+            "INSERT INTO representations (clip_id, ord, mime, size_bytes, inline_data) \
+             SELECT id, 0, 'text/plain;charset=utf-8', 9, CAST('old words' AS BLOB) FROM clips; \
+             INSERT INTO clip_rowid (clip_id) SELECT id FROM clips;",
+        )
+        .unwrap();
+    }
     let crafted = tmp.path().join("v1.dcbackup");
     rebuild(&out, &crafted, true, |e| {
+        e.retain(|(n, _)| !n.starts_with("blobs/"));
         let db = e.iter_mut().find(|(n, _)| n == "history.db").unwrap();
-        let tmpdb = tmp.path().join("v1.db");
-        std::fs::write(&tmpdb, &db.1).unwrap();
-        {
-            let c = rusqlite::Connection::open(&tmpdb).unwrap();
-            c.execute_batch(
-                "DROP TRIGGER collections_system_no_delete; \
-                 DROP TRIGGER collections_system_no_update; \
-                 DROP TABLE collection_clips; DROP TABLE clip_tags; DROP TABLE tags; \
-                 DROP TABLE collections; PRAGMA user_version = 1; VACUUM;",
-            )
-            .unwrap();
-        }
-        db.1 = std::fs::read(&tmpdb).unwrap();
+        db.1 = std::fs::read(&v1).unwrap();
     });
-    let r = b.restore_backup(&crafted).unwrap();
-    assert_eq!(r.clips, 3);
-    assert_eq!(b.schema_version().unwrap(), 2);
+    let r = b.restore_backup(&crafted, FREE).unwrap();
+    assert_eq!(r.clips, 1);
+    assert_eq!(b.schema_version().unwrap(), 3);
     assert!(b.favorites_id().is_ok());
-    assert!(b.get_clip(&f.text).unwrap().is_some());
+    let cid = ClipId::parse(id).unwrap();
+    assert_eq!(b.read_representation(&cid, 0).unwrap(), b"old words");
+    assert!(!b.is_no_export(&cid).unwrap(), "older clips carry no flag");
 }
 
 #[test]
@@ -582,7 +605,7 @@ fn failure_during_the_swap_leaves_the_live_data() {
     b.fail_restore_swap = true;
     // The fault fires after the first pages were copied into the live database.
     assert_eq!(
-        b.restore_backup(&out),
+        b.restore_backup(&out, FREE),
         Err(StorageError::Io(std::io::ErrorKind::Interrupted))
     );
     assert_live_unchanged(&b, &id);
@@ -597,7 +620,7 @@ fn failure_during_the_swap_leaves_the_live_data() {
     assert_live_unchanged(&b, &id);
     // Without the fault the same file restores.
     let mut b = b;
-    assert_eq!(b.restore_backup(&out).unwrap().clips, 3);
+    assert_eq!(b.restore_backup(&out, FREE).unwrap().clips, 3);
 }
 
 #[test]
@@ -626,14 +649,14 @@ fn a_crafted_database_is_refused() {
          CREATE TABLE clips_shadow (p TEXT);",
     );
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::Archive(ArchiveError::Corrupt))
     );
     assert_live_unchanged(&b, &id);
     // A row that does not decode as a clip.
     edit_db("UPDATE clips SET kind = 'no-such-kind';");
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::Archive(ArchiveError::Corrupt))
     );
     // Favorites removed (the system row is required).
@@ -643,7 +666,7 @@ fn a_crafted_database_is_refused() {
          WHEN OLD.kind = 'system' BEGIN SELECT RAISE(ABORT, 'system collection'); END;",
     );
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::Archive(ArchiveError::Corrupt))
     );
     // Not a database at all, with a matching checksum.
@@ -652,7 +675,7 @@ fn a_crafted_database_is_refused() {
         db.1 = b"SQLite format 3\0 but not really".repeat(200);
     });
     assert_eq!(
-        b.restore_backup(&crafted),
+        b.restore_backup(&crafted, FREE),
         Err(StorageError::Archive(ArchiveError::Corrupt))
     );
     assert_live_unchanged(&b, &id);
@@ -668,11 +691,298 @@ fn errors_name_no_content_or_path() {
     rebuild(&out, &crafted, true, |e| {
         e.push((format!("../{SECRET_TAIL}"), b"x".to_vec()));
     });
-    let e = b.restore_backup(&crafted).unwrap_err();
+    let e = b.restore_backup(&crafted, FREE).unwrap_err();
     for text in [e.to_string(), format!("{e:?}")] {
         assert!(!text.contains(SECRET_TAIL), "{text}");
     }
     let missing = tmp.path().join(format!("{SECRET_TAIL}-missing.dcbackup"));
-    let e = b.restore_backup(&missing).unwrap_err();
+    let e = b.restore_backup(&missing, FREE).unwrap_err();
     assert!(!format!("{e:?}").contains(SECRET_TAIL));
+}
+
+// ---- Task 405 security review ----
+
+/// Rewrites the database inside a backup with `sql` run on it (checksums fixed).
+fn with_db_edit(out: &Path, crafted: &Path, scratch: &Path, sql: &str) {
+    rebuild(out, crafted, true, |e| {
+        let db = e.iter_mut().find(|(n, _)| n == "history.db").unwrap();
+        std::fs::write(scratch, &db.1).unwrap();
+        {
+            let c = rusqlite::Connection::open(scratch).unwrap();
+            c.execute_batch(sql).unwrap();
+        }
+        db.1 = std::fs::read(scratch).unwrap();
+        let _ = std::fs::remove_file(scratch);
+    });
+}
+
+fn pragma_i64(s: &Storage, name: &str) -> i64 {
+    s.conn.pragma_query_value(None, name, |r| r.get(0)).unwrap()
+}
+
+fn pragma_text(s: &Storage, name: &str) -> String {
+    s.conn.pragma_query_value(None, name, |r| r.get(0)).unwrap()
+}
+
+#[test]
+fn a_utf16_database_is_refused_and_the_live_data_still_works() {
+    let (tmp, out, _) = make_backup();
+    let dst = tmp.path().join("dst");
+    let (mut b, id) = live(&dst);
+    // A database with the store's schema, but in UTF-16.
+    let u16db = tmp.path().join("u16.db");
+    {
+        let mut c = rusqlite::Connection::open(&u16db).unwrap();
+        c.execute_batch("PRAGMA encoding = 'UTF-16le';").unwrap();
+        crate::migrate::run(&mut c, crate::migrate::MIGRATIONS).unwrap();
+        let enc: String = c.query_row("PRAGMA encoding", [], |r| r.get(0)).unwrap();
+        assert_eq!(enc, "UTF-16le");
+    }
+    let crafted = tmp.path().join("u16.dcbackup");
+    rebuild(&out, &crafted, true, |e| {
+        e.retain(|(n, _)| !n.starts_with("blobs/"));
+        let db = e.iter_mut().find(|(n, _)| n == "history.db").unwrap();
+        db.1 = std::fs::read(&u16db).unwrap();
+    });
+    assert_eq!(
+        b.restore_backup(&crafted, FREE),
+        Err(StorageError::Archive(ArchiveError::Corrupt))
+    );
+    assert_live_unchanged(&b, &id);
+    assert_eq!(pragma_text(&b, "encoding"), "UTF-8");
+    assert_no_staging(&dst);
+}
+
+#[test]
+fn header_fields_of_a_backup_never_reach_the_live_database() {
+    let (tmp, out, f) = make_backup();
+    let dst = tmp.path().join("dst");
+    let (mut b, _) = live(&dst);
+    let before_av = pragma_i64(&b, "auto_vacuum");
+    let crafted = tmp.path().join("hdr.dcbackup");
+    with_db_edit(
+        &out,
+        &crafted,
+        &tmp.path().join("hdr.db"),
+        "PRAGMA auto_vacuum = FULL; VACUUM; PRAGMA application_id = 1234;",
+    );
+    assert_eq!(b.restore_backup(&crafted, FREE).unwrap().clips, 3);
+    assert_eq!(pragma_i64(&b, "auto_vacuum"), before_av);
+    assert_eq!(pragma_i64(&b, "application_id"), 0);
+    assert_eq!(pragma_i64(&b, "user_version"), 3);
+    assert_eq!(pragma_text(&b, "journal_mode").to_lowercase(), "wal");
+    assert_eq!(pragma_text(&b, "encoding"), "UTF-8");
+    assert!(b.get_clip(&f.text).unwrap().is_some());
+    drop(b);
+    // The store opens again normally and keeps WAL.
+    let b = open(&dst, clock());
+    assert_eq!(pragma_text(&b, "journal_mode").to_lowercase(), "wal");
+    assert_eq!(count(&b, "SELECT count(*) FROM clips"), 3);
+}
+
+#[test]
+fn a_different_page_size_is_converted() {
+    let (tmp, out, f) = make_backup();
+    let dst = tmp.path().join("dst");
+    let (mut b, _) = live(&dst);
+    let live_page = pragma_i64(&b, "page_size");
+    let crafted = tmp.path().join("page.dcbackup");
+    let other = if live_page == 8192 { 16384 } else { 8192 };
+    with_db_edit(
+        &out,
+        &crafted,
+        &tmp.path().join("page.db"),
+        &format!("PRAGMA page_size = {other}; VACUUM;"),
+    );
+    assert_eq!(b.restore_backup(&crafted, FREE).unwrap().clips, 3);
+    assert_eq!(pragma_i64(&b, "page_size"), live_page);
+    assert_eq!(b.read_representation(&f.image, 0).unwrap(), f.png);
+    assert_eq!(pragma_text(&b, "journal_mode").to_lowercase(), "wal");
+}
+
+#[test]
+fn an_object_outside_the_known_schemas_is_refused_before_any_migration() {
+    let (tmp, out, _) = make_backup();
+    let dst = tmp.path().join("dst");
+    let (mut b, id) = live(&dst);
+    let crafted = tmp.path().join("view.dcbackup");
+    with_db_edit(
+        &out,
+        &crafted,
+        &tmp.path().join("view.db"),
+        "CREATE VIEW peek AS SELECT preview FROM clips;",
+    );
+    assert_eq!(
+        b.restore_backup(&crafted, FREE),
+        Err(StorageError::Archive(ArchiveError::Corrupt))
+    );
+    assert_live_unchanged(&b, &id);
+    // A manifest whose schema version is not the database's own.
+    rebuild(&out, &crafted, false, |e| {
+        e.retain(|(n, _)| n != "manifest.json");
+        let m = manifest(e, 1, 1);
+        e.push(("manifest.json".into(), m));
+    });
+    assert_eq!(
+        b.restore_backup(&crafted, FREE),
+        Err(StorageError::Archive(ArchiveError::BadManifest))
+    );
+    assert_live_unchanged(&b, &id);
+}
+
+#[test]
+fn duplicate_entry_names_are_refused() {
+    let (tmp, out, _) = make_backup();
+    let dst = tmp.path().join("dst");
+    let (mut b, id) = live(&dst);
+    // Two entries, then the second name is patched to equal the first in both headers.
+    let mut e = entries_of(&out);
+    let name = e
+        .iter()
+        .find(|(n, _)| n.starts_with("blobs/"))
+        .unwrap()
+        .0
+        .clone();
+    let mut twin = name.clone().into_bytes();
+    let last = twin.len() - 1;
+    twin[last] = if twin[last] == b'0' { b'1' } else { b'0' };
+    let twin = String::from_utf8(twin).unwrap();
+    e.push((twin.clone(), b"other bytes".to_vec()));
+    let crafted = tmp.path().join("dup.dcbackup");
+    write_zip(&crafted, &e);
+    let mut bytes = std::fs::read(&crafted).unwrap();
+    let (from, to) = (twin.as_bytes(), name.as_bytes());
+    let mut i = 0;
+    let mut patched = 0;
+    while i + from.len() <= bytes.len() {
+        if &bytes[i..i + from.len()] == from {
+            bytes[i..i + from.len()].copy_from_slice(to);
+            patched += 1;
+        }
+        i += 1;
+    }
+    assert_eq!(patched, 2, "local and central header");
+    std::fs::write(&crafted, &bytes).unwrap();
+    assert_eq!(
+        b.restore_backup(&crafted, FREE),
+        Err(StorageError::Archive(ArchiveError::Inconsistent))
+    );
+    assert_live_unchanged(&b, &id);
+}
+
+#[test]
+fn a_bomb_within_the_entry_limit_is_refused_by_the_total() {
+    let (tmp, out, _) = make_backup();
+    let dst = tmp.path().join("dst");
+    let (mut b, id) = live(&dst);
+    let crafted = tmp.path().join("bomb.dcbackup");
+    rebuild(&out, &crafted, true, |e| {
+        for k in 0..2u8 {
+            e.push((
+                format!("blobs/0{k}/0{k}{}", "0".repeat(62)),
+                vec![k; 2 << 20],
+            ));
+        }
+    });
+    // Each entry is far below the per-entry limit; together they break the total.
+    let limits = ArchiveLimits {
+        max_total_bytes: 3 << 20,
+        max_json_bytes: 1 << 20,
+        ..ArchiveLimits::BACKUP
+    };
+    assert!(limits.max_entry_bytes > 2 << 20);
+    assert_eq!(
+        b.restore_backup_with(&crafted, limits, FREE),
+        Err(StorageError::Archive(ArchiveError::TooLarge))
+    );
+    assert_live_unchanged(&b, &id);
+    assert_no_staging(&dst);
+    // Within the default limits the same file is fine (the bound was the total).
+    assert_eq!(b.restore_backup(&crafted, FREE).unwrap().clips, 3);
+}
+
+#[test]
+fn a_far_too_compressed_archive_is_refused_before_extraction() {
+    let (tmp, out, _) = make_backup();
+    let dst = tmp.path().join("dst");
+    let (mut b, id) = live(&dst);
+    let crafted = tmp.path().join("ratio.dcbackup");
+    rebuild(&out, &crafted, true, |e| {
+        for k in 0..3u8 {
+            e.push((
+                format!("blobs/0{k}/0{k}{}", "0".repeat(62)),
+                vec![0u8; 30 << 20],
+            ));
+        }
+    });
+    assert!(std::fs::metadata(&crafted).unwrap().len() < 2 << 20);
+    assert_eq!(
+        b.restore_backup(&crafted, FREE),
+        Err(StorageError::Archive(ArchiveError::TooLarge))
+    );
+    assert_live_unchanged(&b, &id);
+    assert_no_staging(&dst);
+}
+
+#[test]
+fn a_restore_needs_known_and_sufficient_free_space() {
+    let (tmp, out, _) = make_backup();
+    let dst = tmp.path().join("dst");
+    let (mut b, id) = live(&dst);
+    for free in [None, Some(0), Some(1024)] {
+        assert_eq!(
+            b.restore_backup(&out, free),
+            Err(StorageError::InsufficientSpace),
+            "{free:?}"
+        );
+        assert_live_unchanged(&b, &id);
+        assert_no_staging(&dst);
+    }
+}
+
+#[test]
+fn a_backup_its_own_restore_would_refuse_is_not_written() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut s = open(&tmp.path().join("src"), clock());
+    fixture(&mut s);
+    let out = tmp.path().join("small.dcbackup");
+    for limits in [
+        ArchiveLimits {
+            max_entries: 3,
+            ..ArchiveLimits::BACKUP
+        },
+        ArchiveLimits {
+            max_total_bytes: 64 * 1024,
+            ..ArchiveLimits::BACKUP
+        },
+        ArchiveLimits {
+            max_entry_bytes: 70 * 1024 - 1,
+            ..ArchiveLimits::BACKUP
+        },
+    ] {
+        assert_eq!(
+            s.write_backup_with(&out, "0.0.1", limits),
+            Err(StorageError::Archive(ArchiveError::TooLargeToWrite)),
+            "{limits:?}"
+        );
+        assert!(!out.exists());
+        assert!(names_in(tmp.path())
+            .iter()
+            .all(|n| !n.ends_with(crate::archive::PARTIAL_SUFFIX)));
+    }
+}
+
+#[test]
+fn a_no_export_clip_survives_backup_and_restore_with_its_flag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut a = open(&tmp.path().join("src"), clock());
+    let mut n = text_clip("cloud says no");
+    n.no_export = true;
+    let id = ins(&mut a, n);
+    assert!(a.is_no_export(&id).unwrap());
+    let out = tmp.path().join("b.dcbackup");
+    assert_eq!(a.write_backup(&out, "0.0.1").unwrap().clips, 1);
+    let (mut b, _) = live(&tmp.path().join("dst"));
+    b.restore_backup(&out, FREE).unwrap();
+    assert!(b.is_no_export(&id).unwrap());
 }

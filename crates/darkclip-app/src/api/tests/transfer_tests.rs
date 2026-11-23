@@ -1,6 +1,7 @@
 //! Task 405: backup, restore, export and import through the App.
 
 use super::*;
+use darkclip_core::policy::SkipReason;
 use darkclip_core::{ClipType, CollectionKind, CollectionSort, SchemaVersion, SensitiveHandling};
 use darkclip_storage::ArchiveLimits;
 use std::io::{Read, Write};
@@ -62,6 +63,7 @@ fn image_clip(seed: u8) -> NewClip {
         sensitivity: Sensitivity::default(),
         expires_at: None,
         thumbnail_png: None,
+        no_export: false,
     }
 }
 
@@ -144,7 +146,7 @@ fn backup_and_restore_through_the_app() {
     assert_eq!(a.ui_backup(&ui(), &out).unwrap().clips, 2);
     a.delete_clip(&ui(), h.ids[0]).unwrap();
     assert_eq!(clip_count(a), 1);
-    assert_eq!(a.ui_restore(&ui(), &out).unwrap().clips, 2);
+    assert_eq!(a.ui_restore(&ui(), &out, FREE).unwrap().clips, 2);
     // The reader sees the restored data at once.
     assert_eq!(texts(a), ["first clip", "second clip"]);
     // Capture keeps working on the restored store.
@@ -164,7 +166,7 @@ fn backup_restore_export_and_import_are_ui_only() {
             Err(ApiError::PermissionDenied(_))
         ));
         assert!(matches!(
-            a.ui_restore(&c, &p),
+            a.ui_restore(&c, &p, FREE),
             Err(ApiError::PermissionDenied(_))
         ));
         assert!(matches!(
@@ -214,13 +216,16 @@ fn restoring_a_newer_backup_is_refused_and_keeps_the_history() {
     a.delete_clip(&ui(), h.ids[0]).unwrap();
     h.fake.copy(text_copy("newest"));
     h.wait_added();
-    assert_eq!(a.ui_restore(&ui(), &newer), Err(ApiError::SchemaTooNew));
+    assert_eq!(
+        a.ui_restore(&ui(), &newer, FREE),
+        Err(ApiError::SchemaTooNew)
+    );
     assert_eq!(texts(a), ["newest"]);
     // A file that is not a backup at all.
     let junk = h.dir.path().join("junk.dcbackup");
     std::fs::write(&junk, b"nope").unwrap();
     assert!(matches!(
-        a.ui_restore(&ui(), &junk),
+        a.ui_restore(&ui(), &junk, FREE),
         Err(ApiError::InvalidArgument(_))
     ));
     assert_eq!(texts(a), ["newest"]);
@@ -505,6 +510,125 @@ fn a_deleted_clip_does_not_come_back_without_a_restore() {
     assert_eq!(a.ui_backup(&ui(), &out2).unwrap().clips, 1);
     assert_eq!(texts(a), ["stays"]);
     // Only an explicit restore of the older backup brings it back.
-    a.ui_restore(&ui(), &out).unwrap();
+    a.ui_restore(&ui(), &out, FREE).unwrap();
     assert_eq!(texts(a), ["gone for good", "stays"]);
+}
+
+// ---- Task 405 security review ----
+
+/// Free disk space the tests report: plenty.
+const FREE: Option<u64> = Some(u64::MAX);
+
+fn reader_of(h: &H) -> Storage {
+    let clock: Arc<dyn Clock> = Arc::new(TestClock(AtomicI64::new(T0)));
+    Storage::open(h.dir.path(), OpenMode::ReadOnly, clock).unwrap()
+}
+
+/// Waits for an event matching `want`.
+fn wait_event(h: &H, want: impl Fn(&AppEvent) -> bool) {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match h.events.recv_timeout(left) {
+            Ok(e) if want(&e) => return,
+            Ok(_) => {}
+            Err(_) => panic!("timed out waiting for the event"),
+        }
+    }
+}
+
+#[test]
+fn a_no_cloud_copy_is_flagged_and_never_exported() {
+    let h = start(&[], None);
+    let a = h.app();
+    let mut copy = text_copy("the source app said no cloud");
+    copy.markers = vec![darkclip_core::markers::PrivacyMarker::NoCloud];
+    h.fake.copy(copy);
+    let id = h.wait_added();
+    assert!(reader_of(&h).is_no_export(&id).unwrap());
+    let out = h.dir.path().join("nocloud.dcexport");
+    let r = a
+        .ui_export(&ui(), ExportSelection::Clips(vec![id]), &out)
+        .unwrap();
+    assert_eq!((r.exported, r.excluded_sensitive), (0, 1));
+    // A backup is the user's own full copy: it keeps the clip.
+    let b = h.dir.path().join("nocloud.dcbackup");
+    assert_eq!(a.ui_backup(&ui(), &b).unwrap().clips, 1);
+}
+
+#[test]
+fn import_never_sets_the_no_export_flag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = export_file(tmp.path(), vec![new_clip("from elsewhere", false)]);
+    let h = start(&[], None);
+    let a = h.app();
+    assert_eq!(a.ui_import(&ui(), &file).unwrap().imported, 1);
+    let id = a.search_clips(&ui(), query(None)).unwrap().items[0].id;
+    assert!(!reader_of(&h).is_no_export(&id).unwrap());
+    // The file cannot carry the flag: an extra field makes it invalid.
+    edit_export(&file, |v| {
+        v["clips"][0]["no_export"] = serde_json::json!(true)
+    });
+    assert_eq!(
+        a.ui_import(&ui(), &file),
+        Err(ApiError::InvalidArgument(crate::events::FILE_INVALID))
+    );
+}
+
+#[test]
+fn a_transfer_does_not_hold_the_caller_and_a_mode_change_applies_before_later_copies() {
+    let h = start(&[("before", false)], None);
+    let a = h.app();
+    let out = h.dir.path().join("slow.dcbackup");
+    a.cap.set_transfer_stall(600);
+    let t0 = Instant::now();
+    let wait = a.ui_start(&ui(), UiTransfer::Backup(out.clone())).unwrap();
+    assert!(
+        t0.elapsed() < Duration::from_millis(400),
+        "ui_start returns while the actor works"
+    );
+    // While the backup runs: private mode, then a copy. The mode is applied first.
+    a.set_capture_mode(&ui(), CaptureMode::Private).unwrap();
+    h.fake.copy(text_copy("copied while private"));
+    match wait.wait().unwrap() {
+        TransferReply::Backup(r) => assert_eq!(r.clips, 1),
+        other => panic!("unexpected reply {other:?}"),
+    }
+    wait_event(&h, |e| *e == AppEvent::Skipped(SkipReason::Private));
+    assert_eq!(clip_count(a), 1);
+    assert!(out.is_file());
+}
+
+#[test]
+fn import_checks_the_declared_size_before_reading() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = export_file(tmp.path(), vec![new_clip("tiny", false)]);
+    // The file claims a huge blob: refused as too large without reading it.
+    edit_export(&file, |v| {
+        v["blobs"][0]["size_bytes"] = serde_json::json!(999_999)
+    });
+    let s = settings_with(|s| s.retention.text_max_kb = 1);
+    let h = start(&[], Some(s));
+    let r = h.app().ui_import(&ui(), &file).unwrap();
+    assert_eq!(
+        (r.skipped_too_large, r.skipped_invalid, r.imported),
+        (1, 0, 0)
+    );
+}
+
+#[test]
+fn a_merge_onto_a_masked_clip_never_organises_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = export_file(tmp.path(), vec![new_clip(&secret_text(), false)]);
+    let s = settings_with(|s| s.privacy.sensitive_handling = SensitiveHandling::StoreMasked);
+    let secret = secret_text();
+    let h = start(&[(&secret, true)], Some(s));
+    let a = h.app();
+    let r = a.ui_import(&ui(), &file).unwrap();
+    assert_eq!(r.merged, 1);
+    assert!(a
+        .list_collections(&ui())
+        .unwrap()
+        .iter()
+        .all(|c| c.clip_count == 0));
 }

@@ -34,7 +34,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-pub use transfer::{ExportSelection, ImportReport};
+pub use transfer::{ExportSelection, ImportReport, TransferReply, TransferWait, UiTransfer};
 pub use transform_ui::TransformPreview;
 
 /// Who is calling. The App is in-process in Phase 1; the P2 CLI and MCP processes
@@ -1197,6 +1197,7 @@ mod tests {
             sensitivity,
             expires_at,
             thumbnail_png: None,
+            no_export: false,
         }
     }
 

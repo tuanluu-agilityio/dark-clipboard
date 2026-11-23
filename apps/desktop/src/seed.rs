@@ -190,6 +190,7 @@ pub fn seed(dir: &Path, n: u32, now: Timestamp) -> Result<u32, StorageError> {
             sensitivity: Sensitivity::default(),
             expires_at: None,
             thumbnail_png: None,
+            no_export: false,
         };
         clock.0.store(demo_time(i, n, now).0, Ordering::SeqCst);
         storage.upsert_clip(&clip)?;

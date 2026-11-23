@@ -4,17 +4,54 @@
 //! `export_collection` through its grant, never a path of their choosing; T-11).
 
 use super::*;
-use crate::capture::{TransferOp, TransferReply};
+use crate::capture::TransferOp;
 use darkclip_core::{CollectionKind, CollectionSort, Msg, SchemaVersion};
 use darkclip_storage::{BackupReport, ExportReport, RestoreReport};
 
-pub use crate::capture::ImportReport;
+pub use crate::capture::{ImportReport, TransferReply};
 
 /// What to export: a collection, or clips the user selected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExportSelection {
     Collection(CollectionId),
     Clips(Vec<ClipId>),
+}
+
+/// A transfer started with `App::ui_start`.
+pub enum UiTransfer {
+    Backup(PathBuf),
+    /// `free_bytes`: free space of the data folder, measured by the caller.
+    Restore {
+        archive: PathBuf,
+        free_bytes: Option<u64>,
+    },
+    Export {
+        what: ExportSelection,
+        dest: PathBuf,
+    },
+    Import(PathBuf),
+}
+
+/// Prints the operation only, never a path (GC-06).
+impl std::fmt::Debug for UiTransfer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Backup(_) => "Backup",
+            Self::Restore { .. } => "Restore",
+            Self::Export { .. } => "Export",
+            Self::Import(_) => "Import",
+        })
+    }
+}
+
+/// The pending result of a transfer.
+pub struct TransferWait(mpsc::Receiver<Result<TransferReply, ApiError>>);
+
+impl TransferWait {
+    /// Blocks until the actor answers. `AppNotRunning` if it stopped without answering.
+    pub fn wait(self) -> Result<TransferReply, ApiError> {
+        self.0.recv().map_err(|_| ApiError::AppNotRunning)?
+    }
 }
 
 /// Longest wait for a backup, restore, export or import (large histories take a while).
@@ -48,9 +85,14 @@ impl App {
     /// Replaces the history with the backup at `archive` after validating all of it. A
     /// newer backup is `SchemaTooNew`; an invalid one `InvalidArgument`. Any failure leaves
     /// the history as it was.
-    pub fn ui_restore(&self, c: &Caller, archive: &Path) -> Result<RestoreReport, ApiError> {
+    pub fn ui_restore(
+        &self,
+        c: &Caller,
+        archive: &Path,
+        free_bytes: Option<u64>,
+    ) -> Result<RestoreReport, ApiError> {
         ui_only(c)?;
-        match self.transfer(TransferOp::Restore(archive.to_path_buf()))? {
+        match self.transfer(TransferOp::Restore(archive.to_path_buf(), free_bytes))? {
             TransferReply::Restore(r) => Ok(r),
             _ => Err(ApiError::Internal),
         }
@@ -83,6 +125,28 @@ impl App {
             TransferReply::Import(r) => Ok(r),
             _ => Err(ApiError::Internal),
         }
+    }
+
+    /// Starts a transfer and returns at once; the caller waits for the result on a thread of
+    /// its own (`TransferWait::wait`), so its worker stays free. Stub: runs to the end first.
+    pub fn ui_start(&self, c: &Caller, what: UiTransfer) -> Result<TransferWait, ApiError> {
+        ui_only(c)?;
+        let r = match what {
+            UiTransfer::Backup(p) => self.ui_backup(c, &p).map(TransferReply::Backup),
+            UiTransfer::Restore {
+                archive,
+                free_bytes,
+            } => self
+                .ui_restore(c, &archive, free_bytes)
+                .map(TransferReply::Restore),
+            UiTransfer::Export { what, dest } => {
+                self.ui_export(c, what, &dest).map(TransferReply::Export)
+            }
+            UiTransfer::Import(p) => self.ui_import(c, &p).map(TransferReply::Import),
+        };
+        let (tx, rx) = mpsc::channel();
+        let _ = tx.send(r);
+        Ok(TransferWait(rx))
     }
 
     /// The clips and the collection document of an export.

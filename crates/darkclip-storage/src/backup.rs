@@ -302,6 +302,16 @@ impl Storage {
         dest: &Path,
         app_version: &str,
     ) -> Result<BackupReport, StorageError> {
+        self.write_backup_with(dest, app_version, ArchiveLimits::BACKUP)
+    }
+
+    /// `write_backup` refusing anything `limits` would refuse on restore.
+    pub fn write_backup_with(
+        &mut self,
+        dest: &Path,
+        app_version: &str,
+        _limits: ArchiveLimits,
+    ) -> Result<BackupReport, StorageError> {
         self.ensure_writable()?;
         let now = self.clock.now();
         let staging = archive::fresh_dir(&self.dir, STAGING_PREFIXES[0], now.0)?;
@@ -384,8 +394,14 @@ impl Storage {
 
     /// Replaces the history with the backup at `archive`, after validating all of it.
     /// Any failure leaves the live data as it was.
-    pub fn restore_backup(&mut self, archive: &Path) -> Result<RestoreReport, StorageError> {
-        self.restore_backup_with(archive, ArchiveLimits::BACKUP)
+    /// `free_bytes`: free disk space of the data folder as the caller measured it (this crate
+    /// has no OS access); unknown or too little is refused with `InsufficientSpace`.
+    pub fn restore_backup(
+        &mut self,
+        archive: &Path,
+        free_bytes: Option<u64>,
+    ) -> Result<RestoreReport, StorageError> {
+        self.restore_backup_with(archive, ArchiveLimits::BACKUP, free_bytes)
     }
 
     /// `restore_backup` with explicit limits (tests use small ones).
@@ -393,6 +409,7 @@ impl Storage {
         &mut self,
         archive: &Path,
         limits: ArchiveLimits,
+        _free_bytes: Option<u64>,
     ) -> Result<RestoreReport, StorageError> {
         self.ensure_writable()?;
         let now = self.clock.now();

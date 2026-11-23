@@ -29,7 +29,8 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// A backup, restore, export or import. Paths are the user's choice; never printed.
 pub enum TransferOp {
     Backup(PathBuf),
-    Restore(PathBuf),
+    /// The backup and the free disk space of the data folder the caller measured.
+    Restore(PathBuf, Option<u64>),
     Export {
         ids: Vec<ClipId>,
         collection: Collection,
@@ -43,7 +44,7 @@ impl std::fmt::Debug for TransferOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Backup(_) => "Backup",
-            Self::Restore(_) => "Restore",
+            Self::Restore(..) => "Restore",
             Self::Export { .. } => "Export",
             Self::Import(_) => "Import",
         })
@@ -115,16 +116,26 @@ fn format_name(m: Mime) -> &'static str {
 
 impl Actor {
     pub(super) fn transfer(&mut self, op: TransferOp) -> Result<TransferReply, ApiError> {
+        #[cfg(test)]
+        {
+            let ms = self
+                .hooks
+                .transfer_stall_ms
+                .load(std::sync::atomic::Ordering::SeqCst);
+            if ms > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+            }
+        }
         match op {
             TransferOp::Backup(dest) => self
                 .storage
                 .write_backup(&dest, APP_VERSION)
                 .map(TransferReply::Backup)
                 .map_err(|e| map_storage(&e)),
-            TransferOp::Restore(path) => {
+            TransferOp::Restore(path, free_bytes) => {
                 let r = self
                     .storage
-                    .restore_backup(&path)
+                    .restore_backup(&path, free_bytes)
                     .map_err(|e| map_storage(&e))?;
                 // A different history: its index has nothing pending; expiries and limits
                 // apply to it at once (a clipboard change waiting in the debounce is stored

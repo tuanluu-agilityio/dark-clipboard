@@ -29,6 +29,8 @@ pub const EXPORT_SCHEMA_VERSION: u32 = 1;
 pub(crate) const MANIFEST: &str = "manifest.json";
 pub(crate) const HISTORY_DB: &str = "history.db";
 pub(crate) const EXPORT_JSON: &str = "export.json";
+/// Suffix of a backup or export being written; renamed away when complete.
+pub(crate) const PARTIAL_SUFFIX: &str = ".dark-clipboard-partial";
 
 /// Why an archive was refused. Codes only (GC-06).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +53,11 @@ pub enum ArchiveError {
     Corrupt,
     /// The archive uses a feature that is never accepted (encryption, symlinks, other compression).
     Unsupported,
+    /// Entries repeat a name, or their local headers disagree with the central directory.
+    Inconsistent,
+    /// Writing: the backup or export would break the limits its own reader enforces, so it
+    /// could never be opened again. Nothing was written.
+    TooLargeToWrite,
 }
 
 impl std::fmt::Display for ArchiveError {
@@ -66,6 +73,8 @@ impl std::fmt::Display for ArchiveError {
             Self::NewerFormat => "archive written by a newer version",
             Self::Corrupt => "archive database invalid",
             Self::Unsupported => "archive feature not supported",
+            Self::Inconsistent => "archive entries inconsistent",
+            Self::TooLargeToWrite => "archive would exceed the limits",
         })
     }
 }
