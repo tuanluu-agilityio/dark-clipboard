@@ -547,6 +547,7 @@ impl Storage {
         reindex(&tx, &self.dir, &clip_s)?;
         let (tags, _) = clip_refs(&tx, &clip_s)?;
         tx.commit()?;
+        self.fts_changed();
         Ok(tags)
     }
 
@@ -599,6 +600,7 @@ impl Storage {
         )?;
         reindex(&tx, &self.dir, &clip_s)?;
         tx.commit()?;
+        self.fts_changed();
         Ok(())
     }
 }

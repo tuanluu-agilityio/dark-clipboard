@@ -138,3 +138,29 @@ fn late_organize_command_has_no_side_effect_and_no_event() {
     assert!(!ro.clip_labels(&id).unwrap().0);
     assert!(h.events.recv_timeout(Duration::from_millis(200)).is_err());
 }
+
+#[test]
+fn late_maintenance_commands_have_no_side_effect() {
+    use crate::capture::{MaintOp, MaintReply};
+    let h = start(PrivacyPolicy::default());
+    h.fake.copy(text_copy("keep me"));
+    h.wait_added();
+    let deadline = Instant::now();
+    std::thread::sleep(Duration::from_millis(5));
+    for op in [
+        MaintOp::DeleteOlderThan(1),
+        MaintOp::SweepOrphans,
+        MaintOp::Compact(u64::MAX),
+    ] {
+        let (tx, rx) = mpsc::channel::<Result<MaintReply, ApiError>>();
+        h.cap()
+            .send(ActorCommand::Maintenance {
+                op,
+                deadline,
+                reply: tx,
+            })
+            .unwrap();
+        assert_eq!(rx.recv_timeout(WAIT).unwrap(), Err(ApiError::Internal));
+    }
+    assert_eq!(h.clip_count(), 1);
+}

@@ -8,7 +8,7 @@
 //!
 //! Errors carry no clip content (GC-06); `Caller::Mcp` never sees masked clips.
 
-use crate::capture::{ActorCommand, CaptureHandle, OrganizeOp, OrganizeReply};
+use crate::capture::{ActorCommand, CaptureHandle, MaintOp, MaintReply, OrganizeOp, OrganizeReply};
 use crate::config::CaptureConfig;
 use crate::envelope::Page;
 use crate::events::{
@@ -726,46 +726,71 @@ impl App {
         })
     }
 
-    /// How many clips `clear_history(keep_pinned)` would delete (the confirmation's count).
+    /// How many clips `clear_history(keep_pinned)` would delete: the count the confirmation
+    /// shows. With `keep_pinned`, pinned clips and favorites stay.
     pub fn count_clearable(&self, c: &Caller, keep_pinned: bool) -> Result<u64, ApiError> {
         PermissionGuard::check(c, Operation::ClearHistory)?;
-        let _ = keep_pinned;
-        Err(ApiError::Internal)
+        self.reader()
+            .count_clearable(keep_pinned)
+            .map_err(|e| map_storage(&e))
     }
 
+    /// How many clips `delete_older_than(days)` would delete.
     pub fn count_older_than(&self, c: &Caller, days: u32) -> Result<u64, ApiError> {
         PermissionGuard::check(c, Operation::ClearHistory)?;
-        let _ = days;
-        Err(ApiError::Internal)
+        self.reader()
+            .count_older_than(days)
+            .map_err(|e| map_storage(&e))
     }
 
+    /// Deletes clips last copied more than `days` days ago (`days >= 1`), except pinned clips
+    /// and favorites. Runs on the actor thread.
     pub fn delete_older_than(&self, c: &Caller, days: u32) -> Result<u64, ApiError> {
-        PermissionGuard::check(c, Operation::ClearHistory)?;
-        let _ = days;
-        Err(ApiError::Internal)
+        match self.maintain(c, MaintOp::DeleteOlderThan(days))? {
+            MaintReply::Deleted(n) => Ok(n),
+            _ => Err(ApiError::Internal),
+        }
     }
 
+    /// Orphaned blob files and their size, without removing anything.
     pub fn scan_orphans(&self, c: &Caller) -> Result<darkclip_storage::OrphanReport, ApiError> {
         PermissionGuard::check(c, Operation::ClearHistory)?;
-        Err(ApiError::Internal)
+        self.reader().scan_orphans().map_err(|e| map_storage(&e))
     }
 
+    /// Removes orphaned blob files now (the startup sweep on demand); reports what it freed.
     pub fn sweep_orphan_blobs(
         &self,
         c: &Caller,
     ) -> Result<darkclip_storage::OrphanReport, ApiError> {
-        PermissionGuard::check(c, Operation::ClearHistory)?;
-        Err(ApiError::Internal)
+        match self.maintain(c, MaintOp::SweepOrphans)? {
+            MaintReply::Orphans(r) => Ok(r),
+            _ => Err(ApiError::Internal),
+        }
     }
 
+    /// `VACUUM`. `free_bytes` is the free disk space of the data folder as the caller measured
+    /// it; `None` (unknown) and anything below the database size are refused.
     pub fn compact_database(
         &self,
         c: &Caller,
         free_bytes: Option<u64>,
     ) -> Result<darkclip_storage::CompactReport, ApiError> {
         PermissionGuard::check(c, Operation::ClearHistory)?;
-        let _ = free_bytes;
-        Err(ApiError::Internal)
+        let free = free_bytes.ok_or(ApiError::InvalidArgument("free disk space unknown"))?;
+        match self.maintain(c, MaintOp::Compact(free))? {
+            MaintReply::Compacted(r) => Ok(r),
+            _ => Err(ApiError::Internal),
+        }
+    }
+
+    fn maintain(&self, c: &Caller, op: MaintOp) -> Result<MaintReply, ApiError> {
+        PermissionGuard::check(c, Operation::ClearHistory)?;
+        self.ask(|reply, deadline| ActorCommand::Maintenance {
+            op,
+            deadline,
+            reply,
+        })
     }
 
     fn reader(&self) -> MutexGuard<'_, Storage> {

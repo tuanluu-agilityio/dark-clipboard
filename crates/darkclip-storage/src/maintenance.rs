@@ -1,6 +1,8 @@
 //! Data management (Task 411): cleanup tools, orphan-blob sweep on demand and compaction.
 
-use crate::{Storage, StorageError};
+use crate::retention::checkpoint;
+use crate::{blobs, db, Storage, StorageError};
+use rusqlite::Connection;
 
 /// Blob files nothing references (and `.tmp` leftovers): how many and how many bytes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -16,32 +18,79 @@ pub struct CompactReport {
     pub bytes_after: u64,
 }
 
+/// Note and tag changes before the index is merged (batched, never per keystroke).
+const FTS_BATCH: u32 = 20;
+
+/// Merges the contentless FTS5 index so the tokens of deleted rows leave `clips_fts_data`
+/// (F-20). Best-effort: a failure leaves the rows deleted and the next merge retries.
+pub(crate) fn fts_optimize(conn: &Connection) {
+    let _ = conn.execute("INSERT INTO clips_fts(clips_fts) VALUES('optimize')", []);
+}
+
+fn file_len(path: &std::path::Path) -> u64 {
+    std::fs::metadata(path).map_or(0, |m| m.len())
+}
+
 impl Storage {
-    pub fn count_clearable(&self, _keep_pinned: bool) -> Result<u64, StorageError> {
-        Err(StorageError::NotFound)
+    /// A note or the tags of a clip changed: the old words stay in the index until a merge.
+    /// Merges after `FTS_BATCH` changes; the actor merges the rest when idle and at shutdown.
+    pub(crate) fn fts_changed(&mut self) {
+        self.fts_dirty = self.fts_dirty.saturating_add(1);
+        if self.fts_dirty >= FTS_BATCH {
+            self.optimize_fts_if_dirty();
+        }
     }
 
-    pub fn count_older_than(&self, _days: u32) -> Result<u64, StorageError> {
-        Err(StorageError::NotFound)
+    /// Merges the index and truncates the WAL when note or tag changes are waiting.
+    pub fn optimize_fts_if_dirty(&mut self) {
+        if self.fts_dirty == 0 || self.ensure_writable().is_err() {
+            return;
+        }
+        fts_optimize(&self.conn);
+        checkpoint(&self.conn);
+        self.fts_dirty = 0;
     }
 
-    pub fn delete_older_than(&mut self, _days: u32) -> Result<u64, StorageError> {
-        Err(StorageError::NotFound)
-    }
-
+    /// Blob files nothing references: how many and how many bytes (nothing is removed).
     pub fn scan_orphans(&self) -> Result<OrphanReport, StorageError> {
-        Err(StorageError::NotFound)
+        let c = blobs::scan(&self.conn, &self.dir)?;
+        Ok(OrphanReport {
+            files: c.cleanup.removed,
+            bytes: c.bytes,
+        })
     }
 
+    /// The startup sweep on demand: removes unreferenced blob files and `.tmp` leftovers and
+    /// reports what it freed. A referenced blob is never removed.
     pub fn sweep_orphans(&mut self) -> Result<OrphanReport, StorageError> {
-        Err(StorageError::NotFound)
+        self.ensure_writable()?;
+        let c = blobs::sweep_counted(&mut self.conn, &self.dir);
+        Ok(OrphanReport {
+            files: c.cleanup.removed,
+            bytes: c.bytes,
+        })
     }
 
-    pub fn compact(&mut self, _free_bytes: u64) -> Result<CompactReport, StorageError> {
-        Err(StorageError::NotFound)
+    /// `VACUUM` on the writer. Refused with `InsufficientSpace` when `free_bytes` (the free
+    /// disk space, measured by the caller: this crate has no OS access) is below the size of
+    /// the database file. The index is merged first so leftover tokens go too.
+    pub fn compact(&mut self, free_bytes: u64) -> Result<CompactReport, StorageError> {
+        self.ensure_writable()?;
+        let path = self.dir.join(db::DB_FILE);
+        let bytes_before = file_len(&path);
+        if free_bytes < bytes_before {
+            return Err(StorageError::InsufficientSpace);
+        }
+        fts_optimize(&self.conn);
+        self.fts_dirty = 0;
+        checkpoint(&self.conn);
+        self.conn.execute_batch("VACUUM")?;
+        checkpoint(&self.conn);
+        Ok(CompactReport {
+            bytes_before,
+            bytes_after: file_len(&path),
+        })
     }
-
-    pub fn optimize_fts_if_dirty(&mut self) {}
 }
 
 #[cfg(test)]

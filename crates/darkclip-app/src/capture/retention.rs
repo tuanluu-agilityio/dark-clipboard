@@ -73,6 +73,8 @@ impl Actor {
         } else {
             self.storage.apply_retention(&self.retention).map(|_| ())
         };
+        // Note and tag changes wait for a merge of the search index (F-20); this is the idle tick.
+        self.storage.optimize_fts_if_dirty();
         if result.is_ok() {
             if self.retention_backoff.is_some() {
                 self.emit(AppEvent::RetentionOk);

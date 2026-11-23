@@ -46,6 +46,27 @@ pub fn folder_to_open(path: &Path) -> Option<PathBuf> {
     (path.is_absolute() && path.is_dir()).then(|| path.to_path_buf())
 }
 
+/// Free disk space of the volume holding `dir`, in bytes, or `None` when it cannot be
+/// measured (compaction is then refused rather than risked).
+pub fn free_disk_bytes(dir: &Path) -> Option<u64> {
+    #[cfg(windows)]
+    {
+        crate::winsys::free_disk_bytes(dir)
+    }
+    #[cfg(not(windows))]
+    {
+        // The system tool by absolute path (no search path); the folder is ONE argument.
+        let out = std::process::Command::new("/bin/df")
+            .arg("-Pk")
+            .arg(dir)
+            .output()
+            .ok()?;
+        out.status
+            .success()
+            .then(|| super::data::parse_df_available(&String::from_utf8_lossy(&out.stdout)))?
+    }
+}
+
 /// Opens `path` in the file manager. True when the file manager was started.
 pub fn open_folder(path: &Path) -> bool {
     let Some(dir) = folder_to_open(path) else {
@@ -110,6 +131,11 @@ mod tests {
         assert_eq!(display_name("tool.exe"), "tool.exe");
     }
 
+    #[test]
+    fn free_space_of_an_existing_folder_is_measurable() {
+        let d = tempfile::tempdir().unwrap();
+        assert!(free_disk_bytes(d.path()).is_some_and(|n| n > 0));
+    }
     #[test]
     fn nothing_is_started_for_a_bad_path() {
         assert!(!open_folder(Path::new("no-such-folder")));

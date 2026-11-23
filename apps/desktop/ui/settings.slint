@@ -88,6 +88,11 @@ export global SText {
     in property <string> clear-confirm;
     in property <string> keep-pinned;
     in property <string> clear-do;
+    in property <string> cleanup-heading;
+    in property <string> older-label;
+    in property <string> older-do;
+    in property <string> orphans-do;
+    in property <string> compact-do;
     // About
     in property <string> version;
     in property <string> caps-label;
@@ -204,6 +209,11 @@ export component SettingsWindow inherits Window {
     in property <bool> clear-open;
     in property <bool> limits-open;
     in-out property <bool> clear-keep-pinned: true;
+    // The question of the clear dialog (it names the count for the checkbox state).
+    in property <string> clear-question;
+    in property <bool> cleanup-open;
+    in property <string> cleanup-question;
+    in-out property <string> older-days: "30";
     // Multi-line texts.
     in property <string> stats-text;
     in property <string> skip-text;
@@ -228,6 +238,12 @@ export component SettingsWindow inherits Window {
     callback clear-ask();
     callback clear-confirm();
     callback clear-cancel();
+    callback clear-toggled(bool);
+    callback older-ask(string);
+    callback orphans-ask();
+    callback compact-ask();
+    callback cleanup-confirm();
+    callback cleanup-cancel();
     callback open-folder();
     callback show-welcome();
     callback escape();
@@ -643,6 +659,43 @@ export component SettingsWindow inherits Window {
                                     }
                                 }
                             }
+                            Caption {
+                                text: SText.cleanup-heading;
+                                font-weight: 700;
+                            }
+                            Caption {
+                                text: SText.older-label;
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                LineEdit {
+                                    text <=> root.older-days;
+                                    input-type: number;
+                                    accessible-label: SText.older-label;
+                                }
+                                Button {
+                                    text: SText.older-do;
+                                    clicked => {
+                                        root.older-ask(root.older-days);
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                alignment: start;
+                                spacing: 8px;
+                                Button {
+                                    text: SText.orphans-do;
+                                    clicked => {
+                                        root.orphans-ask();
+                                    }
+                                }
+                                Button {
+                                    text: SText.compact-do;
+                                    clicked => {
+                                        root.compact-ask();
+                                    }
+                                }
+                            }
                         }
 
                         // ---------------------------------------------------- About
@@ -846,13 +899,16 @@ export component SettingsWindow inherits Window {
                 padding: 14px;
                 spacing: 12px;
                 Text {
-                    text: SText.clear-confirm;
+                    text: root.clear-question;
                     color: Theme.text;
                     wrap: word-wrap;
                 }
                 CheckBox {
                     text: SText.keep-pinned;
                     checked <=> root.clear-keep-pinned;
+                    toggled => {
+                        root.clear-toggled(self.checked);
+                    }
                 }
                 HorizontalLayout {
                     spacing: 8px;
@@ -868,6 +924,45 @@ export component SettingsWindow inherits Window {
                         primary: true;
                         clicked => {
                             root.clear-confirm();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Delete old clips, remove orphaned files, compact: each asks first and names the count.
+    Overlay {
+        open: root.cleanup-open;
+        Rectangle {
+            width: min(parent.width - 40px, 420px);
+            height: cleanup-col.preferred-height + 28px;
+            background: Theme.bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.danger;
+            cleanup-col := VerticalLayout {
+                padding: 14px;
+                spacing: 12px;
+                Text {
+                    text: root.cleanup-question;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Button {
+                        text: SText.cancel;
+                        clicked => {
+                            root.cleanup-cancel();
+                        }
+                    }
+                    Button {
+                        text: SText.clear-do;
+                        primary: true;
+                        clicked => {
+                            root.cleanup-confirm();
                         }
                     }
                 }

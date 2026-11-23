@@ -243,3 +243,18 @@ pub fn windows_directory() -> Option<std::path::PathBuf> {
     let n = unsafe { GetWindowsDirectoryW(Some(&mut buf)) } as usize;
     (n > 0 && n < buf.len()).then(|| std::path::PathBuf::from(String::from_utf16_lossy(&buf[..n])))
 }
+
+/// Free bytes available to this user on the volume that holds `dir`, from
+/// `GetDiskFreeSpaceExW` (quotas included). `None` when the call fails.
+pub fn free_disk_bytes(dir: &std::path::Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut free = 0u64;
+    // SAFETY: `wide` is NUL-terminated and outlives the call; `free` is a valid, writable u64;
+    // the two optional out-pointers are not requested.
+    unsafe { GetDiskFreeSpaceExW(PCWSTR(wide.as_ptr()), Some(&mut free), None, None) }
+        .ok()
+        .map(|()| free)
+}

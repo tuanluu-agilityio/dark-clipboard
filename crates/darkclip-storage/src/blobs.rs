@@ -247,26 +247,56 @@ fn is_blob_name(name: &str) -> bool {
     name.len() == 64 && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// A cleanup pass with the bytes of the files it removed (or, in a scan, would remove).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Counted {
+    pub cleanup: Cleanup,
+    pub bytes: u64,
+}
+
 /// Startup orphan sweep: removes `.tmp` leftovers and blob files no row references,
 /// under `BEGIN IMMEDIATE`. Only touches files named like blobs inside
 /// two-hex-digit shard directories. Never fails: errors are skipped and counted.
 pub(crate) fn sweep(conn: &mut Connection, data_dir: &Path) -> Cleanup {
-    let mut out = Cleanup::default();
+    sweep_counted(conn, data_dir).cleanup
+}
+
+/// `sweep`, also reporting the bytes freed.
+pub(crate) fn sweep_counted(conn: &mut Connection, data_dir: &Path) -> Counted {
+    let mut out = Counted::default();
     let Ok(tx) = conn.transaction_with_behavior(TransactionBehavior::Immediate) else {
-        out.failed += 1;
+        out.cleanup.failed += 1;
         return out;
     };
     let Ok(referenced) = referenced_set(&tx) else {
-        out.failed += 1;
+        out.cleanup.failed += 1;
         return out;
     };
+    walk_orphans(&referenced, data_dir, true, &mut out);
+    drop(tx);
+    out
+}
+
+/// What `sweep` would remove, without removing anything (a read-only count for the
+/// confirmation; a blob being written right now may be counted, the real sweep runs under
+/// the write lock).
+pub(crate) fn scan(conn: &Connection, data_dir: &Path) -> Result<Counted, StorageError> {
+    let referenced = referenced_set(conn)?;
+    let mut out = Counted::default();
+    walk_orphans(&referenced, data_dir, false, &mut out);
+    Ok(out)
+}
+
+/// Visits the blob shards; orphans and stale `.tmp` files are removed when `delete` is set,
+/// otherwise only counted (`removed` and `bytes` then mean "would be removed").
+fn walk_orphans(referenced: &HashSet<String>, data_dir: &Path, delete: bool, out: &mut Counted) {
     let Ok(shards) = fs::read_dir(data_dir.join(BLOBS_DIR)) else {
-        out.failed += 1;
-        return out;
+        out.cleanup.failed += 1;
+        return;
     };
     for shard in shards {
         let Ok(shard) = shard else {
-            out.failed += 1;
+            out.cleanup.failed += 1;
             continue;
         };
         let is_shard = shard
@@ -277,12 +307,12 @@ pub(crate) fn sweep(conn: &mut Connection, data_dir: &Path) -> Cleanup {
             continue;
         }
         let Ok(entries) = fs::read_dir(shard.path()) else {
-            out.failed += 1;
+            out.cleanup.failed += 1;
             continue;
         };
         for entry in entries {
             let Ok(entry) = entry else {
-                out.failed += 1;
+                out.cleanup.failed += 1;
                 continue;
             };
             let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
@@ -293,11 +323,20 @@ pub(crate) fn sweep(conn: &mut Connection, data_dir: &Path) -> Cleanup {
             }
             let stale_tmp = name.strip_suffix(".tmp").is_some_and(is_blob_name);
             let orphan = is_blob_name(&name) && !referenced.contains(&name);
-            if stale_tmp || orphan {
-                remove(&entry.path(), &mut out);
+            if !(stale_tmp || orphan) {
+                continue;
+            }
+            let len = entry.metadata().map_or(0, |m| m.len());
+            if delete {
+                let before = out.cleanup.removed;
+                remove(&entry.path(), &mut out.cleanup);
+                if out.cleanup.removed > before {
+                    out.bytes = out.bytes.saturating_add(len);
+                }
+            } else {
+                out.cleanup.removed += 1;
+                out.bytes = out.bytes.saturating_add(len);
             }
         }
     }
-    drop(tx);
-    out
 }

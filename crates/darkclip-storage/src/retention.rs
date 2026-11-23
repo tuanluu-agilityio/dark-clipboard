@@ -112,14 +112,39 @@ fn delete_ids(tx: &Transaction<'_>, ids: &[String]) -> Result<Deleted, StorageEr
     Ok(out)
 }
 
-/// The extra `WHERE` clause that keeps favorites out of age, count and size eviction.
+/// The extra `WHERE` clause that keeps members of the system Favorites collection out.
+const NOT_FAVORITE: &str = " AND id NOT IN (SELECT m.clip_id FROM collection_clips m \
+     JOIN collections k ON k.id = m.collection_id WHERE k.system_key = 'favorites')";
+
+/// `NOT_FAVORITE` when the policy keeps favorites (age, count and size eviction).
 fn favorites_exempt(p: &RetentionPolicy) -> &'static str {
     if p.keep_favorites {
-        " AND id NOT IN (SELECT m.clip_id FROM collection_clips m \
-         JOIN collections k ON k.id = m.collection_id WHERE k.system_key = 'favorites')"
+        NOT_FAVORITE
     } else {
         ""
     }
+}
+
+/// The clips "clear history" deletes: all of them, or with `keep_pinned` the ones that are
+/// neither pinned nor favorite.
+fn clearable_sql(keep_pinned: bool) -> String {
+    if keep_pinned {
+        format!("SELECT id FROM clips WHERE pinned = 0{NOT_FAVORITE}")
+    } else {
+        "SELECT id FROM clips".to_owned()
+    }
+}
+
+/// The clips "delete older than" deletes: unpinned, not favorite, last copied before `?1`.
+fn older_than_sql(select: &str) -> String {
+    format!("SELECT {select} FROM clips WHERE pinned = 0 AND last_copied_at < ?1{NOT_FAVORITE}")
+}
+
+fn cutoff(now: i64, days: u32) -> Result<i64, StorageError> {
+    if days == 0 {
+        return Err(StorageError::InvalidArgument("days must be 1 or more"));
+    }
+    Ok(now.saturating_sub(i64::from(days).saturating_mul(MS_PER_DAY)))
 }
 
 fn select_ids(
@@ -136,7 +161,7 @@ fn select_ids(
     Ok(ids)
 }
 
-fn checkpoint(conn: &Connection) {
+pub(crate) fn checkpoint(conn: &Connection) {
     // Best-effort: a busy reader only delays the truncate.
     let _ = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
 }
@@ -147,7 +172,13 @@ impl Storage {
         if !d.shas.is_empty() {
             let _ = blobs::remove_unreferenced(&mut self.conn, &self.dir, &d.shas);
         }
-        if force_checkpoint || d.count > CHECKPOINT_THRESHOLD {
+        // Contentless FTS5 keeps the tokens of deleted rows until its segments merge, and
+        // neither `secure_delete` nor `VACUUM` removes them (F-20): merge, then truncate the
+        // WAL so the old pages are gone from both files.
+        if d.count > 0 {
+            crate::maintenance::fts_optimize(&self.conn);
+        }
+        if force_checkpoint || d.count > 0 {
             checkpoint(&self.conn);
         }
     }
@@ -166,18 +197,14 @@ impl Storage {
         Ok(())
     }
 
-    /// Deletes every clip (or every unpinned clip). Returns the number deleted.
+    /// Deletes every clip, or with `keep_pinned` every clip that is neither pinned nor a
+    /// favorite. Returns the number deleted.
     pub fn clear_history(&mut self, keep_pinned: bool) -> Result<u64, StorageError> {
         self.ensure_writable()?;
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let sql = if keep_pinned {
-            "SELECT id FROM clips WHERE pinned = 0"
-        } else {
-            "SELECT id FROM clips"
-        };
-        let ids = select_ids(&tx, sql, [])?;
+        let ids = select_ids(&tx, &clearable_sql(keep_pinned), [])?;
         let d = delete_ids(&tx, &ids)?;
         tx.commit()?;
         self.finish_delete(&d, true);
@@ -291,6 +318,37 @@ impl Storage {
             checkpoint(&self.conn);
         }
         Ok(report)
+    }
+
+    /// How many clips `clear_history(keep_pinned)` would delete.
+    pub fn count_clearable(&self, keep_pinned: bool) -> Result<u64, StorageError> {
+        let sql = clearable_sql(keep_pinned).replacen("SELECT id", "SELECT count(*)", 1);
+        let n: i64 = self.conn.query_row(&sql, [], |r| r.get(0))?;
+        Ok(to_u64(n))
+    }
+
+    /// How many clips `delete_older_than(days)` would delete.
+    pub fn count_older_than(&self, days: u32) -> Result<u64, StorageError> {
+        let cut = cutoff(self.clock.now().0, days)?;
+        let n: i64 = self
+            .conn
+            .query_row(&older_than_sql("count(*)"), [cut], |r| r.get(0))?;
+        Ok(to_u64(n))
+    }
+
+    /// Deletes the clips last copied more than `days` days ago, except pinned clips and
+    /// favorites. `days` must be at least 1. Returns the number deleted.
+    pub fn delete_older_than(&mut self, days: u32) -> Result<u64, StorageError> {
+        self.ensure_writable()?;
+        let cut = cutoff(self.clock.now().0, days)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let ids = select_ids(&tx, &older_than_sql("id"), [cut])?;
+        let d = delete_ids(&tx, &ids)?;
+        tx.commit()?;
+        self.finish_delete(&d, true);
+        Ok(d.count)
     }
 
     /// Removes blob files (and `.tmp` leftovers) that nothing references. Returns the

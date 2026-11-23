@@ -111,6 +111,7 @@ impl Actor {
             match rx.recv_timeout(wake.saturating_duration_since(Instant::now())) {
                 Ok(Msg::Signal(s)) => self.on_signal(s),
                 Ok(Msg::Cmd(ActorCommand::Shutdown { reply })) => {
+                    self.storage.optimize_fts_if_dirty();
                     self.monitor.stop();
                     let _ = reply.send(());
                     return;
@@ -285,6 +286,18 @@ impl Actor {
                     self.storage
                         .clear_history(keep_pinned)
                         .map_err(|e| map_storage(&e))
+                };
+                let _ = reply.send(r);
+            }
+            ActorCommand::Maintenance {
+                op,
+                deadline,
+                reply,
+            } => {
+                let r = if late(deadline) {
+                    Err(ApiError::Internal)
+                } else {
+                    self.maintain(op)
                 };
                 let _ = reply.send(r);
             }

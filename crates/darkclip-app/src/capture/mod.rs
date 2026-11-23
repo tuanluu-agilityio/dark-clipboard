@@ -20,6 +20,7 @@
 
 mod actor;
 mod copy_back;
+mod maintenance;
 mod organize;
 mod pending;
 mod pipeline;
@@ -95,6 +96,12 @@ pub enum ActorCommand {
         deadline: Instant,
         reply: Sender<Result<u64, ApiError>>,
     },
+    /// A data-management action of Settings > History (Task 411).
+    Maintenance {
+        op: MaintOp,
+        deadline: Instant,
+        reply: Sender<Result<MaintReply, ApiError>>,
+    },
     /// A collection, favorite, tag or note change; replies with what it produced.
     Organize {
         op: OrganizeOp,
@@ -116,6 +123,23 @@ pub enum SaveOutcome {
     Exists(ClipId),
     /// Capture's own rules refused it (a secret under "drop", a disabled kind); nothing stored.
     Dropped(darkclip_core::policy::SkipReason),
+}
+
+/// A data-management action (Task 411). `Compact` carries the free disk space the caller
+/// measured: this crate has no OS access.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaintOp {
+    DeleteOlderThan(u32),
+    SweepOrphans,
+    Compact(u64),
+}
+
+/// What a `MaintOp` produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaintReply {
+    Deleted(u64),
+    Orphans(darkclip_storage::OrphanReport),
+    Compacted(darkclip_storage::CompactReport),
 }
 
 /// An organisation mutation (Task 402). Names and notes are user text, so the manual `Debug`

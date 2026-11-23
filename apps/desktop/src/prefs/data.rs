@@ -27,8 +27,11 @@ pub struct ClearCounts {
 
 impl ClearCounts {
     pub fn for_choice(&self, keep_pinned_and_favorites: bool) -> u64 {
-        let _ = keep_pinned_and_favorites;
-        0
+        if keep_pinned_and_favorites {
+            self.keeping
+        } else {
+            self.everything
+        }
     }
 }
 
@@ -42,7 +45,7 @@ impl CleanupFlow {
     /// Opens the dialog; `shown` is the count (or, for compaction, the database size in bytes)
     /// the dialog names.
     pub fn ask(&mut self, action: CleanupAction, shown: u64) {
-        let _ = (action, shown);
+        self.open = Some((action, shown));
     }
 
     pub fn cancel(&mut self) {
@@ -51,7 +54,7 @@ impl CleanupFlow {
 
     /// The action when the dialog was open; closes it. `None` otherwise.
     pub fn confirm(&mut self) -> Option<CleanupAction> {
-        None
+        self.open.take().map(|(action, _)| action)
     }
 
     pub fn is_open(&self) -> bool {
@@ -60,26 +63,50 @@ impl CleanupFlow {
 
     /// The question and the number it shows.
     pub fn prompt(&self) -> Option<(Msg, u64)> {
-        None
+        self.open.map(|(action, shown)| {
+            let msg = match action {
+                CleanupAction::OlderThan(_) => Msg::SettingsOlderConfirm,
+                CleanupAction::Orphans => Msg::SettingsOrphansConfirm,
+                CleanupAction::Compact => Msg::SettingsCompactConfirm,
+            };
+            (msg, shown)
+        })
     }
 }
 
 /// "3650" -> 3650; empty, zero, signs, spaces inside, too large and non-digits -> `None`.
 pub fn parse_days(text: &str) -> Option<u32> {
-    let _ = text;
-    None
+    let t = text.trim();
+    if t.is_empty() || !t.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let n: u32 = t.parse().ok()?;
+    (DAYS_MIN..=DAYS_MAX).contains(&n).then_some(n)
 }
 
 /// 1024-based, one decimal from KB up: `0 B`, `512 B`, `1.5 KB`, `2.0 MB`.
 pub fn format_bytes(n: u64) -> String {
-    let _ = n;
-    String::new()
+    const UNITS: [&str; 3] = ["KB", "MB", "GB"];
+    if n < 1024 {
+        return format!("{n} B");
+    }
+    // Lossy only above 2^53 bytes, far beyond what is shown with one decimal.
+    #[allow(clippy::cast_precision_loss)]
+    let mut v = n as f64 / 1024.0;
+    let mut unit = 0;
+    while v >= 1024.0 && unit + 1 < UNITS.len() {
+        v /= 1024.0;
+        unit += 1;
+    }
+    format!("{v:.1} {}", UNITS[unit])
 }
 
 /// Free bytes from `df -Pk <path>` output (the last line's "Available" column, in KiB).
+#[cfg_attr(windows, allow(dead_code))]
 pub fn parse_df_available(output: &str) -> Option<u64> {
-    let _ = output;
-    None
+    let line = output.lines().rev().find(|l| !l.trim().is_empty())?;
+    let kib: u64 = line.split_whitespace().nth(3)?.parse().ok()?;
+    kib.checked_mul(1024)
 }
 
 #[cfg(test)]
@@ -150,7 +177,7 @@ mod tests {
         assert_eq!(format_bytes(1536), "1.5 KB");
         assert_eq!(format_bytes(2 * 1024 * 1024), "2.0 MB");
         assert_eq!(format_bytes(5 * 1024 * 1024 * 1024), "5.0 GB");
-        assert_eq!(format_bytes(u64::MAX).ends_with("GB"), true);
+        assert!(format_bytes(u64::MAX).ends_with("GB"));
     }
 
     #[test]
