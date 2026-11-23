@@ -2,7 +2,7 @@
 
 use super::fill_name;
 use darkclip_core::i18n::{t, Lang, Msg};
-use darkclip_core::CollectionId;
+use darkclip_core::{CollectionId, COLLECTION_NAME_MAX_CHARS};
 
 /// A name for a new or renamed collection: trimmed, 1-80 characters, and not used by another
 /// collection (compared without case). `existing` lists every collection (id, name), the system
@@ -12,8 +12,20 @@ pub fn validate_name(
     existing: &[(CollectionId, String)],
     except: Option<CollectionId>,
 ) -> Result<String, Msg> {
-    let _ = (raw, existing, except);
-    Err(Msg::OrgNameEmpty)
+    let name = raw.trim();
+    match name.chars().count() {
+        0 => return Err(Msg::OrgNameEmpty),
+        n if n > COLLECTION_NAME_MAX_CHARS => return Err(Msg::OrgNameTooLong),
+        _ => {}
+    }
+    let lower = name.to_lowercase();
+    let taken = existing
+        .iter()
+        .any(|(id, n)| Some(*id) != except && n.trim().to_lowercase() == lower);
+    if taken {
+        return Err(Msg::OrgNameExists);
+    }
+    Ok(name.to_string())
 }
 
 /// The confirmation before a collection is deleted. The clips are kept; only the collection and
@@ -39,35 +51,44 @@ impl CollectionDelete {
 
     /// Opens the confirmation. False (nothing opens) for the system collection.
     pub fn request(&mut self, id: CollectionId, name: &str, clips: u64, system: bool) -> bool {
-        let _ = (id, name, clips, system);
-        false
+        if system {
+            return false;
+        }
+        self.pending = Some((id, name.to_string(), clips));
+        true
     }
 
     pub fn is_confirming(&self) -> bool {
-        false
+        self.pending.is_some()
     }
 
     /// The question to show: names the collection and says its clips stay.
     pub fn text(&self, lang: Lang) -> Option<String> {
-        let _ = (lang, fill_name, t(lang, Msg::OrgNameEmpty));
-        None
+        let (_, name, clips) = self.pending.as_ref()?;
+        Some(fill_name(
+            t(lang, Msg::OrgConfirmDeleteCollection),
+            name,
+            *clips,
+        ))
     }
 
     /// The user confirmed: the collection to delete, once.
     pub fn confirm(&mut self) -> Option<CollectionId> {
-        None
+        self.pending.take().map(|(id, _, _)| id)
     }
 
-    pub fn cancel(&mut self) {}
+    pub fn cancel(&mut self) {
+        self.pending = None;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use darkclip_core::Timestamp;
 
+    /// The same id for the same `n` (a v7 id has random bits, so `new_v7` would differ).
     fn id(n: i64) -> CollectionId {
-        CollectionId::new_v7(Timestamp(1_795_320_000_000 + n))
+        CollectionId::parse(&format!("01a20169-2e01-7000-8000-{n:012}")).unwrap()
     }
 
     fn existing() -> Vec<(CollectionId, String)> {

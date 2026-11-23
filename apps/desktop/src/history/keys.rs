@@ -83,6 +83,7 @@ pub fn map_key(k: Key, m: Mods, ctx: HistoryCtx) -> Option<HistoryAction> {
         }
     };
     let ctrl_only = m.ctrl && !m.alt && !m.meta && !m.shift;
+    let ctrl_shift = m.ctrl && m.shift && !m.alt && !m.meta;
     let nav = |k: Key| match k {
         Key::Up => Some(Move::Up),
         Key::Down => Some(Move::Down),
@@ -109,6 +110,14 @@ pub fn map_key(k: Key, m: Mods, ctx: HistoryCtx) -> Option<HistoryAction> {
         Key::Char('p' | 'P' | '\u{10}') if m.ctrl && !m.alt => Some(HistoryAction::TogglePin),
         Key::Char('t' | 'T' | '\u{14}') if ctrl_only => Some(HistoryAction::CopyAs),
         Key::Char('e' | 'E' | '\u{5}') if ctrl_only => Some(HistoryAction::Edit),
+        Key::Char('d' | 'D' | '\u{4}') if ctrl_only => Some(HistoryAction::ToggleFavorite),
+        Key::Char('n' | 'N' | '\u{e}') if ctrl_only => Some(HistoryAction::EditNote),
+        Key::Char('g' | 'G' | '\u{7}') if ctrl_only => Some(HistoryAction::EditTags),
+        Key::Char('l' | 'L' | '\u{c}') if ctrl_only => Some(HistoryAction::AddToCollection),
+        Key::Char('l' | 'L' | '\u{c}') if ctrl_shift => Some(HistoryAction::RemoveFromCollection),
+        Key::Char('n' | 'N' | '\u{e}') if ctrl_shift => Some(HistoryAction::NewCollection),
+        Key::Char('r' | 'R' | '\u{12}') if ctrl_shift => Some(HistoryAction::RenameCollection),
+        Key::Delete if ctrl_shift => Some(HistoryAction::DeleteCollection),
         // Ctrl+A selects text in a non-empty search box; otherwise it selects every loaded row.
         Key::Char('a' | 'A' | '\u{1}') if m.ctrl && !m.alt && list_keys => {
             Some(HistoryAction::SelectAll)

@@ -22,23 +22,37 @@ pub enum DialogKind {
 impl DialogKind {
     /// The dialog has a text box.
     pub fn has_input(self) -> bool {
-        let _ = self;
-        false
+        !matches!(self, DialogKind::PickAdd | DialogKind::PickRemove)
     }
 
     /// The text box takes several lines (the note).
     pub fn multiline(self) -> bool {
-        false
+        matches!(self, DialogKind::Note(_))
     }
 
     /// The title.
     pub fn title(self) -> Msg {
-        Msg::OrgSave
+        match self {
+            DialogKind::NewCollection => Msg::OrgNewCollection,
+            DialogKind::RenameCollection(_) => Msg::OrgRenameCollection,
+            DialogKind::Note(_) => Msg::OrgNote,
+            DialogKind::Tags(_) => Msg::OrgTagsEdit,
+            DialogKind::BulkTag => Msg::OrgAddTag,
+            DialogKind::PickAdd => Msg::OrgAddToCollection,
+            DialogKind::PickRemove => Msg::OrgRemoveFromCollection,
+        }
     }
 
     /// The key hint under the dialog.
     pub fn hint(self) -> Msg {
-        Msg::OrgSave
+        match self {
+            DialogKind::Note(_) => Msg::OrgNoteHint,
+            DialogKind::Tags(_) => Msg::OrgTagsHint,
+            DialogKind::PickAdd | DialogKind::PickRemove => Msg::OrgPickHint,
+            DialogKind::NewCollection | DialogKind::RenameCollection(_) | DialogKind::BulkTag => {
+                Msg::OrgKeyHintsConfirm
+            }
+        }
     }
 }
 
@@ -57,8 +71,24 @@ pub enum DialogKey {
 
 /// The meaning of a key for the open dialog. `input_empty`: the text box holds nothing.
 pub fn dialog_key(kind: DialogKind, key: Key, ctrl: bool, input_empty: bool) -> DialogKey {
-    let _ = (kind, key, ctrl, input_empty);
-    DialogKey::Pass
+    let picker = !kind.has_input();
+    match key {
+        Key::Escape => DialogKey::Cancel,
+        Key::Enter if matches!(kind, DialogKind::Note(_)) => {
+            if ctrl {
+                DialogKey::Submit
+            } else {
+                DialogKey::Pass
+            }
+        }
+        Key::Enter => DialogKey::Submit,
+        Key::Up if picker => DialogKey::Up,
+        Key::Down if picker => DialogKey::Down,
+        Key::Char('\u{8}') if !ctrl && input_empty && matches!(kind, DialogKind::Tags(_)) => {
+            DialogKey::RemoveLastTag
+        }
+        _ => DialogKey::Pass,
+    }
 }
 
 /// The list of a picker dialog and its highlighted row.
@@ -84,28 +114,37 @@ impl Picker {
     }
 
     pub fn is_empty(&self) -> bool {
-        true
+        self.items.is_empty()
     }
 
     pub fn selected(&self) -> usize {
-        99
+        self.selected
     }
 
-    pub fn up(&mut self) {}
+    pub fn up(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+    }
 
-    pub fn down(&mut self) {}
+    pub fn down(&mut self) {
+        if self.selected + 1 < self.items.len() {
+            self.selected += 1;
+        }
+    }
 
+    /// A click on row `i`; a row that does not exist changes nothing.
     pub fn select(&mut self, i: usize) {
-        let _ = i;
+        if i < self.items.len() {
+            self.selected = i;
+        }
     }
 
     /// The highlighted collection, or `None` for an empty list.
     pub fn chosen(&self) -> Option<(CollectionId, String)> {
-        None
+        self.items.get(self.selected).cloned()
     }
 
     pub fn labels(&self) -> Vec<String> {
-        Vec::new()
+        self.items.iter().map(|(_, n)| n.clone()).collect()
     }
 }
 
@@ -116,8 +155,9 @@ mod tests {
 
     const T: i64 = 1_795_320_000_000;
 
+    /// The same id for the same `n` (a v7 id has random bits, so `new_v7` would differ).
     fn cid(n: i64) -> CollectionId {
-        CollectionId::new_v7(Timestamp(T + n))
+        CollectionId::parse(&format!("01a20169-2e01-7000-8000-{n:012}")).unwrap()
     }
 
     fn clip() -> ClipId {

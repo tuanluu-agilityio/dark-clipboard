@@ -35,7 +35,7 @@ pub struct ChipSpec {
     pub header: bool,
 }
 
-fn chip(id: i32, label: &str, on: bool) -> ChipSpec {
+pub(crate) fn chip(id: i32, label: &str, on: bool) -> ChipSpec {
     ChipSpec {
         id,
         label: label.to_string(),
@@ -44,7 +44,7 @@ fn chip(id: i32, label: &str, on: bool) -> ChipSpec {
     }
 }
 
-fn header(label: &str) -> ChipSpec {
+pub(crate) fn header(label: &str) -> ChipSpec {
     ChipSpec {
         id: -1,
         label: label.to_string(),
@@ -97,7 +97,12 @@ pub fn popup_chips(f: &Filters, sources: &[String], lang: Lang) -> Vec<ChipSpec>
 
 /// True when no filter besides the search text is on.
 pub fn is_all(f: &Filters) -> bool {
-    f.kinds.is_empty() && !f.pinned_only && f.time == TimeFilter::Any && f.source.is_none()
+    f.kinds.is_empty()
+        && !f.pinned_only
+        && f.time == TimeFilter::Any
+        && f.source.is_none()
+        && f.collection.is_none()
+        && f.tag.is_none()
 }
 
 /// The history window's left pane: All, Pinned, then the Type, Date and Source groups.

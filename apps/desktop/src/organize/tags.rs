@@ -3,18 +3,30 @@
 //! `_` and `-`, 40 characters); the editor never sends anything that the core would refuse.
 
 use darkclip_core::i18n::Msg;
+use darkclip_core::{CoreError, Tag, TAGS_PER_CLIP_MAX};
 
 /// A tag name as the core would store it, or the message to show.
 pub fn normalize(raw: &str) -> Result<String, Msg> {
-    let _ = raw;
-    Err(Msg::OrgTagInvalid)
+    Tag::validate_name(raw).map_err(|e| match e {
+        CoreError::TooLong { .. } => Msg::OrgTagTooLong,
+        _ => Msg::OrgTagInvalid,
+    })
 }
 
 /// `existing` plus `raw` (normalised), sorted without duplicates. `Ok(None)` when the clip has
 /// the tag already; an error when the name is invalid or the clip has 20 tags.
 pub fn merged(existing: &[String], raw: &str) -> Result<Option<Vec<String>>, Msg> {
-    let _ = (existing, raw);
-    Err(Msg::OrgTagInvalid)
+    let name = normalize(raw)?;
+    if existing.contains(&name) {
+        return Ok(None);
+    }
+    if existing.len() >= TAGS_PER_CLIP_MAX {
+        return Err(Msg::OrgTagsFull);
+    }
+    let mut all = existing.to_vec();
+    all.push(name);
+    all.sort();
+    Ok(Some(all))
 }
 
 /// The chips of one clip. Every change returns the complete new list, which is what
@@ -44,19 +56,24 @@ impl TagEditor {
 
     /// Adds a tag. `Ok(Some(list))`: send `list`; `Ok(None)`: already there; `Err`: show it.
     pub fn add(&mut self, raw: &str) -> Result<Option<Vec<String>>, Msg> {
-        let _ = raw;
-        Err(Msg::OrgTagInvalid)
+        let list = merged(&self.tags, raw)?;
+        if let Some(l) = &list {
+            self.tags.clone_from(l);
+        }
+        Ok(list)
     }
 
     /// Removes the chip named `name`; the new list, or `None` when there is no such chip.
     pub fn remove(&mut self, name: &str) -> Option<Vec<String>> {
-        let _ = name;
-        None
+        let pos = self.tags.iter().position(|t| t == name)?;
+        self.tags.remove(pos);
+        Some(self.tags.clone())
     }
 
     /// Backspace in an empty input removes the last chip.
     pub fn remove_last(&mut self) -> Option<Vec<String>> {
-        None
+        self.tags.pop()?;
+        Some(self.tags.clone())
     }
 
     /// The server's answer replaced the list (it is the truth).

@@ -21,15 +21,15 @@ impl std::fmt::Debug for NoteEditor {
 impl NoteEditor {
     /// An editor on the clip's current note (`None`: no note yet).
     pub fn new(existing: Option<&str>) -> Self {
-        let _ = (existing, NOTE_MAX_CHARS);
+        let text = existing.unwrap_or_default().to_string();
         Self {
-            original: String::new(),
-            text: String::new(),
+            original: text.clone(),
+            text,
         }
     }
 
     pub fn set_text(&mut self, text: &str) {
-        let _ = text;
+        self.text = text.to_string();
     }
 
     pub fn text(&self) -> &str {
@@ -38,31 +38,46 @@ impl NoteEditor {
 
     /// Characters typed (not bytes).
     pub fn count(&self) -> usize {
-        0
+        self.text.chars().count()
     }
 
     pub fn max(&self) -> usize {
-        0
+        NOTE_MAX_CHARS
     }
 
     /// "123 / 4000".
     pub fn counter(&self) -> String {
-        String::new()
+        format!("{} / {}", self.count(), self.max())
     }
 
     pub fn over_limit(&self) -> bool {
-        false
+        self.count() > self.max()
     }
 
-    /// Save is offered when the note changed and is within the limit.
+    /// Save is offered when the note changed and is within the limit. A blank text over no
+    /// note is no change.
     pub fn can_save(&self) -> bool {
-        false
+        !self.over_limit() && self.save_value_unchecked().is_some()
+    }
+
+    fn save_value_unchecked(&self) -> Option<Option<String>> {
+        if self.text == self.original {
+            return None;
+        }
+        if self.text.trim().is_empty() {
+            // Clearing is a change only when there was a note.
+            return (!self.original.trim().is_empty()).then_some(None);
+        }
+        Some(Some(self.text.clone()))
     }
 
     /// What Save sends: `Some(Some(text))` sets the note, `Some(None)` clears it (the text is
     /// empty or only spaces), `None` when Save is not allowed.
     pub fn save_value(&self) -> Option<Option<String>> {
-        None
+        if self.over_limit() {
+            return None;
+        }
+        self.save_value_unchecked()
     }
 }
 

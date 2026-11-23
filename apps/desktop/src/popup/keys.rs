@@ -183,6 +183,9 @@ pub fn map_key(k: Key, m: Mods, ctx: KeyCtx) -> Option<Action> {
         Key::Delete if plain && !m.shift && list_keys => Some(Action::Delete),
         Key::Char('p' | 'P' | '\u{10}') if m.ctrl && !m.alt => Some(Action::TogglePin),
         Key::Char('t' | 'T' | '\u{14}') if m.ctrl && !m.alt && !m.shift => Some(Action::CopyAs),
+        Key::Char('d' | 'D' | '\u{4}') if m.ctrl && !m.alt && !m.shift => {
+            Some(Action::ToggleFavorite)
+        }
         // Ctrl+H may arrive as Backspace's control code; Ctrl+Backspace edits a non-empty
         // search box, so that code opens the history only when the list owns the keys.
         Key::Char('h' | 'H') if m.ctrl && !m.alt && !m.shift => Some(Action::OpenHistory),

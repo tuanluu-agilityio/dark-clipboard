@@ -96,8 +96,13 @@ pub fn row_text(item: &Item, index: usize, lang: Lang, now: Timestamp) -> RowTex
     };
     let pin_badge = item.pinned.then(|| t(lang, Msg::UiFilterPinned));
     let masked_badge = item.masked.then(|| t(lang, Msg::UiMaskedBadge));
+    let favorite_badge = item.favorite.then_some("\u{2605}");
+    let favorite_word = item.favorite.then(|| t(lang, Msg::OrgFavoriteBadge));
     let mut description = detail;
-    for b in [pin_badge, masked_badge].into_iter().flatten() {
+    for b in [pin_badge, favorite_word, masked_badge]
+        .into_iter()
+        .flatten()
+    {
         description.push_str(" · ");
         description.push_str(b);
     }
@@ -106,7 +111,7 @@ pub fn row_text(item: &Item, index: usize, lang: Lang, now: Timestamp) -> RowTex
         meta,
         description,
         pin_badge,
-        favorite_badge: None,
+        favorite_badge,
         masked_badge,
         mono: item.kind == ClipType::Code,
     }

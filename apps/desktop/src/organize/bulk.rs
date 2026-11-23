@@ -98,22 +98,74 @@ impl std::fmt::Debug for BulkPlan {
 /// The favorite toggle for one clip: the state to set, or `None` when the clip is masked and
 /// not a favorite (a masked clip can never be added to Favorites, D-060).
 pub fn favorite_toggle(item: &Item) -> Option<bool> {
-    let _ = item;
-    None
+    if item.masked && !item.favorite {
+        None
+    } else {
+        Some(!item.favorite)
+    }
 }
 
 /// What a favorite action sets for several clips: unfavorite when every one is a favorite,
 /// otherwise favorite. `None` when nothing would change (all masked non-favorites, or none).
 pub fn favorite_target(targets: &[Target]) -> Option<bool> {
-    let _ = targets;
-    None
+    if targets.is_empty() {
+        return None;
+    }
+    if targets.iter().all(|t| t.favorite) {
+        return Some(false);
+    }
+    // Favoriting: something must be left that can be added.
+    targets
+        .iter()
+        .any(|t| !t.masked && !t.favorite)
+        .then_some(true)
 }
 
 impl BulkPlan {
     /// The plan for `op` on `targets`, or `None` when no clip would change.
     pub fn new(op: BulkOp, targets: &[Target]) -> Option<BulkPlan> {
-        let _ = (op, targets, tags::merged);
-        None
+        let mut jobs = Vec::new();
+        let (mut skipped_masked, mut skipped_full) = (0, 0);
+        // Taking something away works on masked clips; adding never does (D-060).
+        let adds = matches!(
+            op,
+            BulkOp::Favorite(true) | BulkOp::AddToCollection { .. } | BulkOp::AddTag(_)
+        );
+        for t in targets {
+            if adds && t.masked {
+                skipped_masked += 1;
+                continue;
+            }
+            let job_tags = match &op {
+                BulkOp::Favorite(true) if t.favorite => continue,
+                BulkOp::Favorite(false) if !t.favorite => continue,
+                BulkOp::AddTag(tag) => match tags::merged(&t.tags, tag) {
+                    Ok(Some(list)) => list,
+                    // The clip has the tag already.
+                    Ok(None) => continue,
+                    Err(Msg::OrgTagsFull) => {
+                        skipped_full += 1;
+                        continue;
+                    }
+                    // An invalid name: nothing can run.
+                    Err(_) => return None,
+                },
+                _ => Vec::new(),
+            };
+            jobs.push(Job {
+                id: t.id,
+                tags: job_tags,
+            });
+        }
+        if jobs.is_empty() {
+            return None;
+        }
+        Some(BulkPlan {
+            op,
+            jobs,
+            skipped_masked,
+            skipped_full,
+        })
     }
 
     pub fn op(&self) -> &BulkOp {
@@ -126,32 +178,55 @@ impl BulkPlan {
 
     /// Clips that will change.
     pub fn count(&self) -> usize {
-        0
+        self.jobs.len()
     }
 
     pub fn skipped_masked(&self) -> usize {
-        0
+        self.skipped_masked
     }
 
     pub fn skipped_full(&self) -> usize {
-        0
+        self.skipped_full
     }
 
     /// More than one clip changes: the host asks first and shows the count.
     pub fn needs_confirmation(&self) -> bool {
-        false
+        self.jobs.len() > 1
     }
 
     /// The question, with the exact count.
     pub fn confirm_text(&self, lang: Lang) -> String {
-        let _ = (fill_name, t(lang, Msg::OrgDone));
-        String::new()
+        let n = self.jobs.len() as u64;
+        let (msg, name) = match &self.op {
+            BulkOp::Favorite(true) => (Msg::OrgConfirmFavorite, ""),
+            BulkOp::Favorite(false) => (Msg::OrgConfirmUnfavorite, ""),
+            BulkOp::AddToCollection { name, .. } => (Msg::OrgConfirmAddToCollection, name.as_str()),
+            BulkOp::RemoveFromCollection { name, .. } => {
+                (Msg::OrgConfirmRemoveFromCollection, name.as_str())
+            }
+            BulkOp::AddTag(tag) => (Msg::OrgConfirmAddTag, tag.as_str()),
+        };
+        fill_name(t(lang, msg), name, n)
     }
 
     /// "2 masked clips were skipped." and "1 clips already have 20 tags.", when any.
     pub fn skipped_text(&self, lang: Lang) -> Option<String> {
-        let _ = lang;
-        None
+        let mut parts = Vec::new();
+        if self.skipped_masked > 0 {
+            parts.push(fill_name(
+                t(lang, Msg::OrgSkippedMasked),
+                "",
+                self.skipped_masked as u64,
+            ));
+        }
+        if self.skipped_full > 0 {
+            parts.push(fill_name(
+                t(lang, Msg::OrgSkippedFull),
+                "",
+                self.skipped_full as u64,
+            ));
+        }
+        (!parts.is_empty()).then(|| parts.join(" "))
     }
 }
 
@@ -168,30 +243,39 @@ impl BulkFlow {
 
     /// Opens the confirmation. False for a plan that changes nothing.
     pub fn request(&mut self, plan: BulkPlan) -> bool {
-        let _ = plan;
-        false
+        if plan.jobs.is_empty() {
+            return false;
+        }
+        self.pending = Some(plan);
+        true
     }
 
     pub fn is_confirming(&self) -> bool {
-        false
+        self.pending.is_some()
     }
 
     pub fn text(&self, lang: Lang) -> Option<String> {
-        let _ = lang;
-        None
+        self.pending.as_ref().map(|p| p.confirm_text(lang))
     }
 
     /// The user confirmed: the plan to run, once.
     pub fn confirm(&mut self) -> Option<BulkPlan> {
-        None
+        self.pending.take()
     }
 
-    pub fn cancel(&mut self) {}
+    pub fn cancel(&mut self) {
+        self.pending = None;
+    }
 
     /// Rows went away while the confirmation was open: clips no longer listed are dropped from
     /// the plan, and the confirmation closes when none are left.
     pub fn retain(&mut self, ids: &[ClipId]) {
-        let _ = ids;
+        if let Some(p) = &mut self.pending {
+            p.jobs.retain(|j| ids.contains(&j.id));
+            if p.jobs.is_empty() {
+                self.pending = None;
+            }
+        }
     }
 }
 

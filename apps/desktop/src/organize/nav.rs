@@ -4,10 +4,10 @@
 //! chips. Selecting one filters the list; selecting it again clears it. One collection at a time
 //! (Favorites is a collection), and one tag; a collection and a tag combine.
 
-use crate::popup::chips::ChipSpec;
+use crate::popup::chips::{chip, header, ChipSpec};
 use crate::popup::list::Filters;
 use darkclip_app::api::{CollectionView, TagCountView};
-use darkclip_core::i18n::Lang;
+use darkclip_core::i18n::{t, Lang, Msg};
 use darkclip_core::CollectionId;
 
 /// The Favorites chip.
@@ -75,21 +75,86 @@ pub fn is_nav(id: i32) -> bool {
 /// user collections ("Name (3)"), a "Tags" heading with the tags ("name (2)"). Headings appear
 /// only when there is something under them.
 pub fn history_nav_chips(f: &Filters, nav: &Nav, lang: Lang) -> Vec<ChipSpec> {
-    let _ = (f, nav, lang);
-    Vec::new()
+    let mut v = Vec::new();
+    if let Some(fav) = nav.favorites() {
+        v.push(chip(
+            NAV_FAVORITES,
+            &format!("{} ({})", t(lang, Msg::OrgFavorites), fav.clip_count),
+            f.collection == Some(fav.id),
+        ));
+    }
+    let users = nav.user_collections();
+    if !users.is_empty() {
+        v.push(header(t(lang, Msg::OrgGroupCollections)));
+        for (i, c) in users.iter().enumerate() {
+            v.push(chip(
+                index_id(NAV_COLLECTION, i),
+                &format!("{} ({})", c.name, c.clip_count),
+                f.collection == Some(c.id),
+            ));
+        }
+    }
+    if !nav.tags.is_empty() {
+        v.push(header(t(lang, Msg::OrgGroupTags)));
+        for (i, tag) in nav.tags.iter().enumerate() {
+            v.push(chip(
+                index_id(NAV_TAG, i),
+                &format!("{} ({})", tag.name, tag.clip_count),
+                f.tag.as_deref() == Some(tag.name.as_str()),
+            ));
+        }
+    }
+    v
+}
+
+fn index_id(base: i32, i: usize) -> i32 {
+    base + i32::try_from(i).unwrap_or(0)
 }
 
 /// The popup's chips: Favorites, then at most `POPUP_MAX_COLLECTIONS` user collections.
 pub fn popup_nav_chips(f: &Filters, nav: &Nav, lang: Lang) -> Vec<ChipSpec> {
-    let _ = (f, nav, lang);
-    Vec::new()
+    let mut v = Vec::new();
+    if let Some(fav) = nav.favorites() {
+        v.push(chip(
+            NAV_FAVORITES,
+            t(lang, Msg::OrgFavorites),
+            f.collection == Some(fav.id),
+        ));
+    }
+    for (i, c) in nav
+        .user_collections()
+        .into_iter()
+        .take(POPUP_MAX_COLLECTIONS)
+        .enumerate()
+    {
+        v.push(chip(
+            index_id(NAV_COLLECTION, i),
+            &c.name,
+            f.collection == Some(c.id),
+        ));
+    }
+    v
 }
 
 /// The filters after a click on nav chip `id` (the search text and other filters are kept), or
 /// `None` for an id that means nothing (the lists changed since).
 pub fn toggle_nav(f: &Filters, id: i32, nav: &Nav) -> Option<Filters> {
-    let _ = (f, id, nav);
-    None
+    let mut f = f.clone();
+    if id == NAV_FAVORITES {
+        let fav = nav.favorites_id()?;
+        f.collection = (f.collection != Some(fav)).then_some(fav);
+    } else if id >= NAV_TAG {
+        let i = usize::try_from(id - NAV_TAG).ok()?;
+        let name = nav.tags.get(i)?.name.clone();
+        f.tag = (f.tag.as_deref() != Some(name.as_str())).then_some(name);
+    } else if id >= NAV_COLLECTION {
+        let i = usize::try_from(id - NAV_COLLECTION).ok()?;
+        let col = nav.user_collections().get(i)?.id;
+        f.collection = (f.collection != Some(col)).then_some(col);
+    } else {
+        return None;
+    }
+    Some(f)
 }
 
 #[cfg(test)]
