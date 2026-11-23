@@ -554,6 +554,7 @@ impl Host {
 
     fn on_saved(&mut self, r: Result<SaveOutcome, ApiError>) {
         let msg = match r {
+            Ok(SaveOutcome::Exists(_)) => Msg::UiActionFailed,
             Ok(SaveOutcome::Saved(_)) => {
                 self.close_edit();
                 self.show_toast(t(self.lang, Msg::TfSaved).to_string());

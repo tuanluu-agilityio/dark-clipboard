@@ -112,6 +112,8 @@ pub enum ActorCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SaveOutcome {
     Saved(ClipId),
+    /// The same content is already in history: nothing was touched (Task 404 review).
+    Exists(ClipId),
     /// Capture's own rules refused it (a secret under "drop", a disabled kind); nothing stored.
     Dropped(darkclip_core::policy::SkipReason),
 }

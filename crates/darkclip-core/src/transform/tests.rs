@@ -235,3 +235,48 @@ fn errors_carry_no_content() {
         }
     }
 }
+
+#[test]
+fn output_is_capped_like_the_input() {
+    // Deep pretty-print: 127 levels of indent for every element would be about 128 MiB.
+    let doc = format!(
+        "{}{}0{}",
+        "[".repeat(127),
+        "0,".repeat(400_000),
+        "]".repeat(127)
+    );
+    assert!(doc.len() <= MAX_INPUT_BYTES);
+    assert_eq!(err(Transform::JsonPretty, &doc), TransformError::TooLarge);
+    // Growth of the other transforms, each from an input within the cap.
+    let n_hat = "\u{149}".repeat(500_000); // upper case: 2 bytes -> 3 bytes
+    assert_eq!(err(Transform::Upper, &n_hat), TransformError::TooLarge);
+    let i_dot = "\u{130}".repeat(500_000); // lower case: 2 bytes -> 3 bytes
+    assert_eq!(err(Transform::Lower, &i_dot), TransformError::TooLarge);
+    assert_eq!(
+        err(Transform::UrlEncode, &"é".repeat(400_000)),
+        TransformError::TooLarge
+    );
+    assert_eq!(
+        err(Transform::Base64Encode, &"a".repeat(800_000)),
+        TransformError::TooLarge
+    );
+    assert_eq!(
+        err(Transform::LineEndingsCrlf, &"\n".repeat(600_000)),
+        TransformError::TooLarge
+    );
+    // At the limit is fine.
+    assert!(Transform::UrlEncode
+        .apply(&"a".repeat(MAX_INPUT_BYTES))
+        .is_ok());
+}
+
+#[test]
+fn html_entities_next_to_multibyte_characters() {
+    assert_eq!(ok(Transform::HtmlToText, "&nbsp;Đà Nẵng"), "Đà Nẵng");
+    assert_eq!(ok(Transform::HtmlToText, "&amp;ệệệ"), "&ệệệ");
+    assert_eq!(ok(Transform::HtmlToText, "ệệệ&amp;ệệệ"), "ệệệ&ệệệ");
+    assert_eq!(
+        ok(Transform::HtmlToText, "&notanentityệệệệệ;"),
+        "&notanentityệệệệệ;"
+    );
+}
