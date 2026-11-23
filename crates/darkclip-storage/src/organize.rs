@@ -236,6 +236,18 @@ impl Storage {
         CollectionId::parse(&id).map_err(|_| decode_err())
     }
 
+    /// Whether the clip is in Favorites, and its tag names (sorted). For list views.
+    pub fn clip_labels(&self, clip: &ClipId) -> Result<(bool, Vec<String>), StorageError> {
+        let clip_s = clip.to_string();
+        let fav: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM collection_clips m JOIN collections k              ON k.id = m.collection_id WHERE m.clip_id = ?1 AND k.system_key = 'favorites')",
+            [&clip_s],
+            |r| r.get(0),
+        )?;
+        let tags = tags_text(&self.conn, &clip_s)?;
+        Ok((fav, tags.split_whitespace().map(str::to_owned).collect()))
+    }
+
     /// Creates a user collection. The name is trimmed (1-80 characters); `color` must be
     /// `#rrggbb` in lowercase hex.
     pub fn create_collection(

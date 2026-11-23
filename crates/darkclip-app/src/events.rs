@@ -18,6 +18,8 @@ pub enum AppEvent {
     Unavailable(&'static str),
     /// A retention run succeeded after one had failed (clears the "retention failed" status).
     RetentionOk,
+    /// A collection, favorite, tag or note changed; open windows should refresh. No ids.
+    OrganizationChanged,
 }
 
 /// `AppEvent::Unavailable` texts that have a recovery of their own (all others are permanent
@@ -81,6 +83,9 @@ pub(crate) fn map_storage(e: &StorageError) -> ApiError {
     match e {
         StorageError::NotFound => ApiError::NotFound,
         StorageError::SchemaTooNew { .. } => ApiError::SchemaTooNew,
+        StorageError::InvalidArgument(what) => ApiError::InvalidArgument(what),
+        // A name, tag or note that breaks a schema rule; the field is not echoed.
+        StorageError::Invalid(_) => ApiError::InvalidArgument("invalid value"),
         _ => ApiError::Storage,
     }
 }
@@ -170,6 +175,16 @@ mod tests {
                 supported: 1
             }),
             ApiError::SchemaTooNew
+        );
+        assert_eq!(
+            map_storage(&StorageError::InvalidArgument("too many tags")),
+            ApiError::InvalidArgument("too many tags")
+        );
+        assert_eq!(
+            map_storage(&StorageError::Invalid(darkclip_core::CoreError::Invalid {
+                field: "name"
+            })),
+            ApiError::InvalidArgument("invalid value")
         );
         for e in [
             StorageError::Sqlite("SQLITE_BUSY".into()),

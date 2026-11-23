@@ -566,6 +566,8 @@ mod tests {
             last_copied_at: NOW,
             masked: false,
             source_app: source.map(str::to_string),
+            favorite: false,
+            tags: Vec::new(),
         }
     }
 

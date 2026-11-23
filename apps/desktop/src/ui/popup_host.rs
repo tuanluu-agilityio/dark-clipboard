@@ -1085,6 +1085,8 @@ mod tests {
             last_copied_at: NOW,
             masked: false,
             source_app: Some(source.to_string()),
+            favorite: false,
+            tags: Vec::new(),
         }
     }
 
