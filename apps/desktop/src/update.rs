@@ -22,6 +22,8 @@ pub const RELEASE_URL_PREFIX: &str =
 /// The most response bytes read (256 KiB).
 pub const MAX_BODY_BYTES: usize = 256 * 1024;
 pub const TIMEOUT: Duration = Duration::from_secs(10);
+/// The longest tag accepted, in bytes.
+pub const MAX_TAG_BYTES: usize = 64;
 /// The weekly interval, in milliseconds.
 pub const AUTO_INTERVAL_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
@@ -228,6 +230,24 @@ pub fn check_if_due(
     auto_due(u, now).then(|| check_now(fetch, current))
 }
 
+/// Allows one check at a time (the button and the weekly path share it).
+pub struct InFlight(std::sync::atomic::AtomicBool);
+
+impl InFlight {
+    pub const fn new() -> InFlight {
+        InFlight(std::sync::atomic::AtomicBool::new(false))
+    }
+
+    /// True when the caller may start a check; it must call [`InFlight::end`] afterwards.
+    pub fn try_begin(&self) -> bool {
+        unimplemented!()
+    }
+
+    pub fn end(&self) {
+        unimplemented!()
+    }
+}
+
 /// The real request: HTTPS only, no redirects, no cookies, a 10 s limit for the whole call,
 /// the body capped, and a fixed `User-Agent`. It sends nothing else of ours.
 pub struct UreqFetch;
@@ -377,7 +397,6 @@ mod tests {
     fn release_urls_are_allow_listed() {
         let ok = [
             "https://github.com/tuanluu-agilityio/dark-clipboard/releases/tag/v0.1.0",
-            "https://github.com/tuanluu-agilityio/dark-clipboard/releases/latest",
             "https://github.com/tuanluu-agilityio/dark-clipboard/releases/tag/v0.1.0-rc.1",
         ];
         for u in ok {
@@ -385,6 +404,11 @@ mod tests {
         }
         let bad = [
             "",
+            // Only release pages: never a download or the bare list.
+            "https://github.com/tuanluu-agilityio/dark-clipboard/releases/latest",
+            "https://github.com/tuanluu-agilityio/dark-clipboard/releases/download/v1.0.0/a.exe",
+            "https://github.com/tuanluu-agilityio/dark-clipboard/releases/tag/",
+            "https://github.com/tuanluu-agilityio/dark-clipboard/releases/tagx/v1",
             "https://github.com/tuanluu-agilityio/dark-clipboard/releases/",
             "https://github.com/tuanluu-agilityio/dark-clipboard/releases",
             "http://github.com/tuanluu-agilityio/dark-clipboard/releases/tag/v1.0.0",
@@ -576,6 +600,56 @@ mod tests {
         assert_eq!(f.calls.get(), 1);
         // The clock went backwards (last check far in the future): due, so it repairs itself.
         assert!(auto_due(&on(Some(now.0 + AUTO_INTERVAL_MS * 3)), now));
+    }
+
+    #[test]
+    fn build_metadata_is_validated_and_never_shown() {
+        assert!(Version::parse("1.0.0+build.5").is_some());
+        for bad in [
+            "1.2.3+",
+            "1.2.3+a..b",
+            "1.2.3+Security notice: download from evil.example",
+            "1.2.3+a b",
+            "1.2.3+\u{e9}",
+            "1.2.3+a+b",
+        ] {
+            assert!(Version::parse(bad).is_none(), "{bad:?} must be refused");
+        }
+        let url = format!("{RELEASE_URL_PREFIX}tag/v9.9.9");
+        let r = parse_response(&body("v9.9.9+meta.5", &url)).unwrap();
+        assert_eq!(r.shown, "9.9.9");
+        let r = parse_response(&body("v1.0.0-rc.1+x", &url)).unwrap();
+        assert_eq!(r.shown, "1.0.0-rc.1");
+        let r = parse_response(&body("2.0.0", &url)).unwrap();
+        assert_eq!(r.shown, "2.0.0");
+        // Text in the tag that is not a version never reaches `shown`.
+        let evil = body("v9.9.9+Security notice: download from evil.example", &url);
+        assert_eq!(parse_response(&evil), Err(UpdateError::Malformed));
+    }
+
+    #[test]
+    fn an_overlong_tag_is_refused() {
+        let ok = format!("1.0.0-{}", "a".repeat(MAX_TAG_BYTES - 6));
+        assert_eq!(ok.len(), MAX_TAG_BYTES);
+        assert!(Version::parse(&ok).is_some());
+        let long = format!("{ok}a");
+        assert!(Version::parse(&long).is_none());
+        let url = format!("{RELEASE_URL_PREFIX}tag/v1");
+        assert_eq!(
+            parse_response(&body(&long, &url)),
+            Err(UpdateError::Malformed)
+        );
+        assert!(parse_response(&body(&ok, &url)).is_ok());
+    }
+
+    #[test]
+    fn only_one_check_runs_at_a_time() {
+        let g = InFlight::new();
+        assert!(g.try_begin());
+        assert!(!g.try_begin(), "a second check must not start");
+        g.end();
+        assert!(g.try_begin());
+        g.end();
     }
 
     #[test]
