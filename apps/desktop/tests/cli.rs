@@ -273,4 +273,57 @@ fn headless_restricts_a_data_folder_it_creates() {
     let text = std::fs::read_to_string(dir.join("logs").join("dark-clipboard.log")).unwrap();
     assert!(text.contains(" data_dir_acl result=applied"), "{text}");
     assert!(text.contains(" wer_skipped"), "{text}");
+    // The folder is marked as Dark Clipboard's own, so later starts keep it private.
+    assert!(dir.join(".dark-clipboard-data").is_file());
+    let again = bin()
+        .arg("--data-dir")
+        .arg(&dir)
+        .args(["--headless", "--exit-after-ms", "300"])
+        .output()
+        .unwrap();
+    assert_eq!(again.status.code(), Some(0));
+    let text = std::fs::read_to_string(dir.join("logs").join("dark-clipboard.log")).unwrap();
+    assert!(
+        text.contains(" data_dir_acl result=already_private"),
+        "{text}"
+    );
+}
+
+/// The access list of `dir` as `icacls` prints it (read only).
+#[cfg(windows)]
+fn acl_listing(dir: &std::path::Path) -> String {
+    let out = Command::new("icacls").arg(dir).output().unwrap();
+    assert!(out.status.success());
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Task 413 review B1: a folder the user chose that already holds other files is never given
+/// the private DACL, not on the first run and not on the second (when it holds a `history.db`).
+/// A temporary folder only.
+#[cfg(windows)]
+#[test]
+fn an_existing_folder_with_other_files_is_never_restricted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("Shared");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("notes.txt"), b"synthetic, not ours").unwrap();
+    let before = acl_listing(&dir);
+    for run in 0..2 {
+        let out = bin()
+            .arg("--data-dir")
+            .arg(&dir)
+            .args(["--headless", "--exit-after-ms", "300"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0), "run {run}");
+    }
+    assert!(dir.join("history.db").is_file());
+    let text = std::fs::read_to_string(dir.join("logs").join("dark-clipboard.log")).unwrap();
+    assert_eq!(
+        text.matches(" data_dir_acl result=not_ours").count(),
+        2,
+        "{text}"
+    );
+    assert!(!dir.join(".dark-clipboard-data").exists());
+    assert_eq!(acl_listing(&dir), before);
 }

@@ -182,6 +182,11 @@ pub fn listen_error_from_win32(code: u32) -> ListenError {
     }
 }
 
+/// How long `listen` waits before trying the first pipe instance again after `Squatted`, per
+/// attempt. A previous instance that has just released the mutex may still hold its pipe for a
+/// moment while its process exits; only a name still taken after these waits is reported.
+pub const SQUAT_RETRY_DELAYS_MS: &[u64] = &[];
+
 #[cfg(windows)]
 pub use win::{current_user_sid, ui_language_id, WinTransport};
 
@@ -615,6 +620,24 @@ mod win {
 
         /// A pipe of our name that exists before we listen (a squatter, played here by a
         /// second transport of the same temporary scope) is reported as `Squatted`.
+        /// A previous instance that closes its pipe a moment after we took the mutex is not a
+        /// squatter (N1): the retry picks the name up.
+        #[test]
+        fn a_pipe_released_shortly_after_is_not_reported_as_squatted() {
+            let tmp = tempfile::tempdir().unwrap();
+            let scope = tmp.path().join("exit-race-test");
+            let previous = WinTransport::new(Some(&scope)).unwrap();
+            let held = previous.create_instance(true).unwrap().0 as isize;
+            let closer = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(150));
+                drop(Owned(HANDLE(held as *mut c_void)));
+            });
+            let ours = WinTransport::new(Some(&scope)).unwrap();
+            let log = Arc::new(Log::open(tmp.path()));
+            assert_eq!(ours.listen(log, |_| {}), Ok(()));
+            closer.join().unwrap();
+        }
+
         #[test]
         fn a_pipe_name_taken_first_is_reported_as_squatted() {
             let tmp = tempfile::tempdir().unwrap();
@@ -633,6 +656,16 @@ mod win {
 mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
+
+    #[test]
+    fn a_squat_is_retried_for_about_a_second_before_it_is_reported() {
+        assert!(!SQUAT_RETRY_DELAYS_MS.is_empty());
+        let total: u64 = SQUAT_RETRY_DELAYS_MS.iter().sum();
+        assert!((500..=1500).contains(&total), "{total} ms");
+        assert!(SQUAT_RETRY_DELAYS_MS
+            .iter()
+            .all(|&d| (50..=250).contains(&d)));
+    }
 
     #[test]
     fn creating_an_existing_first_pipe_instance_means_squatted() {

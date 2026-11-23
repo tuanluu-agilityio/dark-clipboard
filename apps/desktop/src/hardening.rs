@@ -140,25 +140,42 @@ pub fn dacl_is_private(sddl: &str, user_sid: &str) -> bool {
         && aces.iter().any(|a| is_full_inheritable_allow(a, "SY"))
 }
 
-/// The owner SID string of an SDDL text (`O:<sid>`), if it has one.
-pub fn sddl_owner(sddl: &str) -> Option<&str> {
-    sddl_sections(sddl)
-        .into_iter()
-        .find(|(l, v)| *l == 'O' && !v.is_empty())
-        .map(|(_, v)| v)
+/// `BUILTIN\Administrators`: the default owner of objects created by an elevated
+/// administrator (or by any administrator with UAC off, as on CI runners).
+pub const ADMINISTRATORS_SID: &str = "S-1-5-32-544";
+
+/// True when a folder owned by `owner_sid` counts as owned by the current user: the user's
+/// own SID, or `BUILTIN\Administrators` when the process token is an enabled member of that
+/// group (an elevated run). SIDs are compared as full `S-1-...` strings, never SDDL aliases.
+pub fn owner_accepted(owner_sid: &str, user_sid: &str, admin_member: bool) -> bool {
+    let _ = (owner_sid, user_sid, admin_member);
+    false
 }
 
 /// Only a folder Dark Clipboard created now, or one that already is its data folder (the
-/// default folder or one holding `history.db`), and only when the current user owns it.
+/// default folder or one carrying [`MARKER_FILE`]), and only when the current user owns it.
 pub fn may_restrict(created_now: bool, is_data_folder: bool, owner_is_user: bool) -> bool {
     owner_is_user && (created_now || is_data_folder)
 }
 
-/// True when `dir` already is a Dark Clipboard data folder: the default one, or one that holds
-/// a `history.db`. Checked before the folder is created.
+/// Written into a data folder that Dark Clipboard creates itself. Only a folder carrying it (or
+/// the default folder) is ever given the private DACL on a later start: a `history.db` alone
+/// does not count, so a user-chosen folder that holds other files is never changed (F407-02).
+pub const MARKER_FILE: &str = ".dark-clipboard-data";
+
+/// True when `dir` already is a Dark Clipboard data folder: the default one, or one carrying
+/// [`MARKER_FILE`] as a plain file (a link does not count). Checked before the folder is
+/// created.
 pub fn is_data_folder(dir: &Path, default: Option<&Path>) -> bool {
-    crate::single_instance::scope_for(Some(dir), default).is_none()
-        || dir.join("history.db").is_file()
+    let _ = (dir, default);
+    true
+}
+
+/// Writes [`MARKER_FILE`] into a folder Dark Clipboard has just created. `false` on failure (the
+/// folder is then restricted this time only).
+pub fn mark_as_ours(dir: &Path) -> bool {
+    let _ = dir;
+    false
 }
 
 /// Result of [`restrict_data_dir`], logged by name.
@@ -201,14 +218,23 @@ pub fn restrict_data_dir(dir: &Path, created_now: bool, is_data_folder: bool) ->
     let Some(sid) = crate::single_instance::current_user_sid() else {
         return AclOutcome::Failed;
     };
-    let Some(current) = crate::winsys::security_sddl(dir) else {
+    let (Some(current), Some(owner)) = (
+        crate::winsys::security_sddl(dir),
+        crate::winsys::owner_sid(dir),
+    ) else {
         return AclOutcome::Failed;
     };
-    let owner_is_user = sddl_owner(&current) == Some(sid.as_str());
-    if !may_restrict(created_now, is_data_folder, owner_is_user) {
+    let admin = crate::winsys::is_administrators_member();
+    if !may_restrict(
+        created_now,
+        is_data_folder,
+        owner_accepted(&owner, &sid, admin),
+    ) {
         return AclOutcome::NotOwner;
     }
-    if dacl_is_private(&current, &sid) {
+    // Compare in Windows' own spelling of the user (an alias for well-known accounts).
+    let who = crate::winsys::sddl_spelling_of_sid(&sid).unwrap_or_else(|| sid.clone());
+    if dacl_is_private(&current, &who) {
         return AclOutcome::AlreadyPrivate;
     }
     if crate::winsys::set_protected_dacl(dir, &private_dir_sddl(&sid)) {
@@ -372,16 +398,44 @@ mod tests {
     }
 
     #[test]
-    fn the_owner_is_read_from_the_sddl() {
-        assert_eq!(sddl_owner(&format!("O:{SID}D:PAI(A;;FA;;;SY)")), Some(SID));
-        assert_eq!(sddl_owner("O:BAD:(A;;FA;;;SY)"), Some("BA"));
-        assert_eq!(
-            sddl_owner(&format!("O:{SID}G:S-1-5-21-1-2-3-513D:(A;;FA;;;SY)")),
-            Some(SID)
-        );
-        assert_eq!(sddl_owner(&format!("O:{SID}")), Some(SID));
-        assert_eq!(sddl_owner("D:(A;;FA;;;SY)"), None);
-        assert_eq!(sddl_owner(""), None);
+    fn the_owner_is_the_user_or_administrators_for_an_elevated_run() {
+        assert!(owner_accepted(SID, SID, false));
+        assert!(owner_accepted(SID, SID, true));
+        // Elevated (or UAC off): new folders belong to BUILTIN\Administrators.
+        assert!(owner_accepted(ADMINISTRATORS_SID, SID, true));
+        assert!(!owner_accepted(ADMINISTRATORS_SID, SID, false));
+        // Another account, SYSTEM, or an SDDL alias instead of a SID: never.
+        assert!(!owner_accepted("S-1-5-21-1-2-3-1002", SID, true));
+        assert!(!owner_accepted("S-1-5-18", SID, true));
+        assert!(!owner_accepted("BA", SID, true));
+        assert!(!owner_accepted("", SID, true));
+    }
+
+    #[test]
+    fn only_the_default_folder_or_a_marked_folder_is_ours() {
+        let tmp = tempfile::tempdir().unwrap();
+        let default = tmp.path().join("DarkClipboard");
+        std::fs::create_dir_all(&default).unwrap();
+        assert!(is_data_folder(&default, Some(&default)));
+        // A user folder that holds a history and other files, but no marker: not ours.
+        let shared = tmp.path().join("Shared");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(shared.join("history.db"), b"synthetic").unwrap();
+        std::fs::write(shared.join("report.docx"), b"synthetic").unwrap();
+        assert!(!is_data_folder(&shared, Some(&default)));
+        assert!(!is_data_folder(&shared, None));
+        // A folder Dark Clipboard created carries the marker.
+        let created = tmp.path().join("created");
+        std::fs::create_dir_all(&created).unwrap();
+        assert!(mark_as_ours(&created));
+        assert!(created.join(MARKER_FILE).is_file());
+        assert!(is_data_folder(&created, Some(&default)));
+        // A folder named like the marker does not count.
+        let fake = tmp.path().join("fake");
+        std::fs::create_dir_all(fake.join(MARKER_FILE)).unwrap();
+        assert!(!is_data_folder(&fake, Some(&default)));
+        // A missing folder is not ours either (it may be created later).
+        assert!(!is_data_folder(&tmp.path().join("missing"), Some(&default)));
     }
 
     #[test]
@@ -429,17 +483,25 @@ mod tests {
         std::fs::create_dir_all(dir.join("blobs")).unwrap();
         std::fs::write(dir.join("history.db"), b"synthetic").unwrap();
         let sid = crate::single_instance::current_user_sid().unwrap();
+        // How Windows spells this user in SDDL (`LA` for the built-in Administrator).
+        let who = crate::winsys::sddl_spelling_of_sid(&sid).unwrap();
+        // Owned by the user, or by Administrators on an elevated run (CI runners): either is
+        // accepted, so the test holds in both environments.
+        let owner = crate::winsys::owner_sid(&dir).unwrap();
+        assert!(
+            owner_accepted(&owner, &sid, crate::winsys::is_administrators_member()),
+            "{owner}"
+        );
 
         assert_eq!(restrict_data_dir(&dir, true, false), AclOutcome::Applied);
         let sddl = crate::winsys::security_sddl(&dir).unwrap();
-        assert!(dacl_is_private(&sddl, &sid), "{sddl}");
-        assert_eq!(sddl_owner(&sddl), Some(sid.as_str()));
+        assert!(dacl_is_private(&sddl, &who), "{sddl}");
         // Children carry only the two inherited entries.
         for child in [dir.join("history.db"), dir.join("blobs")] {
             let c = crate::winsys::security_sddl(&child).unwrap();
             let dacl = &c[c.find("D:").unwrap()..];
             assert_eq!(dacl.matches('(').count(), 2, "{c}");
-            assert!(dacl.contains(&format!(";{sid})")), "{c}");
+            assert!(dacl.contains(&format!(";{who})")), "{c}");
             assert!(dacl.contains(";SY)"), "{c}");
             assert!(dacl.matches("ID;").count() == 2, "{c}");
         }

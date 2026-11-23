@@ -513,3 +513,20 @@ pub fn message_box(title: &str, text: &str, yes_no: bool) -> bool {
     // window; the call only returns the button pressed.
     unsafe { MessageBoxW(None, &text, &title, style) == IDYES }
 }
+
+/// The owner of `path` as a full SID string (`S-1-...`, never an SDDL alias). Stub.
+pub fn owner_sid(path: &std::path::Path) -> Option<String> {
+    let _ = path;
+    None
+}
+
+/// How SDDL text spells `sid` (an alias such as `LA` for well-known accounts). Stub.
+pub fn sddl_spelling_of_sid(sid: &str) -> Option<String> {
+    let _ = sid;
+    None
+}
+
+/// True when this process's token is an enabled member of `BUILTIN\Administrators`. Stub.
+pub fn is_administrators_member() -> bool {
+    false
+}

@@ -204,6 +204,20 @@ mod tests {
     }
 
     #[test]
+    fn the_damaged_text_says_the_moved_copy_keeps_the_old_history() {
+        for lang in [Lang::En, Lang::Vi] {
+            let s = t(lang, Msg::StartDbDamaged);
+            // The files are named, so the user can find and delete them.
+            assert!(s.contains("history.db.damaged-"), "{lang:?}");
+            assert!(s.contains("blobs.damaged-"), "{lang:?}");
+        }
+        let en = t(Lang::En, Msg::StartDbDamaged);
+        assert!(en.contains("Clear history"), "{en}");
+        assert!(en.contains("expired"), "{en}");
+        assert!(en.contains("delete"), "{en}");
+    }
+
+    #[test]
     fn texts_name_the_folder_in_both_languages() {
         let dir = PathBuf::from("C:\\Users\\someone\\AppData\\Local\\DarkClipboard");
         for lang in [Lang::En, Lang::Vi] {
