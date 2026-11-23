@@ -1,0 +1,398 @@
+// Organisation widgets of the history window (Task 403): the details strip (favorite, note,
+// tags), and one modal dialog that serves every flow (collection name, note, tags, collection
+// pickers). Data and every decision come from Rust (`src/organize/`, `src/ui/history_host.rs`);
+// this file only lays things out and forwards input. Every string comes from Rust (i18n).
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Strings } from "theme.slint";
+import { ActionButton } from "popup.slint";
+
+export global OrgStrings {
+    in property <string> note-label;
+    in property <string> no-note;
+    in property <string> edit-note;
+    in property <string> tags-label;
+    in property <string> no-tags;
+    in property <string> edit-tags;
+    in property <string> remove-tag;
+    in property <string> new-collection;
+    in property <string> rename-collection;
+    in property <string> delete-collection;
+    in property <string> add-to-collection;
+    in property <string> remove-from-collection;
+    in property <string> org-hints;
+    in property <string> collection-keys;
+}
+
+// What the dialog shows. `selected` is the highlighted choice of a picker.
+export struct OrgDialogState {
+    title: string,
+    hint: string,
+    label: string,
+    placeholder: string,
+    multiline: bool,
+    has-input: bool,
+    error: string,
+    counter: string,
+    counter-bad: bool,
+    chips: [string],
+    choices: [string],
+    selected: int,
+    empty-text: string,
+    submit-text: string,
+    cancel-text: string,
+    can-submit: bool,
+}
+
+// The favorite, the note and the tags of the one selected clip.
+export component OrgStrip inherits Rectangle {
+    in property <bool> favorite;
+    in property <string> fav-text;
+    in property <bool> can-favorite;
+    in property <bool> can-edit;
+    in property <string> note;
+    in property <[string]> tags;
+    callback toggle-favorite();
+    callback edit-note();
+    callback edit-tags();
+    callback remove-tag(int);
+
+    height: min(col.preferred-height + 8px, 230px);
+    accessible-role: AccessibleRole.groupbox;
+    accessible-label: OrgStrings.tags-label;
+
+    Rectangle {
+        y: 0px;
+        height: 1px;
+        background: Theme.line;
+    }
+
+    ScrollView {
+        y: 4px;
+        height: parent.height - 4px;
+        col := VerticalLayout {
+            padding: 8px;
+            spacing: 4px;
+
+            HorizontalLayout {
+                spacing: 6px;
+                height: 26px;
+                if root.favorite: Text {
+                    text: "\u{2605}";
+                    color: Theme.warning;
+                    font-size: 14px;
+                    vertical-alignment: center;
+                    accessible-role: AccessibleRole.none;
+                }
+                ActionButton {
+                    text: root.fav-text;
+                    visible: root.can-favorite;
+                    clicked => {
+                        root.toggle-favorite();
+                    }
+                }
+            }
+
+            Text {
+                text: OrgStrings.note-label;
+                color: Theme.text-muted;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            Text {
+                text: root.note != "" ? root.note : OrgStrings.no-note;
+                color: root.note != "" ? Theme.text : Theme.text-muted;
+                font-size: 12px;
+                wrap: word-wrap;
+                max-height: 54px;
+                overflow: elide;
+                accessible-role: AccessibleRole.text;
+            }
+            HorizontalLayout {
+                height: 26px;
+                alignment: start;
+                ActionButton {
+                    text: OrgStrings.edit-note;
+                    visible: root.can-edit;
+                    clicked => {
+                        root.edit-note();
+                    }
+                }
+            }
+
+            Text {
+                text: OrgStrings.tags-label;
+                color: Theme.text-muted;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            if root.tags.length == 0: Text {
+                text: OrgStrings.no-tags;
+                color: Theme.text-muted;
+                font-size: 12px;
+                accessible-role: AccessibleRole.text;
+            }
+            for tag[i] in root.tags: HorizontalLayout {
+                height: 24px;
+                spacing: 4px;
+                Text {
+                    text: tag;
+                    color: Theme.text;
+                    font-size: 12px;
+                    overflow: elide;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    accessible-role: AccessibleRole.text;
+                }
+                ActionButton {
+                    text: "\u{00d7}";
+                    visible: root.can-edit;
+                    width: 26px;
+                    clicked => {
+                        root.remove-tag(i);
+                    }
+                }
+            }
+            HorizontalLayout {
+                height: 26px;
+                alignment: start;
+                ActionButton {
+                    text: OrgStrings.edit-tags;
+                    visible: root.can-edit;
+                    clicked => {
+                        root.edit-tags();
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The modal dialog. It covers the window and takes every click; keys are routed by Rust.
+export component OrgDialog inherits Rectangle {
+    in property <OrgDialogState> state;
+    in-out property <string> text;
+    callback edited(string);
+    callback submit();
+    callback cancel();
+    callback choose(int);
+    callback remove-chip(int);
+
+    background: #000000a0;
+    accessible-role: AccessibleRole.groupbox;
+    accessible-label: root.state.title;
+
+    TouchArea { }
+
+    Rectangle {
+        width: min(480px, parent.width - 24px);
+        height: min(box.preferred-height + 24px, parent.height - 24px);
+        background: Theme.surface;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.line;
+
+        box := VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+
+            Text {
+                text: root.state.title;
+                color: Theme.text;
+                font-size: 14px;
+                font-weight: 700;
+                accessible-role: AccessibleRole.text;
+            }
+
+            // The chips of the tag editor, one per line.
+            if root.state.chips.length > 0: Rectangle {
+                height: min(root.state.chips.length * 26px, 130px);
+                ScrollView {
+                    VerticalLayout {
+                        spacing: 2px;
+                        for chip[i] in root.state.chips: HorizontalLayout {
+                            height: 24px;
+                            spacing: 4px;
+                            Text {
+                                text: chip;
+                                color: Theme.accent;
+                                font-size: 13px;
+                                overflow: elide;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                accessible-role: AccessibleRole.text;
+                            }
+                            ActionButton {
+                                text: "\u{00d7}";
+                                width: 26px;
+                                clicked => {
+                                    root.remove-chip(i);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.state.has-input && !root.state.multiline: Rectangle {
+                height: 34px;
+                background: Theme.bg;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: single.has-focus ? Theme.accent : Theme.line;
+                Rectangle {
+                    x: 8px;
+                    width: parent.width - 16px;
+                    single := TextInput {
+                        single-line: true;
+                        text <=> root.text;
+                        color: Theme.text;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        selection-background-color: Theme.accent;
+                        selection-foreground-color: Theme.bg;
+                        accessible-label: root.state.label;
+                        accessible-placeholder-text: root.state.placeholder;
+                        edited => {
+                            root.edited(self.text);
+                        }
+                        init => {
+                            self.focus();
+                        }
+                    }
+                    Text {
+                        visible: root.text == "";
+                        text: root.state.placeholder;
+                        color: Theme.text-muted;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        width: 100%;
+                        accessible-role: AccessibleRole.none;
+                    }
+                }
+            }
+
+            if root.state.has-input && root.state.multiline: Rectangle {
+                height: 180px;
+                background: Theme.bg;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: multi.has-focus ? Theme.accent : Theme.line;
+                Flickable {
+                    x: 8px;
+                    y: 8px;
+                    width: parent.width - 16px;
+                    height: parent.height - 16px;
+                    content-height: max(self.height, multi.preferred-height);
+                    multi := TextInput {
+                        width: parent.width;
+                        text <=> root.text;
+                        wrap: word-wrap;
+                        single-line: false;
+                        color: Theme.text;
+                        font-size: 13px;
+                        selection-background-color: Theme.accent;
+                        selection-foreground-color: Theme.bg;
+                        accessible-label: root.state.label;
+                        edited => {
+                            root.edited(self.text);
+                        }
+                        init => {
+                            self.focus();
+                        }
+                    }
+                }
+            }
+
+            // A picker: the collections to choose from.
+            if !root.state.has-input && root.state.choices.length > 0: Rectangle {
+                height: min(root.state.choices.length * 30px, 180px);
+                accessible-role: AccessibleRole.list;
+                accessible-item-count: root.state.choices.length;
+                ScrollView {
+                    VerticalLayout {
+                        for c[i] in root.state.choices: Rectangle {
+                            height: 30px;
+                            border-radius: 5px;
+                            background: i == root.state.selected ? Theme.accent.with-alpha(0.25) : (row-touch.has-hover ? Theme.line : transparent);
+                            accessible-role: AccessibleRole.list-item;
+                            accessible-label: c;
+                            accessible-item-selectable: true;
+                            accessible-item-selected: i == root.state.selected;
+                            accessible-action-default => {
+                                root.choose(i);
+                            }
+                            Text {
+                                x: 10px;
+                                width: parent.width - 20px;
+                                text: c;
+                                color: i == root.state.selected ? Theme.accent : Theme.text;
+                                font-size: 13px;
+                                overflow: elide;
+                                vertical-alignment: center;
+                            }
+                            row-touch := TouchArea {
+                                clicked => {
+                                    root.choose(i);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !root.state.has-input && root.state.choices.length == 0: Text {
+                text: root.state.empty-text;
+                color: Theme.text-muted;
+                font-size: 13px;
+                wrap: word-wrap;
+                accessible-role: AccessibleRole.text;
+            }
+
+            Text {
+                visible: root.state.error != "";
+                height: root.state.error != "" ? self.preferred-height : 0px;
+                text: root.state.error;
+                color: Theme.danger;
+                font-size: 12px;
+                wrap: word-wrap;
+                accessible-role: AccessibleRole.text;
+            }
+            Text {
+                visible: root.state.counter != "";
+                height: root.state.counter != "" ? self.preferred-height : 0px;
+                text: root.state.counter;
+                color: root.state.counter-bad ? Theme.danger : Theme.text-muted;
+                font-size: 11px;
+                horizontal-alignment: right;
+                accessible-role: AccessibleRole.text;
+            }
+            Text {
+                text: root.state.hint;
+                color: Theme.text-muted;
+                font-size: 11px;
+                wrap: word-wrap;
+                accessible-role: AccessibleRole.none;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+                height: 30px;
+                ActionButton {
+                    text: root.state.cancel-text;
+                    clicked => {
+                        root.cancel();
+                    }
+                }
+                ActionButton {
+                    text: root.state.submit-text;
+                    visible: root.state.can-submit;
+                    clicked => {
+                        root.submit();
+                    }
+                }
+            }
+        }
+    }
+}

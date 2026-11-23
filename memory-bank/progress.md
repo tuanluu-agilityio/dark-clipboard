@@ -75,7 +75,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 402 Organization API | task/402-organization-api | builder | sonnet | done | 126,035 | 95,857 (reviewer opus: APPROVED with 4 should-fix → fixed; first commit had tests and code together, TDD not evidenced, fix round red-first) | 10,989 | 232,881 |
 | 404 Transforms + edit copy | task/404-transforms-edit | builder | sonnet | done | 255,798 | 133,898 (security-reviewer opus ×2: CR (blocking: saving an edit could bump/modify the original) → APPROVED) | 26,759 | 416,455 |
 | 411 Data management | task/411-data-management | builder | sonnet | done | 216,339 | 148,700 (security-reviewer opus ×3: CR (blocking: FTS optimize on every eviction, +140 ms per capture at 10k) → CR (blocking: 10-minute claim false under steady captures) → APPROVED) | 57,085 (2 rounds) | 422,124 |
-| 403 Organization UI | task/403-organization-ui | builder | sonnet | pending | | | | |
+| 403 Organization UI | task/403-organization-ui | builder | sonnet | done | 319,456 | 143,609 (reviewer opus ×2: CR (blocking: dialog keys never reached the host, also Task 404 edit panel; D-052 dialog state) → APPROVED) | 16,574 | 479,639 |
 | 405 Backup / export / import | task/405-backup-export | specialist | opus | pending | | | | |
 | 406 Fuzzing | task/406-fuzzing | specialist | opus | pending | | | | |
 | 412 Update check | task/412-update-check | builder | sonnet | pending | | | | |
@@ -87,7 +87,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 
 | Model | Tokens |
 |---|---|
-| opus | 9,041,362 |
-| sonnet | 4,494,790 |
+| opus | 9,184,971 |
+| sonnet | 4,830,820 |
 | haiku | 0 |
-| **Total** | **13,536,152** (subagents only; orchestrator not measured) |
+| **Total** | **14,015,791** (subagents only; orchestrator not measured) |

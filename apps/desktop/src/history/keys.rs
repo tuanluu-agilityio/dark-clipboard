@@ -32,6 +32,22 @@ pub enum HistoryAction {
     CopyAs,
     /// Ctrl+E: edit a copy of the clip's text (Task 404).
     Edit,
+    /// Ctrl+D: favorite or unfavorite the marked clips (Task 403).
+    ToggleFavorite,
+    /// Ctrl+N: edit the note of the clip.
+    EditNote,
+    /// Ctrl+G: edit the tags of the clip, or add a tag to the marked clips.
+    EditTags,
+    /// Ctrl+L: add the marked clips to a collection.
+    AddToCollection,
+    /// Ctrl+Shift+L: remove the marked clips from a collection.
+    RemoveFromCollection,
+    /// Ctrl+Shift+N: create a collection.
+    NewCollection,
+    /// Ctrl+Shift+R: rename the collection the list is filtered to.
+    RenameCollection,
+    /// Ctrl+Shift+Delete: delete that collection (asks first; its clips stay).
+    DeleteCollection,
     SelectAll,
     /// Space: marks or unmarks the clip under the cursor.
     ToggleMark,
@@ -67,6 +83,7 @@ pub fn map_key(k: Key, m: Mods, ctx: HistoryCtx) -> Option<HistoryAction> {
         }
     };
     let ctrl_only = m.ctrl && !m.alt && !m.meta && !m.shift;
+    let ctrl_shift = m.ctrl && m.shift && !m.alt && !m.meta;
     let nav = |k: Key| match k {
         Key::Up => Some(Move::Up),
         Key::Down => Some(Move::Down),
@@ -93,6 +110,14 @@ pub fn map_key(k: Key, m: Mods, ctx: HistoryCtx) -> Option<HistoryAction> {
         Key::Char('p' | 'P' | '\u{10}') if m.ctrl && !m.alt => Some(HistoryAction::TogglePin),
         Key::Char('t' | 'T' | '\u{14}') if ctrl_only => Some(HistoryAction::CopyAs),
         Key::Char('e' | 'E' | '\u{5}') if ctrl_only => Some(HistoryAction::Edit),
+        Key::Char('d' | 'D' | '\u{4}') if ctrl_only => Some(HistoryAction::ToggleFavorite),
+        Key::Char('n' | 'N' | '\u{e}') if ctrl_only => Some(HistoryAction::EditNote),
+        Key::Char('g' | 'G' | '\u{7}') if ctrl_only => Some(HistoryAction::EditTags),
+        Key::Char('l' | 'L' | '\u{c}') if ctrl_only => Some(HistoryAction::AddToCollection),
+        Key::Char('l' | 'L' | '\u{c}') if ctrl_shift => Some(HistoryAction::RemoveFromCollection),
+        Key::Char('n' | 'N' | '\u{e}') if ctrl_shift => Some(HistoryAction::NewCollection),
+        Key::Char('r' | 'R' | '\u{12}') if ctrl_shift => Some(HistoryAction::RenameCollection),
+        Key::Delete if ctrl_shift => Some(HistoryAction::DeleteCollection),
         // Ctrl+A selects text in a non-empty search box; otherwise it selects every loaded row.
         Key::Char('a' | 'A' | '\u{1}') if m.ctrl && !m.alt && list_keys => {
             Some(HistoryAction::SelectAll)
@@ -236,6 +261,73 @@ mod tests {
         ] {
             assert_eq!(map_key(k, m, CONFIRM), Some(A::Swallow), "{k:?}");
         }
+    }
+
+    #[test]
+    fn organisation_keys() {
+        let ctrl_shift = Mods {
+            ctrl: true,
+            shift: true,
+            ..NONE
+        };
+        for (c, a) in [
+            ('d', A::ToggleFavorite),
+            ('D', A::ToggleFavorite),
+            ('n', A::EditNote),
+            ('g', A::EditTags),
+            ('l', A::AddToCollection),
+            ('L', A::AddToCollection),
+        ] {
+            assert_eq!(map_key(Key::Char(c), CTRL, LIST), Some(a), "{c}");
+            // They do not type text, so they also work from the search box.
+            assert_eq!(map_key(Key::Char(c), CTRL, TYPING), Some(a), "{c}");
+        }
+        for (c, a) in [
+            ('l', A::RemoveFromCollection),
+            ('L', A::RemoveFromCollection),
+            ('n', A::NewCollection),
+            ('N', A::NewCollection),
+            ('r', A::RenameCollection),
+            ('R', A::RenameCollection),
+        ] {
+            assert_eq!(map_key(Key::Char(c), ctrl_shift, LIST), Some(a), "{c}");
+            assert_eq!(map_key(Key::Char(c), ctrl_shift, TYPING), Some(a), "{c}");
+        }
+        assert_eq!(
+            map_key(Key::Delete, ctrl_shift, LIST),
+            Some(A::DeleteCollection)
+        );
+        // Without Ctrl they are ordinary typing.
+        for c in ['d', 'n', 'g', 'l'] {
+            assert_eq!(map_key(Key::Char(c), NONE, TYPING), None, "{c}");
+        }
+        // Plain Delete is still the clip delete; Ctrl+Delete is not Ctrl+Shift+Delete.
+        assert_eq!(map_key(Key::Delete, NONE, LIST), Some(A::Delete));
+        assert_eq!(map_key(Key::Delete, CTRL, LIST), None);
+    }
+
+    #[test]
+    fn the_modal_confirmation_swallows_the_organisation_keys() {
+        let ctrl_shift = Mods {
+            ctrl: true,
+            shift: true,
+            ..NONE
+        };
+        assert_eq!(map_key(Key::Char('d'), CTRL, CONFIRM), Some(A::Swallow));
+        assert_eq!(
+            map_key(Key::Char('n'), ctrl_shift, CONFIRM),
+            Some(A::Swallow)
+        );
+        assert_eq!(map_key(Key::Delete, ctrl_shift, CONFIRM), Some(A::Swallow));
+    }
+
+    #[test]
+    fn a_focused_chip_hands_the_organisation_shortcuts_to_slint() {
+        let chips = HistoryCtx {
+            chips_focused: true,
+            ..LIST
+        };
+        assert_eq!(map_key(Key::Char('d'), CTRL, chips), None);
     }
 
     #[test]

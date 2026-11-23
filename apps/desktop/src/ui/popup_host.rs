@@ -29,6 +29,8 @@
 use super::common::{self, clip_row, Px};
 use super::{Chip, ClipRow, MainWindow, Poster, Strings};
 use crate::log::{Log, Val};
+use crate::organize::bulk::favorite_toggle;
+use crate::organize::nav::{self, Nav};
 use crate::popup::chips;
 use crate::popup::detail::{DetailModel, DetailRequest};
 use crate::popup::keys::{self, Action, ChipFocus, CopyKind, KeyCtx, Mods};
@@ -94,6 +96,8 @@ struct Host {
     chips: Rc<VecModel<Chip>>,
     /// The source names behind the source chips, in chip order.
     sources: Vec<String>,
+    /// The collections behind the Favorites and collection chips (Task 403).
+    nav: Nav,
     poster: Poster,
     window: Weak<MainWindow>,
     lang: Lang,
@@ -163,9 +167,15 @@ fn now_and_offset() -> (darkclip_core::Timestamp, i32) {
     )
 }
 
-/// The chips for `f` and the source names behind the source chips.
-fn chip_rows(f: &Filters, sources: &[String], lang: Lang) -> Vec<Chip> {
-    chips::popup_chips(f, sources, lang)
+/// The chips for `f`: the popup's own, with Favorites and the collections right after Pinned.
+fn chip_rows(f: &Filters, sources: &[String], nav: &Nav, lang: Lang) -> Vec<Chip> {
+    let mut specs = chips::popup_chips(f, sources, lang);
+    let at = specs
+        .iter()
+        .position(|c| c.id == chips::CHIP_PINNED)
+        .map_or(specs.len(), |i| i + 1);
+    specs.splice(at..at, nav::popup_nav_chips(f, nav, lang));
+    specs
         .into_iter()
         .map(|c| Chip {
             id: c.id,
@@ -185,15 +195,18 @@ fn forget_list(
     rows: &VecModel<ClipRow>,
     chips: &VecModel<Chip>,
     sources: &mut Vec<String>,
+    nav: &mut Nav,
     chip_focus: &mut ChipFocus,
     lang: Lang,
 ) {
     model.clear();
     rows.set_vec(Vec::new());
     sources.clear();
+    // No collection name stays either; the next show loads them again.
+    *nav = Nav::default();
     *chip_focus = ChipFocus::default();
     // The fixed chips stay (all off); no source chip names an app from before.
-    chips.set_vec(chip_rows(model.filters(), sources, lang));
+    chips.set_vec(chip_rows(model.filters(), sources, nav, lang));
 }
 
 impl Host {
@@ -219,7 +232,7 @@ impl Host {
 
     fn rebuild_chips(&mut self) {
         self.sources = self.model.sources(MAX_SOURCES);
-        let chips = chip_rows(self.model.filters(), &self.sources, self.lang);
+        let chips = chip_rows(self.model.filters(), &self.sources, &self.nav, self.lang);
         // Changed chips are updated in place, so a toggled chip keeps the keyboard focus; the
         // model is replaced only when the set of chips changes (e.g. other source apps).
         let old: Vec<Chip> = self.chips.iter().collect();
@@ -360,6 +373,7 @@ impl Host {
             &self.rows,
             &self.chips,
             &mut self.sources,
+            &mut self.nav,
             &mut self.chip_focus,
             self.lang,
         );
@@ -546,6 +560,68 @@ impl Host {
                 });
             }
         });
+    }
+
+    /// Ctrl+D: favorite or unfavorite the selected clip (never a masked one that is not a
+    /// favorite already: D-060).
+    fn toggle_favorite(&mut self) {
+        let Some(item) = self.model.selected_item() else {
+            return;
+        };
+        let id = item.id;
+        let Some(want) = favorite_toggle(item) else {
+            self.show_toast(Msg::OrgNothingToDo, false);
+            return;
+        };
+        let ui = self.window.clone();
+        // Not quiet: the status refresh afterwards re-runs the search, so the star updates.
+        self.poster.post(move |app| {
+            if app.set_favorite(&Caller::Ui, id, want).is_err() {
+                let _ = ui.upgrade_in_event_loop(|_| {
+                    with_host(|h| h.show_toast(Msg::UiActionFailed, false));
+                });
+            }
+        });
+    }
+
+    /// Loads the collections behind the chips (on the worker).
+    fn reload_nav(&self) {
+        let ui = self.window.clone();
+        self.poster.post_quiet(move |app| {
+            if let Ok(collections) = app.list_collections(&Caller::Ui) {
+                let nav = Nav {
+                    collections,
+                    tags: Vec::new(),
+                };
+                let _ = ui.upgrade_in_event_loop(move |_| {
+                    with_host(|h| h.on_nav(nav));
+                });
+            }
+        });
+    }
+
+    fn on_nav(&mut self, n: Nav) {
+        // An answer that arrives after the popup closed is dropped (no names stay).
+        let visible = self.window().is_some_and(|w| w.window().is_visible());
+        if !visible || n == self.nav {
+            return;
+        }
+        self.nav = n;
+        let gone = self
+            .model
+            .filters()
+            .collection
+            .is_some_and(|c| !self.nav.collections.iter().any(|x| x.id == c));
+        if gone {
+            let mut f = self.model.filters().clone();
+            f.collection = None;
+            if let Some(w) = self.window() {
+                f.text = w.get_query().to_string();
+            }
+            self.search(f);
+        } else {
+            self.rebuild_chips();
+        }
     }
 
     // ---- "Copy as..." (Task 404) ----
@@ -792,6 +868,7 @@ impl Host {
             Action::ToggleDetail => self.toggle_detail(),
             Action::OpenDetail => self.set_detail_open(true),
             Action::CopyAs => self.open_copy_as(),
+            Action::ToggleFavorite => self.toggle_favorite(),
             Action::CloseDetail => self.set_detail_open(false),
             Action::OpenHistory => {
                 // Close the popup (without returning the focus: the history is a window of its
@@ -829,7 +906,12 @@ impl Host {
         if let Some(w) = self.window() {
             f.text = w.get_query().to_string();
         }
-        let Some(f) = chips::toggle(&f, id, &self.sources) else {
+        let toggled = if nav::is_nav(id) {
+            nav::toggle_nav(&f, id, &self.nav)
+        } else {
+            chips::toggle(&f, id, &self.sources)
+        };
+        let Some(f) = toggled else {
             return;
         };
         self.search(f);
@@ -939,6 +1021,7 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
         rows,
         chips,
         sources: Vec::new(),
+        nav: Nav::default(),
         poster,
         window: w.as_weak(),
         lang,
@@ -1108,6 +1191,9 @@ pub fn set_lang(lang: Lang) {
 pub fn app_changed() {
     with_host(|h| {
         let visible = h.window().is_some_and(|w| w.window().is_visible());
+        if visible {
+            h.reload_nav();
+        }
         if visible && !h.debounce.running() {
             h.refresh();
         }
@@ -1140,6 +1226,7 @@ pub fn show(w: &MainWindow, asked: Instant, trigger: Trigger) {
         // Normally done by the hide before; again here so a show can never start from the
         // rows of an earlier session (D-056).
         h.end_session();
+        h.reload_nav();
         h.search(Filters::default());
         h.sync_state();
     });
@@ -1278,7 +1365,17 @@ mod tests {
         );
         let mut sources = model.sources(MAX_SOURCES);
         let chips = VecModel::<Chip>::default();
-        chips.set_vec(chip_rows(model.filters(), &sources, Lang::En));
+        let mut nav = Nav {
+            collections: vec![darkclip_app::api::CollectionView {
+                id: darkclip_core::CollectionId::new_v7(NOW),
+                name: "Private project".to_string(),
+                system: false,
+                clip_count: 1,
+            }],
+            tags: Vec::new(),
+        };
+        chips.set_vec(chip_rows(model.filters(), &sources, &nav, Lang::En));
+        assert!(chips.iter().any(|c| c.label.as_str() == "Private project"));
         let mut focus = ChipFocus::default();
         if let Some(last) = chips.iter().last() {
             focus.report(last.id, true);
@@ -1293,6 +1390,7 @@ mod tests {
             &rows,
             &chips,
             &mut sources,
+            &mut nav,
             &mut focus,
             Lang::En,
         );
@@ -1313,6 +1411,11 @@ mod tests {
         assert!(chips
             .iter()
             .all(|c| !c.label.as_str().contains("editor.exe")));
+        // No collection name stays after the popup closed.
+        assert!(nav.collections.is_empty());
+        assert!(chips
+            .iter()
+            .all(|c| !c.label.as_str().contains("Private project")));
         // The answer of the refresh that was running at hide is dropped.
         assert!(matches!(
             model.apply(in_flight.gen, false, Ok(page(vec![view(1, "editor.exe")]))),
@@ -1320,5 +1423,33 @@ mod tests {
         ));
         assert!(model.visible().is_empty());
         assert_eq!(rows.row_count(), 0);
+    }
+
+    #[test]
+    fn favorites_and_collections_are_chips_right_after_pinned() {
+        let col = |n: i64, name: &str, system: bool| darkclip_app::api::CollectionView {
+            id: darkclip_core::CollectionId::new_v7(darkclip_core::Timestamp(NOW.0 + n)),
+            name: name.to_string(),
+            system,
+            clip_count: 0,
+        };
+        let nav = Nav {
+            collections: vec![col(0, "Favorites", true), col(1, "Work", false)],
+            tags: Vec::new(),
+        };
+        let chips = chip_rows(&Filters::default(), &["Code".to_string()], &nav, Lang::En);
+        let labels: Vec<String> = chips.iter().map(|c| c.label.to_string()).collect();
+        let pinned = labels.iter().position(|l| l == "Pinned").unwrap();
+        assert_eq!(labels[pinned + 1], "Favorites");
+        assert_eq!(labels[pinned + 2], "Work");
+        assert_eq!(labels[pinned + 3], "Today");
+        // Selecting Favorites turns its chip on.
+        let f = nav::toggle_nav(&Filters::default(), nav::NAV_FAVORITES, &nav).unwrap();
+        let on: Vec<String> = chip_rows(&f, &[], &nav, Lang::En)
+            .iter()
+            .filter(|c| c.on)
+            .map(|c| c.label.to_string())
+            .collect();
+        assert_eq!(on, ["Favorites"]);
     }
 }

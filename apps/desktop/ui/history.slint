@@ -7,6 +7,7 @@ import { ListView, ScrollView, Palette } from "std-widgets.slint";
 import { Theme, Strings } from "theme.slint";
 import { ClipRow, ActionButton, RowView, DetailPane, DetailState, RowMetrics } from "popup.slint";
 import { TransformPanel, EditPanel } from "transform.slint";
+import { OrgDialog, OrgDialogState, OrgStrip, OrgStrings } from "organize.slint";
 
 // One line of the left pane: a filter, or a group heading (`header`).
 export struct FilterItem {
@@ -147,6 +148,24 @@ export component HistoryWindow inherits Window {
     in property <string> edit-note;
     in-out property <string> edit-text;
     in-out property <string> query;
+    // Organisation (Task 403). `org-*`: what the actions offer for the selection (masked
+    // clips take no add action). The strip shows the one selected clip.
+    in property <bool> org-strip;
+    in property <bool> org-favorite;
+    in property <string> org-fav-text;
+    in property <bool> org-can-favorite;
+    in property <bool> org-can-add;
+    in property <bool> org-can-remove;
+    in property <bool> org-can-edit;
+    in property <string> org-note;
+    in property <[string]> org-tags;
+    // A user collection is shown: it can be renamed or deleted.
+    in property <bool> col-shown;
+    in property <string> confirm-label;
+    in property <string> confirm-hint;
+    in property <bool> dlg-open;
+    in property <OrgDialogState> dlg;
+    in-out property <string> dlg-text;
     // Where the context menu opens (window coordinates).
     private property <length> menu-x;
     private property <length> menu-y;
@@ -179,6 +198,20 @@ export component HistoryWindow inherits Window {
     callback load-full-text();
     callback load-full-image();
     callback shown-until(int);
+    callback act-favorite();
+    callback act-note();
+    callback act-tags();
+    callback act-add-collection();
+    callback act-remove-collection();
+    callback act-new-collection();
+    callback act-rename-collection();
+    callback act-delete-collection();
+    callback org-remove-tag(int);
+    callback dlg-edited(string);
+    callback dlg-submit();
+    callback dlg-cancel();
+    callback dlg-choose(int);
+    callback dlg-remove-chip(int);
 
     public function focus-search() {
         search.focus();
@@ -271,32 +304,56 @@ export component HistoryWindow inherits Window {
                 spacing: 10px;
                 vertical-stretch: 1;
 
-                // Left pane: filters.
-                ScrollView {
+                // Left pane: filters, collections and tags; collection actions below.
+                VerticalLayout {
                     width: 180px;
-                    accessible-role: groupbox;
-                    accessible-label: Strings.filters-label;
-                    VerticalLayout {
-                        spacing: 2px;
-                        for f in root.filters: VerticalLayout {
-                            if f.header: Text {
-                                height: 30px;
-                                text: f.label;
-                                color: Theme.text-muted;
-                                font-size: 11px;
-                                font-weight: 700;
-                                vertical-alignment: bottom;
-                                accessible-role: text;
-                            }
-                            if !f.header: FilterButton {
-                                item: f;
-                                toggled => {
-                                    root.filter-toggled(f.id);
+                    spacing: 6px;
+                    ScrollView {
+                        vertical-stretch: 1;
+                        accessible-role: groupbox;
+                        accessible-label: Strings.filters-label;
+                        VerticalLayout {
+                            spacing: 2px;
+                            for f in root.filters: VerticalLayout {
+                                if f.header: Text {
+                                    height: 30px;
+                                    text: f.label;
+                                    color: Theme.text-muted;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    vertical-alignment: bottom;
+                                    accessible-role: text;
                                 }
-                                focus-report(on) => {
-                                    root.filter-focus(f.id, on);
+                                if !f.header: FilterButton {
+                                    item: f;
+                                    toggled => {
+                                        root.filter-toggled(f.id);
+                                    }
+                                    focus-report(on) => {
+                                        root.filter-focus(f.id, on);
+                                    }
                                 }
                             }
+                        }
+                    }
+                    ActionButton {
+                        text: OrgStrings.new-collection;
+                        clicked => {
+                            root.act-new-collection();
+                        }
+                    }
+                    ActionButton {
+                        text: OrgStrings.rename-collection;
+                        visible: root.col-shown;
+                        clicked => {
+                            root.act-rename-collection();
+                        }
+                    }
+                    ActionButton {
+                        text: OrgStrings.delete-collection;
+                        visible: root.col-shown;
+                        clicked => {
+                            root.act-delete-collection();
                         }
                     }
                 }
@@ -375,14 +432,37 @@ export component HistoryWindow inherits Window {
                     horizontal-stretch: 2;
                     min-width: 240px;
 
-                    if root.detail-open: DetailPane {
-                        state: root.detail;
-                        text: root.detail-text;
-                        load-text => {
-                            root.load-full-text();
+                    if root.detail-open: VerticalLayout {
+                        DetailPane {
+                            vertical-stretch: 1;
+                            state: root.detail;
+                            text: root.detail-text;
+                            load-text => {
+                                root.load-full-text();
+                            }
+                            load-image => {
+                                root.load-full-image();
+                            }
                         }
-                        load-image => {
-                            root.load-full-image();
+                        if root.org-strip: OrgStrip {
+                            favorite: root.org-favorite;
+                            fav-text: root.org-fav-text;
+                            can-favorite: root.org-can-favorite;
+                            can-edit: root.org-can-edit;
+                            note: root.org-note;
+                            tags: root.org-tags;
+                            toggle-favorite => {
+                                root.act-favorite();
+                            }
+                            edit-note => {
+                                root.act-note();
+                            }
+                            edit-tags => {
+                                root.act-tags();
+                            }
+                            remove-tag(i) => {
+                                root.org-remove-tag(i);
+                            }
                         }
                     }
                     if !root.detail-open: Text {
@@ -472,8 +552,62 @@ export component HistoryWindow inherits Window {
                     accessible-role: text;
                 }
             }
+            // Organisation actions for the marked clips (Task 403).
+            HorizontalLayout {
+                height: 26px;
+                spacing: 4px;
+                ActionButton {
+                    text: root.org-fav-text;
+                    visible: root.org-can-favorite;
+                    clicked => {
+                        root.act-favorite();
+                    }
+                }
+                ActionButton {
+                    text: OrgStrings.add-to-collection;
+                    visible: root.org-can-add;
+                    clicked => {
+                        root.act-add-collection();
+                    }
+                }
+                ActionButton {
+                    text: OrgStrings.remove-from-collection;
+                    visible: root.org-can-remove;
+                    clicked => {
+                        root.act-remove-collection();
+                    }
+                }
+                ActionButton {
+                    text: OrgStrings.edit-tags;
+                    visible: root.org-can-add;
+                    clicked => {
+                        root.act-tags();
+                    }
+                }
+                ActionButton {
+                    text: OrgStrings.edit-note;
+                    visible: root.org-can-edit;
+                    clicked => {
+                        root.act-note();
+                    }
+                }
+            }
             Text {
-                text: root.confirm-text != "" ? Strings.confirm-hints : Strings.key-hints;
+                text: root.confirm-text != "" ? root.confirm-hint : Strings.key-hints;
+                color: Theme.text-muted;
+                font-size: 11px;
+                overflow: elide;
+                accessible-role: none;
+            }
+            Text {
+                text: OrgStrings.org-hints;
+                color: Theme.text-muted;
+                font-size: 11px;
+                overflow: elide;
+                accessible-role: none;
+            }
+            Text {
+                text: OrgStrings.collection-keys;
                 color: Theme.text-muted;
                 font-size: 11px;
                 overflow: elide;
@@ -551,6 +685,46 @@ export component HistoryWindow inherits Window {
                         }
                     }
                     MenuEntry {
+                        text: root.org-fav-text;
+                        enabled: root.org-can-favorite;
+                        clicked => {
+                            menu.close();
+                            root.act-favorite();
+                        }
+                    }
+                    MenuEntry {
+                        text: OrgStrings.add-to-collection;
+                        enabled: root.org-can-add;
+                        clicked => {
+                            menu.close();
+                            root.act-add-collection();
+                        }
+                    }
+                    MenuEntry {
+                        text: OrgStrings.remove-from-collection;
+                        enabled: root.org-can-remove;
+                        clicked => {
+                            menu.close();
+                            root.act-remove-collection();
+                        }
+                    }
+                    MenuEntry {
+                        text: OrgStrings.edit-tags;
+                        enabled: root.org-can-add;
+                        clicked => {
+                            menu.close();
+                            root.act-tags();
+                        }
+                    }
+                    MenuEntry {
+                        text: OrgStrings.edit-note;
+                        enabled: root.org-can-edit;
+                        clicked => {
+                            menu.close();
+                            root.act-note();
+                        }
+                    }
+                    MenuEntry {
                         text: Strings.select-all;
                         clicked => {
                             menu.close();
@@ -599,12 +773,44 @@ export component HistoryWindow inherits Window {
                         }
                     }
                     ActionButton {
-                        text: Strings.delete;
+                        text: root.confirm-label;
                         clicked => {
                             root.act-confirm();
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // The organisation dialog (Task 403): covers the window and takes every click.
+    // The text box inside has the focus, so the keys are forwarded from this scope (a
+    // `capture-key-pressed` only sees keys of the focused item's ancestors).
+    if root.dlg-open: FocusScope {
+        focus-on-click: false;
+        capture-key-pressed(e) => {
+            if (root.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, false)) {
+                return accept;
+            }
+            reject
+        }
+        OrgDialog {
+            state: root.dlg;
+            text <=> root.dlg-text;
+            edited(s) => {
+                root.dlg-edited(s);
+            }
+            submit => {
+                root.dlg-submit();
+            }
+            cancel => {
+                root.dlg-cancel();
+            }
+            choose(i) => {
+                root.dlg-choose(i);
+            }
+            remove-chip(i) => {
+                root.dlg-remove-chip(i);
             }
         }
     }
@@ -628,14 +834,24 @@ export component HistoryWindow inherits Window {
         }
     }
 
-    if root.edit-open: EditPanel {
-        text <=> root.edit-text;
-        note: root.edit-note;
-        save => {
-            root.edit-save();
+    // Same reason as the organisation dialog: the editor's text box has the focus.
+    if root.edit-open: FocusScope {
+        focus-on-click: false;
+        capture-key-pressed(e) => {
+            if (root.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, false)) {
+                return accept;
+            }
+            reject
         }
-        cancel => {
-            root.edit-cancel();
+        EditPanel {
+            text <=> root.edit-text;
+            note: root.edit-note;
+            save => {
+                root.edit-save();
+            }
+            cancel => {
+                root.edit-cancel();
+            }
         }
     }
 }

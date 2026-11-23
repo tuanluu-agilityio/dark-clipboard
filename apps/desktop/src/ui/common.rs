@@ -52,6 +52,7 @@ pub fn clip_row(item: &Item, index: usize, lang: Lang, query: &str) -> ClipRow {
         description: text.description.into(),
         icon: text.icon.into(),
         pin_badge: text.pin_badge.unwrap_or("").into(),
+        favorite_badge: text.favorite_badge.unwrap_or("").into(),
         masked_badge: text.masked_badge.unwrap_or("").into(),
         mono: text.mono,
         pinned: item.pinned,

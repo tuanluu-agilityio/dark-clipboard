@@ -18,9 +18,10 @@
 //! Delete never runs without the confirmation dialog (`history::select::DeleteFlow`).
 
 use super::common::{self, clip_row, Px};
-use super::{ClipRow, FilterItem, HistoryWindow, Poster, Strings};
+use super::{ClipRow, FilterItem, HistoryWindow, OrgDialogState, OrgStrings, Poster, Strings};
 use crate::history::keys::{self as hkeys, HistoryAction, HistoryCtx};
 use crate::history::select::{can_copy, pin_plan, DeleteFlow, MultiSelect};
+use crate::organize::nav;
 use crate::popup::chips;
 use crate::popup::detail::{DetailModel, DetailRequest};
 use crate::popup::keys::{self, ChipFocus, CopyKind, Mods};
@@ -39,6 +40,8 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+mod org;
 
 /// Typing pause before a search runs.
 const DEBOUNCE: Duration = Duration::from_millis(60);
@@ -76,6 +79,8 @@ struct Host {
     detail: DetailModel<Px>,
     /// The clip the pane wants loaded now (queued jobs for other clips are skipped).
     wanted: Arc<Mutex<Option<ClipId>>>,
+    /// Collections, tags, dialogs and confirmations of the organisation (Task 403).
+    org: org::OrgState,
 }
 
 thread_local! {
@@ -113,6 +118,7 @@ fn set_strings(w: &HistoryWindow, lang: Lang) {
     s.set_history_hint(t(lang, Msg::UiHistoryHint).into());
     s.set_key_hints(t(lang, Msg::UiKeyHintsHistory).into());
     s.set_confirm_hints(t(lang, Msg::UiKeyHintsConfirm).into());
+    org::set_strings(w, lang);
 }
 
 impl Host {
@@ -179,16 +185,20 @@ impl Host {
 
     fn rebuild_filters(&mut self) {
         self.sources = self.model.sources(MAX_SOURCES);
-        let items: Vec<FilterItem> =
-            chips::history_filters(self.model.filters(), &self.sources, self.lang)
-                .into_iter()
-                .map(|c| FilterItem {
-                    id: c.id,
-                    label: c.label.into(),
-                    on: c.on,
-                    header: c.header,
-                })
-                .collect();
+        let mut specs = chips::history_filters(self.model.filters(), &self.sources, self.lang);
+        // Favorites, collections and tags come right after "All" and "Pinned".
+        let at = specs.len().min(2);
+        let org_chips = nav::history_nav_chips(self.model.filters(), &self.org.nav, self.lang);
+        specs.splice(at..at, org_chips);
+        let items: Vec<FilterItem> = specs
+            .into_iter()
+            .map(|c| FilterItem {
+                id: c.id,
+                label: c.label.into(),
+                on: c.on,
+                header: c.header,
+            })
+            .collect();
         // Changed items are updated in place, so a toggled filter keeps the keyboard focus.
         let old: Vec<FilterItem> = self.filters.iter().collect();
         match crate::popup::in_place_changes(&old, &items, |c| (c.id, c.header)) {
@@ -239,15 +249,11 @@ impl Host {
             String::new()
         };
         w.set_summary(summary.into());
-        let confirm = match self.flow.count() {
-            Some(1) => t(self.lang, Msg::UiConfirmDeleteOne).to_string(),
-            Some(n) => fill(t(self.lang, Msg::UiConfirmDeleteMany), n as u64),
-            None => String::new(),
-        };
-        w.set_confirm_text(confirm.into());
+        self.sync_org();
     }
 
     fn sync_detail(&mut self) {
+        self.ensure_note();
         let subject = self.subject();
         let reqs = self.detail.sync(subject.as_ref());
         for r in reqs {
@@ -585,6 +591,8 @@ impl Host {
         self.win.set_edit_open(false);
         self.win.set_edit_text(SharedString::new());
         self.win.set_edit_note(SharedString::new());
+        // The editor's text box had the focus; give it back to the window.
+        self.win.invoke_focus_search();
     }
 
     fn copy(&mut self, plain: bool) {
@@ -744,13 +752,18 @@ impl Host {
                     self.sync();
                 }
             }
-            HistoryAction::Confirm => self.confirm_delete(),
-            HistoryAction::Cancel => {
-                self.flow.cancel();
-                self.sync_props();
-            }
+            HistoryAction::Confirm => self.confirm_any(),
+            HistoryAction::Cancel => self.cancel_any(),
             HistoryAction::CopyAs => self.open_copy_as(),
             HistoryAction::Edit => self.open_edit(),
+            HistoryAction::ToggleFavorite => self.act_favorite(),
+            HistoryAction::EditNote => self.open_note(),
+            HistoryAction::EditTags => self.open_tags(),
+            HistoryAction::AddToCollection => self.open_pick(true),
+            HistoryAction::RemoveFromCollection => self.open_pick(false),
+            HistoryAction::NewCollection => self.open_new_collection(),
+            HistoryAction::RenameCollection => self.open_rename_collection(),
+            HistoryAction::DeleteCollection => self.request_delete_collection(),
             HistoryAction::Swallow => {}
         }
         true
@@ -760,7 +773,12 @@ impl Host {
         let mut f = self.model.filters().clone();
         // Typing that has not run yet belongs to this search.
         f.text = self.win.get_query().to_string();
-        let Some(f) = chips::toggle(&f, id, &self.sources) else {
+        let toggled = if nav::is_nav(id) {
+            nav::toggle_nav(&f, id, &self.org.nav)
+        } else {
+            chips::toggle(&f, id, &self.sources)
+        };
+        let Some(f) = toggled else {
             return;
         };
         self.search(f);
@@ -806,6 +824,7 @@ impl Host {
     fn leave(&mut self) {
         self.close_copy_as();
         self.close_edit();
+        self.org_leave();
         self.debounce.stop();
         self.loading.stop();
         self.clear_toast();
@@ -884,6 +903,7 @@ fn on_results(gen: u64, append: bool, result: Result<Page<ClipSummaryView>, &'st
                 let ids = h.ids();
                 h.multi.prune(&ids);
                 h.flow.retain(&ids);
+                h.org.bulk.retain(&ids);
                 h.rebuild_rows();
                 h.scroll_to_selected();
             }
@@ -948,6 +968,7 @@ fn create() -> Option<()> {
         tf: None,
         detail: DetailModel::default(),
         wanted: Arc::new(Mutex::new(None)),
+        org: org::OrgState::default(),
     };
     host.rebuild_filters();
     host.sync_props();
@@ -990,11 +1011,16 @@ fn connect(w: &HistoryWindow) {
                 }
                 return true;
             }
+            // The organisation dialog is modal too: Esc, Enter and the picker arrows are its;
+            // every other key goes to its text box.
+            if h.org.dlg.is_some() {
+                return h.dialog_key(key, ctrl);
+            }
             let ctx = HistoryCtx {
                 query_empty: h.win.get_query().is_empty(),
                 search_focused,
                 chips_focused: h.chip_focus.focused(search_focused),
-                confirming: h.flow.is_confirming(),
+                confirming: h.confirming(),
             };
             let mods = Mods {
                 ctrl,
@@ -1014,21 +1040,21 @@ fn connect(w: &HistoryWindow) {
     });
     w.on_row_pressed(|i, ctrl, shift| {
         with_host(|h| {
-            if !h.flow.is_confirming() {
+            if !h.confirming() {
                 h.press_row(usize::try_from(i).unwrap_or(usize::MAX), ctrl, shift);
             }
         });
     });
     w.on_row_context(|i| {
         with_host(|h| {
-            if !h.flow.is_confirming() {
+            if !h.confirming() {
                 h.context_row(usize::try_from(i).unwrap_or(usize::MAX));
             }
         });
     });
     w.on_row_activated(|i| {
         with_host(|h| {
-            if !h.flow.is_confirming() {
+            if !h.confirming() {
                 h.press_row(usize::try_from(i).unwrap_or(usize::MAX), false, false);
                 h.copy(false);
             }
@@ -1081,14 +1107,12 @@ fn connect(w: &HistoryWindow) {
         });
     });
     w.on_act_confirm(|| {
-        with_host(|h| h.confirm_delete());
+        with_host(|h| h.confirm_any());
     });
     w.on_act_cancel(|| {
-        with_host(|h| {
-            h.flow.cancel();
-            h.sync_props();
-        });
+        with_host(|h| h.cancel_any());
     });
+    org::connect(w);
     w.on_load_full_text(|| {
         with_host(|h| h.load_full_text());
     });
@@ -1136,8 +1160,12 @@ pub fn set_remembered(map: &BTreeMap<String, darkclip_app::settings::WindowRect>
 /// The data may have changed (a clip was added, pinned or deleted): refresh a visible window.
 pub fn app_changed() {
     with_host(|h| {
-        if h.win.window().is_visible() && !h.debounce.running() {
-            h.refresh();
+        if h.win.window().is_visible() {
+            // Collections, tags and the note of the pane's clip may have changed.
+            h.org_changed();
+            if !h.debounce.running() {
+                h.refresh();
+            }
         }
     });
 }
@@ -1165,6 +1193,7 @@ pub fn show() {
         // The pane is always open here: it shows the single selected clip.
         h.detail.set_open(true, None);
         h.render_detail();
+        h.reload_nav();
         h.search(Filters::default());
         h.sync();
     });

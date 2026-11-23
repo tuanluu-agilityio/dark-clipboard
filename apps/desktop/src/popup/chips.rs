@@ -35,7 +35,7 @@ pub struct ChipSpec {
     pub header: bool,
 }
 
-fn chip(id: i32, label: &str, on: bool) -> ChipSpec {
+pub(crate) fn chip(id: i32, label: &str, on: bool) -> ChipSpec {
     ChipSpec {
         id,
         label: label.to_string(),
@@ -44,7 +44,7 @@ fn chip(id: i32, label: &str, on: bool) -> ChipSpec {
     }
 }
 
-fn header(label: &str) -> ChipSpec {
+pub(crate) fn header(label: &str) -> ChipSpec {
     ChipSpec {
         id: -1,
         label: label.to_string(),
@@ -97,7 +97,12 @@ pub fn popup_chips(f: &Filters, sources: &[String], lang: Lang) -> Vec<ChipSpec>
 
 /// True when no filter besides the search text is on.
 pub fn is_all(f: &Filters) -> bool {
-    f.kinds.is_empty() && !f.pinned_only && f.time == TimeFilter::Any && f.source.is_none()
+    f.kinds.is_empty()
+        && !f.pinned_only
+        && f.time == TimeFilter::Any
+        && f.source.is_none()
+        && f.collection.is_none()
+        && f.tag.is_none()
 }
 
 /// The history window's left pane: All, Pinned, then the Type, Date and Source groups.
@@ -224,9 +229,31 @@ mod tests {
             pinned_only: true,
             time: TimeFilter::Week,
             source: Some("Code".into()),
+            ..Filters::default()
         };
         let g = toggle(&f, CHIP_ALL, &srcs()).unwrap();
         assert_eq!(g.text, "abc");
+        assert!(is_all(&g));
+    }
+
+    #[test]
+    fn all_is_off_while_a_collection_or_a_tag_filter_is_on() {
+        let c = Filters {
+            collection: Some(darkclip_core::CollectionId::new_v7(
+                darkclip_core::Timestamp(1_795_320_000_000),
+            )),
+            ..Filters::default()
+        };
+        assert!(!is_all(&c));
+        let t = Filters {
+            tag: Some("todo".into()),
+            ..Filters::default()
+        };
+        assert!(!is_all(&t));
+        assert!(!history_filters(&t, &[], Lang::En)[0].on);
+        // "All" clears them too.
+        let g = toggle(&t, CHIP_ALL, &[]).unwrap();
+        assert_eq!(g.tag, None);
         assert!(is_all(&g));
     }
 

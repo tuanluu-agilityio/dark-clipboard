@@ -67,6 +67,25 @@ With `--data-dir <folder>` the history, log and settings all live in that folder
 
 Select a text clip and press `Ctrl+T` (popup or history window) or use "Copy as...": pick a transform (trim, line endings, upper or lower case, JSON pretty or minify, URL or Base64 encode or decode, HTML to text), check the result in the preview and press Copy. The result goes to the clipboard as Dark Clipboard's own write; nothing is stored. In the history window, "Edit..." (`Ctrl+E`) opens a copy of a text clip in an editor and "Save as new clip" stores the edit as a new clip; the original never changes. A text that looks like a secret follows your sensitive-content setting (dropped by default). Masked clips, images and files have neither. All of this runs locally.
 
+### Collections, tags, notes and favorites
+
+The history window's left pane lists **Favorites**, your **collections** and your **tags**, each with a count; selecting one filters the list (select it again to clear it; one collection and one tag can combine with the other filters). Everything has a key:
+
+| Key (history window) | Action |
+|---|---|
+| `Ctrl+D` | Favorite or unfavorite the marked clips (several: a confirmation shows the count) |
+| `Ctrl+N` | Edit the note of the selected clip (up to 4,000 characters, with a counter; `Ctrl+Enter` saves, `Esc` cancels) |
+| `Ctrl+G` | Edit the tags of the selected clip as chips (`Enter` adds, `Backspace` in the empty box removes the last one; letters, digits, `-` and `_`, 40 characters, 20 tags at most), or add one tag to several marked clips |
+| `Ctrl+L` / `Ctrl+Shift+L` | Add the marked clips to a collection / remove them from one (pick with the arrows, `Enter`) |
+| `Ctrl+Shift+N` | New collection |
+| `Ctrl+Shift+R` / `Ctrl+Shift+Del` | Rename / delete the collection the list is filtered to (deleting asks first and names it; its clips stay in your history) |
+
+The same actions are buttons and context-menu entries; the detail pane shows the favorite star, the note and the tags of the selected clip, and each tag has a remove button. In the popup, a star marks favorite rows, the chip row has **Favorites** and your collections (the first six), and `Ctrl+D` favorites or unfavorites the selected row. Favorites are kept by "Clear history" and "Delete old clips" (see below).
+
+A masked clip (one that may contain a secret) takes no add action: it cannot be favorited, noted, tagged or added to a collection, so a secret can never become a favorite that retention skips. Unfavoriting and removing it from a collection still work. A multi-select that includes masked clips leaves them out and says how many.
+
+**Snippets** are not a separate feature: make a collection called "Snippets" and pin or favorite the clips you reuse. There is no template or variable engine.
+
 ### Data management
 
 Settings > History shows what is stored (clips, pinned, favorites, database size, blob size, clips per kind) and has cleanup tools. Each one asks first and names how many clips or files it will touch: **Clear history** (keeps pinned clips and favorites unless you untick the box), **Delete old clips** (older than N days; pinned clips and favorites are kept), **Remove orphaned files** (data files no clip uses; reports how many and how much space it freed) and **Compact database** (needs free disk space of twice the database size, otherwise it refuses). Deletions are real: when you delete (a clip, Clear history, Delete old clips, Compact), the search index is merged and the write-ahead log truncated at once, so the deleted words are gone from the database file as well. Clips removed automatically by the retention limits leave the database file within about 10 minutes (the next periodic merge, or at shutdown). Everything runs locally.

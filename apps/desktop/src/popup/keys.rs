@@ -85,6 +85,8 @@ pub enum Action {
     OpenHistory,
     /// Ctrl+T: "Copy as..." for the selected clip (Task 404).
     CopyAs,
+    /// Ctrl+D: favorite or unfavorite the selected clip (Task 403).
+    ToggleFavorite,
 }
 
 /// Which filter chip has the keyboard focus, from per-chip gained/lost reports. The reports of
@@ -181,6 +183,9 @@ pub fn map_key(k: Key, m: Mods, ctx: KeyCtx) -> Option<Action> {
         Key::Delete if plain && !m.shift && list_keys => Some(Action::Delete),
         Key::Char('p' | 'P' | '\u{10}') if m.ctrl && !m.alt => Some(Action::TogglePin),
         Key::Char('t' | 'T' | '\u{14}') if m.ctrl && !m.alt && !m.shift => Some(Action::CopyAs),
+        Key::Char('d' | 'D' | '\u{4}') if m.ctrl && !m.alt && !m.shift => {
+            Some(Action::ToggleFavorite)
+        }
         // Ctrl+H may arrive as Backspace's control code; Ctrl+Backspace edits a non-empty
         // search box, so that code opens the history only when the list owns the keys.
         Key::Char('h' | 'H') if m.ctrl && !m.alt && !m.shift => Some(Action::OpenHistory),
@@ -235,6 +240,35 @@ mod tests {
 
     fn text(k: SlintKey) -> String {
         char::from(k).to_string()
+    }
+
+    #[test]
+    fn ctrl_d_toggles_the_favorite_of_the_selected_clip() {
+        for c in ['d', 'D', '\u{4}'] {
+            assert_eq!(
+                map_key(Key::Char(c), CTRL, TYPING),
+                Some(Action::ToggleFavorite),
+                "{c:?}"
+            );
+            assert_eq!(
+                map_key(Key::Char(c), CTRL, LIST),
+                Some(Action::ToggleFavorite)
+            );
+        }
+        // Plain "d" is typing; Alt+D and Ctrl+Shift+D are not the favorite key.
+        assert_eq!(map_key(Key::Char('d'), NONE, TYPING), None);
+        assert_eq!(map_key(Key::Char('d'), ALT, TYPING), None);
+        let ctrl_shift = Mods {
+            shift: true,
+            ..CTRL
+        };
+        assert_eq!(map_key(Key::Char('d'), ctrl_shift, TYPING), None);
+        // A focused chip keeps its keys.
+        let chips = KeyCtx {
+            chips_focused: true,
+            ..LIST
+        };
+        assert_eq!(map_key(Key::Char('d'), CTRL, chips), None);
     }
 
     #[test]
