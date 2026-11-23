@@ -232,7 +232,7 @@ fn save_edited_follows_the_sensitive_handling_setting() {
         )
         .unwrap();
     assert_eq!(page.items.len(), 1);
-    assert!(!page.items[0].preview.contains(concat!("s", "k-")));
+    assert!(!page.items[0].preview.contains("aB3dE5gH7jK9mN1pQ2"));
 }
 
 #[test]

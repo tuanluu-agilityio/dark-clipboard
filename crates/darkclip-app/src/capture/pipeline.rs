@@ -4,7 +4,8 @@
 use super::actor::{size_caps, Actor};
 use super::pending::{Carried, ExcludedRecent, Pending};
 use super::wipe::{wipe_bytes, wipe_reps, wipe_string};
-use crate::events::{AppEvent, UNAVAILABLE_STORAGE_WRITE};
+use super::SaveOutcome;
+use crate::events::{ApiError, AppEvent, UNAVAILABLE_STORAGE_WRITE};
 use crate::image;
 use darkclip_core::policy::{
     decide_pre_read, AvailableFormat, Decision, PreReadInput, SizeCaps, SkipReason,
@@ -331,10 +332,28 @@ impl Actor {
 
     fn store(
         &mut self,
-        mut reps: Vec<RawRepresentation>,
+        reps: Vec<RawRepresentation>,
         source: Option<ClipboardSource>,
         now: Timestamp,
     ) {
+        match self.prepare(reps, source, now) {
+            Ok(new) => {
+                self.insert_new(new);
+            }
+            Err(reason) => self.skip(reason),
+        }
+    }
+
+    /// Classify, kind check, sensitive scan and handling, decode and hash: everything between
+    /// the read and the insert. Shared by capture and by "save edited copy" (Task 404), so an
+    /// edited text meets exactly the rules a copied one does. `Err` means nothing is stored
+    /// (the data is wiped); the caller decides what to count or report.
+    pub(super) fn prepare(
+        &mut self,
+        mut reps: Vec<RawRepresentation>,
+        source: Option<ClipboardSource>,
+        now: Timestamp,
+    ) -> Result<NewClip, SkipReason> {
         let mut classified = classify(&reps);
         if !self.policy.capture_kinds.contains(&classified.kind) {
             self.discard(
@@ -342,8 +361,7 @@ impl Actor {
                 &mut classified.preview,
                 &mut classified.plain_text,
             );
-            self.skip(SkipReason::KindDisabled);
-            return;
+            return Err(SkipReason::KindDisabled);
         }
         let found = scan_clip(
             classified.plain_text.as_deref(),
@@ -360,8 +378,7 @@ impl Actor {
                         &mut classified.preview,
                         &mut classified.plain_text,
                     );
-                    self.skip(SkipReason::Sensitive);
-                    return;
+                    return Err(SkipReason::Sensitive);
                 }
                 SensitiveHandling::StoreMasked => {
                     let hint = found.mask_hint.clone().unwrap_or_else(|| MaskHint {
@@ -404,7 +421,7 @@ impl Actor {
         }
         let hash = hashed.hash;
         let thumbnail_png = hashed.thumbnail;
-        let outcome = self.insert_with_retry(NewClip {
+        Ok(NewClip {
             classified,
             hash,
             reps,
@@ -412,7 +429,14 @@ impl Actor {
             sensitivity,
             expires_at,
             thumbnail_png,
-        });
+        })
+    }
+
+    /// Inserts a prepared clip (retention on `StorageFull`), schedules the expiry, emits the
+    /// event. Returns what storage did, or `None` when the write failed.
+    pub(super) fn insert_new(&mut self, new: NewClip) -> Option<UpsertOutcome> {
+        let expires_at = new.expires_at;
+        let outcome = self.insert_with_retry(new);
         if outcome.is_ok() {
             if let Some(t) = expires_at {
                 self.next_expiry = Some(self.next_expiry.map_or(t, |n| n.min(t)));
@@ -423,9 +447,16 @@ impl Actor {
                 // Limits first, so a listener never sees the store over its limits.
                 self.retention_if_over_limit();
                 self.emit(AppEvent::ClipAdded(id));
+                Some(UpsertOutcome::Inserted(id))
             }
-            Ok(UpsertOutcome::Bumped(id)) => self.emit(AppEvent::ClipBumped(id)),
-            Err(_) => self.emit(AppEvent::Unavailable(UNAVAILABLE_STORAGE_WRITE)),
+            Ok(UpsertOutcome::Bumped(id)) => {
+                self.emit(AppEvent::ClipBumped(id));
+                Some(UpsertOutcome::Bumped(id))
+            }
+            Err(_) => {
+                self.emit(AppEvent::Unavailable(UNAVAILABLE_STORAGE_WRITE));
+                None
+            }
         }
     }
 
@@ -481,6 +512,40 @@ impl Actor {
         wipe_string(preview);
         if let Some(t) = plain.as_mut() {
             wipe_string(t);
+        }
+    }
+}
+
+impl Actor {
+    /// "Save as new clip" (Task 404). The text is plain text with no source app. Refusals by
+    /// capture's own rules are an `Ok(Dropped(reason))` (nothing stored, nothing counted as a
+    /// capture skip); a bad request is an `Err`.
+    pub(super) fn save_text(&mut self, mut text: String) -> Result<SaveOutcome, ApiError> {
+        if text.trim().is_empty() {
+            wipe_string(&mut text);
+            return Err(ApiError::InvalidArgument("nothing to save"));
+        }
+        if text.len() as u64 > size_caps(&self.retention).text_max_bytes {
+            wipe_string(&mut text);
+            return Err(ApiError::InvalidArgument("too large"));
+        }
+        let reps = vec![RawRepresentation {
+            mime: Mime::TextPlain,
+            platform_format: "text/plain".to_string(),
+            bytes: text.into_bytes(),
+            width: None,
+            height: None,
+            truncated: false,
+        }];
+        let now = self.clock.now();
+        match self.prepare(reps, None, now) {
+            Err(reason) => Ok(SaveOutcome::Dropped(reason)),
+            Ok(new) => match self.insert_new(new) {
+                Some(UpsertOutcome::Inserted(id) | UpsertOutcome::Bumped(id)) => {
+                    Ok(SaveOutcome::Saved(id))
+                }
+                None => Err(ApiError::Storage),
+            },
         }
     }
 }

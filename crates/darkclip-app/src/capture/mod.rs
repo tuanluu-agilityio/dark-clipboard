@@ -59,6 +59,21 @@ pub enum ActorCommand {
         deadline: Instant,
         reply: Sender<Result<(), ApiError>>,
     },
+    /// "Copy as...": writes this text to the clipboard as our own write (never captured,
+    /// never stored; Task 404).
+    CopyText {
+        text: darkclip_core::Redacted<String>,
+        deadline: Instant,
+        reply: Sender<Result<(), ApiError>>,
+    },
+    /// "Save as new clip": the edited text goes through capture's classify, kind check,
+    /// sensitive handling and size limit (Task 404). Not gated by the capture mode: the user
+    /// asked for it.
+    SaveText {
+        text: darkclip_core::Redacted<String>,
+        deadline: Instant,
+        reply: Sender<Result<SaveOutcome, ApiError>>,
+    },
     SetMode(CaptureMode),
     /// Language for masked previews stored from now on.
     SetLang(Lang),

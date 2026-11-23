@@ -224,6 +224,30 @@ impl Actor {
                 };
                 let _ = reply.send(r);
             }
+            ActorCommand::CopyText {
+                text,
+                deadline,
+                reply,
+            } => {
+                let r = if late(deadline) {
+                    Err(ApiError::Internal)
+                } else {
+                    self.copy_text(text.0)
+                };
+                let _ = reply.send(r);
+            }
+            ActorCommand::SaveText {
+                text,
+                deadline,
+                reply,
+            } => {
+                let r = if late(deadline) {
+                    Err(ApiError::Internal)
+                } else {
+                    self.save_text(text.0)
+                };
+                let _ = reply.send(r);
+            }
             ActorCommand::SetLang(lang) => self.cfg.lang = lang,
             ActorCommand::SetPinned {
                 id,

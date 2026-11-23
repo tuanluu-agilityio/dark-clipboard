@@ -38,6 +38,28 @@ impl Actor {
         if reps.is_empty() {
             return Err(ApiError::InvalidArgument("clip has no plain text"));
         }
+        self.write_own(reps)?;
+        self.storage.mark_used(id).map_err(|e| map_storage(&e))
+    }
+
+    /// "Copy as..." (Task 404): writes `text` as plain text, as our own write. Nothing is
+    /// stored and no use count changes.
+    pub(super) fn copy_text(&mut self, text: String) -> Result<(), ApiError> {
+        if text.is_empty() {
+            return Err(ApiError::InvalidArgument("nothing to copy"));
+        }
+        self.write_own(vec![RawRepresentation {
+            mime: Mime::TextPlain,
+            platform_format: String::new(),
+            bytes: text.into_bytes(),
+            width: None,
+            height: None,
+            truncated: false,
+        }])
+    }
+
+    /// Writes `reps` (wiped afterwards) and records the write as ours.
+    fn write_own(&mut self, mut reps: Vec<RawRepresentation>) -> Result<(), ApiError> {
         let written = self.with_retries(|a| a.write(&reps));
         wipe_reps(&mut reps);
         if written.is_err() {
@@ -50,6 +72,6 @@ impl Actor {
         self.last_self_write_seq = Some(seq);
         // Rule 3: nothing after our own write is a flush of the excluded change.
         self.excluded_recent = None;
-        self.storage.mark_used(id).map_err(|e| map_storage(&e))
+        Ok(())
     }
 }

@@ -49,7 +49,7 @@ fn case_conversion_is_unicode() {
 
 #[test]
 fn json_pretty_and_minify() {
-    let compact = r#"{"a":[1,2.50,{"b":null}],"c":"xé é","d":{},"e":[]}"#;
+    let compact = r#"{"a":[1,2.50,{"b":null}],"c":"x\u00e9 é","d":{},"e":[]}"#;
     let pretty = "{\n  \"a\": [\n    1,\n    2.50,\n    {\n      \"b\": null\n    }\n  ],\n  \"c\": \"x\\u00e9 é\",\n  \"d\": {},\n  \"e\": []\n}";
     assert_eq!(ok(Transform::JsonPretty, compact), pretty);
     assert_eq!(ok(Transform::JsonMinify, pretty), compact);
