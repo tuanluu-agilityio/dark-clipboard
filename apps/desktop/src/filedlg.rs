@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// What to ask for.
+// Only the Windows picker reads these; elsewhere the picker is unavailable (Q-04).
+#[cfg_attr(not(windows), allow(dead_code))]
 pub struct Pick {
     pub save: bool,
     pub title: String,
@@ -24,6 +26,7 @@ pub struct Pick {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum Started {
     Yes,
     /// Another picker is open: nothing was started.
