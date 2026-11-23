@@ -361,6 +361,26 @@ pub(crate) mod tests {
         assert!(decode_png(cut, MAX_PIXELS, MAX_RGBA_BYTES).is_err());
     }
 
+    /// Fuzz finding (Task 406, `png_to_dibs`, same decoder settings): a PLTE chunk whose
+    /// length is not a multiple of 3, or longer than 256 entries, made `png` 0.18.1 panic
+    /// while expanding the palette (an abort in release). Such a PNG is `Corrupt`.
+    #[test]
+    fn png_with_malformed_palette_is_corrupt_not_a_panic() {
+        use darkclip_fuzzgen::png::indexed_1x1;
+        let ok = decode_png(&indexed_1x1(&[10, 20, 30]), MAX_PIXELS, MAX_RGBA_BYTES).unwrap();
+        assert_eq!(ok.rgba, vec![10, 20, 30, 255]);
+        for plte in [
+            vec![1u8; 4],
+            vec![1u8; 2],
+            vec![1u8; 1],
+            vec![1u8; 769],
+            vec![1u8; 771],
+        ] {
+            let r = decode_png(&indexed_1x1(&plte), MAX_PIXELS, MAX_RGBA_BYTES);
+            assert_eq!(r.unwrap_err(), ImageError::Corrupt, "len {}", plte.len());
+        }
+    }
+
     fn solid(w: u32, h: u32) -> DecodedImage {
         DecodedImage {
             rgba: vec![200; (w * h * 4) as usize],

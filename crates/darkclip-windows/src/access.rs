@@ -551,7 +551,7 @@ const DROPFILES_HEADER: u32 = 20;
 /// URI is not a `file:` URI naming a drive or UNC path: that representation is skipped (a
 /// partial file list would paste something else than what was copied). Buffers are wiped on
 /// drop.
-fn uri_list_to_dropfiles(list: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
+pub(crate) fn uri_list_to_dropfiles(list: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
     let list = std::str::from_utf8(list).ok()?;
     let mut paths: Vec<Zeroizing<String>> = Vec::new();
     for line in list.split('\n') {

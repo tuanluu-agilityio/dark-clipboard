@@ -1,0 +1,12 @@
+[package]
+name = "darkclip-fuzzgen"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Test-only: seeded input generator, mutator and runner for the stable fuzz harness (Task 406)."
+
+[lints]
+workspace = true
+
+[dependencies]

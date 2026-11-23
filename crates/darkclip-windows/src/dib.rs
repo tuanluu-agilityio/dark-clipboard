@@ -862,4 +862,28 @@ mod tests {
         cut.truncate(cut.len() - 20);
         assert!(png_to_dibs(&cut).is_err());
     }
+
+    /// Fuzz finding (Task 406, `png_to_dibs`): a PLTE chunk whose length is not a multiple
+    /// of 3, or longer than 256 entries, made `png` 0.18.1 panic while expanding the palette
+    /// (an abort in release). Such a PNG is refused as malformed.
+    #[test]
+    fn png_with_malformed_palette_is_refused_not_a_panic() {
+        use darkclip_fuzzgen::png::indexed_1x1;
+        // Control: a well-formed palette converts.
+        assert!(png_to_dibs(&indexed_1x1(&[10, 20, 30])).is_ok());
+        for plte in [
+            vec![1u8; 4],
+            vec![1u8; 2],
+            vec![1u8; 1],
+            vec![1u8; 769],
+            vec![1u8; 771],
+        ] {
+            let r = png_to_dibs(&indexed_1x1(&plte));
+            assert!(
+                matches!(r, Err(DibError::Malformed(_))),
+                "len {}",
+                plte.len()
+            );
+        }
+    }
 }

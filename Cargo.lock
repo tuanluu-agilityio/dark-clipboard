@@ -1077,6 +1077,7 @@ name = "darkclip-app"
 version = "0.0.1"
 dependencies = [
  "darkclip-core",
+ "darkclip-fuzzgen",
  "darkclip-platform",
  "darkclip-storage",
  "flate2",
@@ -1092,6 +1093,7 @@ dependencies = [
 name = "darkclip-core"
 version = "0.0.1"
 dependencies = [
+ "darkclip-fuzzgen",
  "serde",
  "serde_json",
  "sha2",
@@ -1099,6 +1101,10 @@ dependencies = [
  "unicode-normalization",
  "uuid",
 ]
+
+[[package]]
+name = "darkclip-fuzzgen"
+version = "0.0.1"
 
 [[package]]
 name = "darkclip-platform"
@@ -1129,6 +1135,7 @@ name = "darkclip-windows"
 version = "0.0.1"
 dependencies = [
  "darkclip-core",
+ "darkclip-fuzzgen",
  "darkclip-platform",
  "png",
  "sha2",
