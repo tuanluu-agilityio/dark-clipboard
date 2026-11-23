@@ -677,6 +677,69 @@ impl Host {
         self.start_plan(plan);
     }
 
+    /// Ctrl+Shift+E (Task 405): exports the collection the list is filtered to, or else the
+    /// marked clips (or the clip under the cursor). The user picks the file; masked and
+    /// sensitive clips are left out and counted in the message.
+    pub(super) fn export_ask(&mut self) {
+        use crate::prefs::transfer;
+        use darkclip_app::api::ExportSelection;
+        use darkclip_core::Clock;
+        if self.modal_open() || self.confirming() {
+            return;
+        }
+        let what = match self.model.filters().collection {
+            Some(id) => ExportSelection::Collection(id),
+            None => {
+                let ids = self.targets();
+                if ids.is_empty() {
+                    return;
+                }
+                ExportSelection::Clips(ids)
+            }
+        };
+        let lang = self.lang;
+        let req = crate::filedlg::Pick {
+            save: true,
+            title: t(lang, Msg::TransferDialogExport).to_string(),
+            filter_name: t(lang, Msg::TransferFilterExport).to_string(),
+            ext: transfer::EXPORT_EXT,
+            default_name: Some(transfer::export_file_name(crate::SystemClock.now())),
+        };
+        let poster = self.poster.clone();
+        let ui = self.win.as_weak();
+        let started = crate::filedlg::pick(req, move |path| {
+            let Some(path) = path else {
+                return;
+            };
+            with_host(|h| h.show_toast(t(h.lang, Msg::TransferWorking).to_string()));
+            let finish = move |r: Result<darkclip_app::TransferReply, ApiError>| {
+                let _ = ui.upgrade_in_event_loop(move |_| {
+                    with_host(|h| {
+                        let text = match r {
+                            Ok(darkclip_app::TransferReply::Export(r)) => {
+                                transfer::export_text(h.lang, &r)
+                            }
+                            Ok(_) => t(h.lang, Msg::TransferFailed).to_string(),
+                            Err(e) => t(h.lang, transfer::error_msg(&e)).to_string(),
+                        };
+                        h.show_toast(text);
+                    });
+                });
+            };
+            // A quick send on the worker; the wait runs on its own thread.
+            poster.post_quiet(move |app| {
+                let start = darkclip_app::UiTransfer::Export { what, dest: path };
+                match app.ui_start(&Caller::Ui, start) {
+                    Ok(wait) => crate::filedlg::wait_transfer(wait, finish),
+                    Err(e) => finish(Err(e)),
+                }
+            });
+        });
+        if started == crate::filedlg::Started::Unavailable {
+            self.show_toast(t(lang, Msg::TransferNoDialog).to_string());
+        }
+    }
+
     /// Runs a plan (several clips: after the confirmation that shows the count).
     fn start_plan(&mut self, plan: Option<BulkPlan>) {
         let Some(plan) = plan else {

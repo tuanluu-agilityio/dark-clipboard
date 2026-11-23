@@ -12,7 +12,7 @@ use darkclip_platform::{
     ChangeSignal, ClipboardAccess, ClipboardMonitor, PlatformError, SourceResolver,
 };
 use darkclip_storage::Storage;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -117,16 +117,28 @@ impl Actor {
                 wake = wake.min(p.due);
             }
             match rx.recv_timeout(wake.saturating_duration_since(Instant::now())) {
-                Ok(Msg::Signal(s)) => self.on_signal(s),
-                Ok(Msg::Cmd(ActorCommand::Shutdown { reply })) => {
-                    self.storage.optimize_fts_if_dirty();
-                    self.monitor.stop();
-                    let _ = reply.send(());
-                    return;
-                }
-                Ok(Msg::Cmd(cmd)) => self.on_command(cmd),
-                Ok(Msg::MonitorGone) => {
-                    self.emit(AppEvent::Unavailable("clipboard monitor stopped"))
+                Ok(msg) => {
+                    if !self.handle(msg) {
+                        return;
+                    }
+                    // Strict FIFO before acting on a due change: everything that queued up
+                    // meanwhile (a mode change sent during a long transfer, say) is handled
+                    // first, so a pending change is never read after a later command that
+                    // would have blocked it (Task 405 review R2-B2).
+                    loop {
+                        match rx.try_recv() {
+                            Ok(msg) => {
+                                if !self.handle(msg) {
+                                    return;
+                                }
+                            }
+                            Err(TryRecvError::Empty) => break,
+                            Err(TryRecvError::Disconnected) => {
+                                self.monitor.stop();
+                                return;
+                            }
+                        }
+                    }
                 }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
@@ -151,6 +163,22 @@ impl Actor {
             }
             self.fts_housekeeping();
         }
+    }
+
+    /// Handles one queued message; `false` after `Shutdown` (the actor ends).
+    fn handle(&mut self, msg: Msg) -> bool {
+        match msg {
+            Msg::Signal(s) => self.on_signal(s),
+            Msg::Cmd(ActorCommand::Shutdown { reply }) => {
+                self.storage.optimize_fts_if_dirty();
+                self.monitor.stop();
+                let _ = reply.send(());
+                return false;
+            }
+            Msg::Cmd(cmd) => self.on_command(cmd),
+            Msg::MonitorGone => self.emit(AppEvent::Unavailable("clipboard monitor stopped")),
+        }
+        true
     }
 
     pub(super) fn emit(&self, e: AppEvent) {
@@ -327,6 +355,25 @@ impl Actor {
                     self.organize(op)
                 };
                 if r.is_ok() {
+                    self.emit(AppEvent::OrganizationChanged);
+                }
+                let _ = reply.send(r);
+            }
+            ActorCommand::Transfer {
+                op,
+                deadline,
+                reply,
+            } => {
+                let r = if late(deadline) {
+                    Err(ApiError::Internal)
+                } else {
+                    self.transfer(op)
+                };
+                if matches!(
+                    r,
+                    Ok(super::TransferReply::Restore(_) | super::TransferReply::Import(_))
+                ) {
+                    // A restored or imported history: open windows refresh.
                     self.emit(AppEvent::OrganizationChanged);
                 }
                 let _ = reply.send(r);

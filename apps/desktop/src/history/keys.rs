@@ -48,6 +48,9 @@ pub enum HistoryAction {
     RenameCollection,
     /// Ctrl+Shift+Delete: delete that collection (asks first; its clips stay).
     DeleteCollection,
+    /// Ctrl+Shift+E: export the collection the list is filtered to, or else the marked clips
+    /// (Task 405).
+    Export,
     SelectAll,
     /// Space: marks or unmarks the clip under the cursor.
     ToggleMark,
@@ -118,6 +121,7 @@ pub fn map_key(k: Key, m: Mods, ctx: HistoryCtx) -> Option<HistoryAction> {
         Key::Char('n' | 'N' | '\u{e}') if ctrl_shift => Some(HistoryAction::NewCollection),
         Key::Char('r' | 'R' | '\u{12}') if ctrl_shift => Some(HistoryAction::RenameCollection),
         Key::Delete if ctrl_shift => Some(HistoryAction::DeleteCollection),
+        Key::Char('e' | 'E' | '\u{5}') if ctrl_shift => Some(HistoryAction::Export),
         // Ctrl+A selects text in a non-empty search box; otherwise it selects every loaded row.
         Key::Char('a' | 'A' | '\u{1}') if m.ctrl && !m.alt && list_keys => {
             Some(HistoryAction::SelectAll)
@@ -304,6 +308,32 @@ mod tests {
         // Plain Delete is still the clip delete; Ctrl+Delete is not Ctrl+Shift+Delete.
         assert_eq!(map_key(Key::Delete, NONE, LIST), Some(A::Delete));
         assert_eq!(map_key(Key::Delete, CTRL, LIST), None);
+    }
+
+    #[test]
+    fn ctrl_shift_e_exports_and_ctrl_e_still_edits() {
+        let ctrl_shift = Mods {
+            ctrl: true,
+            shift: true,
+            ..NONE
+        };
+        for c in ['e', 'E', '\u{5}'] {
+            assert_eq!(
+                map_key(Key::Char(c), ctrl_shift, LIST),
+                Some(A::Export),
+                "{c:?}"
+            );
+            assert_eq!(
+                map_key(Key::Char(c), ctrl_shift, TYPING),
+                Some(A::Export),
+                "{c:?}"
+            );
+        }
+        assert_eq!(map_key(Key::Char('e'), CTRL, LIST), Some(A::Edit));
+        assert_eq!(
+            map_key(Key::Char('e'), ctrl_shift, CONFIRM),
+            Some(A::Swallow)
+        );
     }
 
     #[test]

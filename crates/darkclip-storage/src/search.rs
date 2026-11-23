@@ -682,6 +682,7 @@ mod tests {
             sensitivity: Sensitivity::default(),
             expires_at: None,
             thumbnail_png: None,
+            no_export: false,
         }
     }
 

@@ -30,6 +30,8 @@ pub enum StorageError {
     /// renaming or deleting a system collection, reordering a non-manual collection,
     /// too many tags). A fixed description only, never user input.
     InvalidArgument(&'static str),
+    /// A backup or export archive was refused (Task 405). Reason code only.
+    Archive(crate::ArchiveError),
 }
 
 impl std::fmt::Display for StorageError {
@@ -47,6 +49,7 @@ impl std::fmt::Display for StorageError {
             Self::ReadOnly => f.write_str("storage is read-only"),
             Self::Invalid(e) => write!(f, "invalid clip: {e}"),
             Self::InvalidArgument(what) => write!(f, "invalid argument: {what}"),
+            Self::Archive(e) => write!(f, "archive refused: {e:?}"),
         }
     }
 }

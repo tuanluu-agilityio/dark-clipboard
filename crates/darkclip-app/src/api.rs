@@ -24,6 +24,7 @@ use darkclip_core::{
 use darkclip_platform::{Capabilities, PlatformBundle};
 use darkclip_storage::{ClipSummary, OpenMode, SearchQuery, Storage};
 
+mod transfer;
 mod transform_ui;
 pub use crate::capture::SaveOutcome;
 use serde::Serialize;
@@ -33,6 +34,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+pub use transfer::{ExportSelection, ImportReport, TransferReply, TransferWait, UiTransfer};
 pub use transform_ui::TransformPreview;
 
 /// Who is calling. The App is in-process in Phase 1; the P2 CLI and MCP processes
@@ -222,6 +224,8 @@ pub struct TagView {
 pub struct ExportResult {
     pub path: String,
     pub clip_count: u64,
+    /// Masked or sensitive clips left out (they are never exported; Task 405).
+    pub excluded_sensitive: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -386,6 +390,8 @@ pub struct App {
     /// Held while saving, so saves are serialized and the file matches memory.
     settings: Mutex<Settings>,
     settings_path: PathBuf,
+    /// The data folder (`export_collection` writes under `<data>/exports/`).
+    data_dir: PathBuf,
     /// False when the settings file must not be written (see `AppStatus::settings_read_only`).
     persist: bool,
     status: Arc<Mutex<StatusState>>,
@@ -619,6 +625,7 @@ impl App {
             cap,
             settings: Mutex::new(settings),
             settings_path: settings_path.to_path_buf(),
+            data_dir: data_dir.to_path_buf(),
             persist,
             status,
             clock,
@@ -1101,9 +1108,14 @@ impl ClipApi for App {
         })
     }
 
-    fn export_collection(&self, c: &Caller, _col: CollectionId) -> Result<ExportResult, ApiError> {
+    /// UI: writes `<data>/exports/<id>.dcexport` (T-11) and reports the masked or sensitive
+    /// clips left out (Task 405). The CLI gets it in P2.
+    fn export_collection(&self, c: &Caller, col: CollectionId) -> Result<ExportResult, ApiError> {
         PermissionGuard::check(c, Operation::ExportCollection)?;
-        Err(NOT_YET)
+        if *c != Caller::Ui {
+            return Err(NOT_YET);
+        }
+        self.export_collection_ui(col)
     }
 
     /// Applies the mode to the actor first, then saves it. If the save fails the mode stays
@@ -1185,6 +1197,7 @@ mod tests {
             sensitivity,
             expires_at,
             thumbnail_png: None,
+            no_export: false,
         }
     }
 
@@ -2324,13 +2337,19 @@ file:///C:/c.txt
             .collect()
     }
 
+    /// Task 405: `export_collection` works for the UI (tests in `transfer_tests`); the CLI
+    /// gets it in P2.
     #[test]
-    fn export_stays_unavailable() {
+    fn export_stays_unavailable_outside_the_ui() {
         let h = start(&[("x", false)], None);
         let a = h.app();
         let col = CollectionId::new_v7(Timestamp(T0));
         let nope = ApiError::InvalidArgument("not available until P1");
-        assert_eq!(a.export_collection(&Caller::Ui, col).unwrap_err(), nope);
+        assert_eq!(a.export_collection(&Caller::Cli, col).unwrap_err(), nope);
+        assert!(matches!(
+            a.export_collection(&mcp(), col).unwrap_err(),
+            ApiError::PermissionDenied(_)
+        ));
     }
 
     #[test]
@@ -2681,5 +2700,6 @@ file:///C:/c.txt
         assert_eq!(json["favorite"], true);
     }
 
+    mod transfer_tests;
     mod transform_ui_tests;
 }

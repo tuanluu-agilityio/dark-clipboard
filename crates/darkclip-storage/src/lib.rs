@@ -13,6 +13,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+mod archive;
+mod backup;
 mod blobs;
 mod clips;
 mod db;
@@ -23,6 +25,7 @@ mod organize;
 mod retention;
 mod search;
 mod stats;
+mod transfer;
 
 use darkclip_core::{
     Classified, ClipId, ClipboardSource, Clock, RawRepresentation, Sensitivity, Timestamp,
@@ -30,12 +33,15 @@ use darkclip_core::{
 use std::path::PathBuf;
 use std::sync::Arc;
 
+pub use archive::{ArchiveError, ArchiveLimits, BACKUP_FORMAT, EXPORT_SCHEMA_VERSION};
+pub use backup::{BackupReport, RestoreReport};
 pub use error::StorageError;
 pub use maintenance::{CompactReport, OrphanReport};
 pub use organize::TagCount;
 pub use retention::RetentionReport;
 pub use search::{ClipSummary, Cursor, SearchQuery};
 pub use stats::StorageStats;
+pub use transfer::{ExportArchive, ExportReport};
 
 /// The clip store: one SQLite connection plus the data directory.
 pub struct Storage {
@@ -51,6 +57,9 @@ pub struct Storage {
     /// Test hook: fail `upsert_clip` after blobs are written, before commit.
     #[cfg(test)]
     fail_before_commit: bool,
+    /// Test hook: fail a restore during the swap, after part of the data was copied.
+    #[cfg(test)]
+    fail_restore_swap: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +80,10 @@ pub struct NewClip {
     pub sensitivity: Sensitivity,
     pub expires_at: Option<Timestamp>,
     pub thumbnail_png: Option<Vec<u8>>,
+    /// The source asked that the content never leave this machine (Windows
+    /// `CanUploadToCloudClipboard` = 0, `PrivacyMarker::NoCloud`): the clip is never exported
+    /// (privacy-design §3). Sticky: a bump never clears it. Imports always pass `false`.
+    pub no_export: bool,
 }
 
 /// Prints kind, representation formats and sizes only (GC-06).
@@ -81,6 +94,7 @@ impl std::fmt::Debug for NewClip {
             .field("reps", &self.reps)
             .field("sensitivity", &self.sensitivity)
             .field("thumbnail_len", &self.thumbnail_png.as_ref().map(Vec::len))
+            .field("no_export", &self.no_export)
             .finish_non_exhaustive()
     }
 }
@@ -143,6 +157,7 @@ mod tests {
             sensitivity: Sensitivity::default(),
             expires_at: None,
             thumbnail_png: None,
+            no_export: false,
         }
     }
 
@@ -188,12 +203,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let s = open(tmp.path());
         // Migration 2 (Task 401) runs on every new store: the current version is 2.
-        assert_eq!(s.schema_version().unwrap(), 2);
+        assert_eq!(s.schema_version().unwrap(), 3);
         let uv: u32 = s
             .conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(uv, 2);
+        assert_eq!(uv, 3);
         let jm: String = s
             .conn
             .pragma_query_value(None, "journal_mode", |r| r.get(0))
@@ -478,7 +493,7 @@ mod tests {
             }
         };
         let mut ro = Storage::open(tmp.path(), OpenMode::ReadOnly, clock()).unwrap();
-        assert_eq!(ro.schema_version().unwrap(), 2);
+        assert_eq!(ro.schema_version().unwrap(), 3);
         assert!(ro.get_clip(&id).unwrap().is_some());
         assert_eq!(ro.read_representation(&id, 0).unwrap(), b"stored");
         assert_eq!(
@@ -507,7 +522,7 @@ mod tests {
         }
         let want = StorageError::SchemaTooNew {
             found: 99,
-            supported: 2,
+            supported: 3,
         };
         assert_eq!(
             Storage::open(tmp.path(), OpenMode::ReadOnly, clock()).err(),
@@ -529,8 +544,8 @@ mod tests {
     fn migration_backup_created_and_removed() {
         let tmp = tempfile::tempdir().unwrap();
         let db = tmp.path().join("history.db");
-        // Named after the target version (2 since Task 401).
-        let bak = tmp.path().join("history.db.pre-v2.bak");
+        // Named after the target version (3 since Task 405).
+        let bak = tmp.path().join("history.db.pre-v3.bak");
         {
             // an existing version-0 database (e.g. created by an interrupted first run)
             let c = rusqlite::Connection::open(&db).unwrap();
@@ -539,7 +554,7 @@ mod tests {
         }
         // a fresh store gets no backup; this one existed, so it does
         let s = open(tmp.path());
-        assert_eq!(s.schema_version().unwrap(), 2);
+        assert_eq!(s.schema_version().unwrap(), 3);
         assert!(bak.is_file(), "backup created before migrating");
         {
             let b = rusqlite::Connection::open(&bak).unwrap();
@@ -563,13 +578,13 @@ mod tests {
         drop(s);
         // the next successful run at version 2 removes it
         let s = open(tmp.path());
-        assert_eq!(s.schema_version().unwrap(), 2);
+        assert_eq!(s.schema_version().unwrap(), 3);
         assert!(!bak.exists(), "backup removed after a successful run");
 
         // a brand-new store never creates one
         let fresh = tempfile::tempdir().unwrap();
         drop(open(fresh.path()));
-        assert!(!fresh.path().join("history.db.pre-v2.bak").exists());
+        assert!(!fresh.path().join("history.db.pre-v3.bak").exists());
     }
 
     #[test]
@@ -773,7 +788,7 @@ mod tests {
     #[test]
     fn stale_backup_removal_failure_is_ignored() {
         let tmp = tempfile::tempdir().unwrap();
-        let bak = tmp.path().join("history.db.pre-v2.bak");
+        let bak = tmp.path().join("history.db.pre-v3.bak");
         {
             let c = rusqlite::Connection::open(tmp.path().join("history.db")).unwrap();
             c.execute_batch("CREATE TABLE legacy(x);").unwrap();

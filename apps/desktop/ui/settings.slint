@@ -102,6 +102,13 @@ export global SText {
     in property <string> folder-label;
     in property <string> open-folder;
     in property <string> show-welcome;
+    // Backup and transfer (Task 405)
+    in property <string> transfer-heading;
+    in property <string> transfer-note;
+    in property <string> backup-do;
+    in property <string> restore-do;
+    in property <string> import-do;
+    in property <string> restore-yes;
 }
 
 // A caption above a control.
@@ -212,6 +219,10 @@ export component SettingsWindow inherits Window {
     // The question of the clear dialog (it names the count for the checkbox state).
     in property <string> clear-question;
     in property <bool> cleanup-open;
+    // A backup, restore or import is running, or its file dialog is open.
+    in property <bool> transfer-busy;
+    in property <bool> restore-open;
+    in property <string> restore-question;
     in property <string> cleanup-question;
     in-out property <string> older-days: "30";
     // Multi-line texts.
@@ -244,6 +255,11 @@ export component SettingsWindow inherits Window {
     callback compact-ask();
     callback cleanup-confirm();
     callback cleanup-cancel();
+    callback backup-ask();
+    callback restore-ask();
+    callback import-ask();
+    callback restore-confirm();
+    callback restore-cancel();
     callback open-folder();
     callback show-welcome();
     callback escape();
@@ -696,6 +712,38 @@ export component SettingsWindow inherits Window {
                                     }
                                 }
                             }
+                            Caption {
+                                text: SText.transfer-heading;
+                                font-weight: 700;
+                            }
+                            Caption {
+                                text: SText.transfer-note;
+                            }
+                            HorizontalLayout {
+                                alignment: start;
+                                spacing: 8px;
+                                Button {
+                                    text: SText.backup-do;
+                                    enabled: !root.transfer-busy;
+                                    clicked => {
+                                        root.backup-ask();
+                                    }
+                                }
+                                Button {
+                                    text: SText.restore-do;
+                                    enabled: !root.transfer-busy;
+                                    clicked => {
+                                        root.restore-ask();
+                                    }
+                                }
+                                Button {
+                                    text: SText.import-do;
+                                    enabled: !root.transfer-busy;
+                                    clicked => {
+                                        root.import-ask();
+                                    }
+                                }
+                            }
                         }
 
                         // ---------------------------------------------------- About
@@ -963,6 +1011,45 @@ export component SettingsWindow inherits Window {
                         primary: true;
                         clicked => {
                             root.cleanup-confirm();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Restore: replaces the whole history, so it always asks first (Task 405).
+    Overlay {
+        open: root.restore-open;
+        Rectangle {
+            width: min(parent.width - 40px, 420px);
+            height: restore-col.preferred-height + 28px;
+            background: Theme.bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.danger;
+            restore-col := VerticalLayout {
+                padding: 14px;
+                spacing: 12px;
+                Text {
+                    text: root.restore-question;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Button {
+                        text: SText.cancel;
+                        clicked => {
+                            root.restore-cancel();
+                        }
+                    }
+                    Button {
+                        text: SText.restore-yes;
+                        primary: true;
+                        clicked => {
+                            root.restore-confirm();
                         }
                     }
                 }

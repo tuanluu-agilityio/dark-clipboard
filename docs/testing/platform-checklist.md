@@ -239,6 +239,35 @@ All rows **untested** until the owner runs them (agents never click, type, take 
 | Vietnamese interface, open the History section and each dialog | All labels, questions and results are Vietnamese | **untested** |
 | Esc with a cleanup dialog open | The dialog closes without deleting | **untested** |
 
+## Windows: backup, restore, export and import (Task 405)
+
+All rows **untested** until the owner runs them (agents never click, type, take screenshots or write the real clipboard, GC-19). Use scratch histories only (`--seed-demo-clips 200 --data-dir <empty folder A>`, then `--data-dir <A>`; a second empty folder B for restores and imports), never the real one. Keep the backup and export files in a scratch folder too.
+
+| Row | Expected | Result |
+|---|---|---|
+| Settings > History, Backup and transfer | Heading, note and three buttons: Back up now..., Restore from backup..., Import clips... | **untested** |
+| Back up now... | The Windows save dialog opens with `dark-clipboard-<date>.dcbackup` and the file type "Dark Clipboard backup"; the settings window stays usable; Cancel does nothing | **untested** |
+| Save the backup | The buttons grey out, the status line says "Working...", then "Backup saved: N clips"; the file exists; no `.partial` file is left next to it | **untested** |
+| Open the backup with 7-Zip or Explorer | It contains `manifest.json`, `history.db` and `blobs` files only | **untested** |
+| A masked clip in A (sensitive setting "store masked", copy a synthetic token from a scratch file), then Back up now... | The count leaves it out; after restoring into B it is not there | **untested** |
+| Start the app on B, Restore from backup..., choose A's backup | A question says the whole history will be replaced and the current one kept as a safety copy; Cancel and Esc change nothing | **untested** |
+| Same, press Restore | The status says "History restored: N clips"; the history window and popup show A's clips, collections, tags, notes, favorites and images; `history.db.pre-restore-<number>` exists in B | **untested** |
+| Quit and start the app on B again | `history.db.pre-restore-*` is gone; the restored history is still there | **untested** |
+| Restore a file that is not a backup (rename any .zip or .txt to `.dcbackup`) | Red status: not a valid Dark Clipboard file, nothing was changed; the history is unchanged | **untested** |
+| Restore a backup whose `manifest.json` was edited to `"format": 2` (7-Zip, scratch copy) | Red status: made by a newer version, nothing was changed | **untested** |
+| Restore a backup with one blob file edited (scratch copy) | Red status: not valid or damaged; history unchanged | **untested** |
+| History window on A: select a collection in the left pane, `Ctrl+Shift+E` | Save dialog with `dark-clipboard-export-<date>.dcexport`; saving shows "Exported N clips" | **untested** |
+| Mark 3 clips (one of them masked), `Ctrl+Shift+E` | "Exported 2 clips. Masked or sensitive clips left out: 1" | **untested** |
+| On B: Import clips..., choose the export | "Imported N new clips; M were already in your history"; a collection with the export's name holds them | **untested** |
+| Import the same file again | Nothing new: all N are counted as already in history; no duplicate rows | **untested** |
+| Private mode on, Import clips... | Red status: private mode is on, nothing is imported | **untested** |
+| Vietnamese interface: the buttons, dialog titles, question and every result | All Vietnamese | **untested** |
+| Open Back up now... and, while the dialog is open, press Restore or Import | The buttons are greyed out; only one file dialog at a time | **untested** |
+| On a large scratch history (`--seed-demo-clips 5000`), start Back up now... and at once choose Private mode in the tray, then copy a line from a scratch file | The tray switches to private at once; after "Backup saved" the copied line is not in the history | **untested** |
+| Restore with the data folder on a nearly full volume (less free space than twice the backup) | Red status: not enough free disk space, nothing was changed | **untested** |
+| With a scratch tool, put a synthetic text on the clipboard with only the `CanUploadToCloudClipboard` = 0 format (no other privacy marker: the clip is captured), then mark it and press `Ctrl+Shift+E` | The message counts it as left out; the export does not contain it | **untested** |
+| Kill the app (Task Manager) while a large backup is being written | A `<file>.dark-clipboard-partial` may remain next to the chosen name; no file with the chosen name appears | **untested** |
+
 ## Windows: collections, tags, notes and favorites (Task 403)
 
 All rows **untested** until the owner runs them (agents never click, type, take screenshots or write the real clipboard, GC-19). Use a scratch history (`--seed-demo-clips 200 --data-dir <empty folder>`, then `--data-dir <same folder>`), never the real one. Keyboard rows: use no mouse.

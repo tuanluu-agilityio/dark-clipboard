@@ -7,6 +7,7 @@ use super::wipe::{wipe_bytes, wipe_reps, wipe_string};
 use super::SaveOutcome;
 use crate::events::{ApiError, AppEvent, UNAVAILABLE_STORAGE_WRITE};
 use crate::image;
+use darkclip_core::markers::PrivacyMarker;
 use darkclip_core::policy::{
     decide_pre_read, AvailableFormat, Decision, PreReadInput, SizeCaps, SkipReason,
 };
@@ -327,7 +328,10 @@ impl Actor {
             self.skip(SkipReason::NothingReadable);
             return;
         }
-        self.store(reps, source, now);
+        // NoCloud (`CanUploadToCloudClipboard` = 0): stored, but never exported
+        // (privacy-design §3; Task 405).
+        let no_export = meta.markers.contains(&PrivacyMarker::NoCloud);
+        self.store(reps, source, now, no_export);
     }
 
     fn store(
@@ -335,9 +339,11 @@ impl Actor {
         reps: Vec<RawRepresentation>,
         source: Option<ClipboardSource>,
         now: Timestamp,
+        no_export: bool,
     ) {
         match self.prepare(reps, source, now) {
-            Ok(new) => {
+            Ok(mut new) => {
+                new.no_export = no_export;
                 self.insert_new(new);
             }
             Err(reason) => self.skip(reason),
@@ -429,6 +435,7 @@ impl Actor {
             sensitivity,
             expires_at,
             thumbnail_png,
+            no_export: false,
         })
     }
 

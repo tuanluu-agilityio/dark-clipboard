@@ -35,6 +35,7 @@ fn seed_masked(expires_at: i64) -> impl FnOnce(&mut Storage) {
             },
             expires_at: Some(Timestamp(expires_at)),
             thumbnail_png: None,
+            no_export: false,
         })
         .unwrap();
     }
@@ -167,6 +168,7 @@ fn masked_clip_from_earlier_session_removed_at_expiry() {
             },
             expires_at: Some(Timestamp(T0 + 5_000)),
             thumbnail_png: None,
+            no_export: false,
         })
         .unwrap();
     };
@@ -238,6 +240,7 @@ fn retention_runs_on_start() {
             },
             expires_at: Some(Timestamp(T0 - 1)),
             thumbnail_png: None,
+            no_export: false,
         })
         .unwrap();
     };

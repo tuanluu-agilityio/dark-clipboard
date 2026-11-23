@@ -203,7 +203,7 @@ pub(crate) fn remove_unreferenced(
     out
 }
 
-fn referenced_set(conn: &Connection) -> Result<HashSet<String>, StorageError> {
+pub(crate) fn referenced_set(conn: &Connection) -> Result<HashSet<String>, StorageError> {
     let mut set = HashSet::new();
     let mut st = conn.prepare(
         "SELECT DISTINCT blob_sha256 FROM representations WHERE blob_sha256 IS NOT NULL",
