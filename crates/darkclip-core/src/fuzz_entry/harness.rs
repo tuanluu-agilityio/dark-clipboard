@@ -87,12 +87,17 @@ fn text_dict() -> Vec<Vec<u8>> {
     pieces.into_iter().map(String::into_bytes).collect()
 }
 
-/// How many leading entries of [`text_dict`] are secret-shaped.
-const SECRET_SHAPED: usize = 17;
+/// How many leading entries of [`text_dict`] are aimed at the sensitive detectors: vendor
+/// prefixes, token and key armour, password keywords, card numbers, emails and phone
+/// numbers (through `"(+1) 202-555-0100"`). The fuzz runs use them; the committed corpus
+/// never does (GC-09).
+const SENSITIVE_SHAPED: usize = 30;
 
 /// A structure-aware text input: a selector byte, then a mix of dictionary fragments,
 /// random alphanumeric runs, separators and the odd random byte.
-fn gen_text(rng: &mut Rng, dict: &[Vec<u8>], max: usize) -> Vec<u8> {
+/// `digit_runs`: also emit runs of digits, spaces and dashes (card- and phone-like); off
+/// for the committed corpus.
+fn gen_text(rng: &mut Rng, dict: &[Vec<u8>], max: usize, digit_runs: bool) -> Vec<u8> {
     let mut out = vec![rng.next_u64() as u8];
     let parts = rng.range(1, 24);
     for _ in 0..parts {
@@ -108,7 +113,7 @@ fn gen_text(rng: &mut Rng, dict: &[Vec<u8>], max: usize) -> Vec<u8> {
                 let n = rng.range(1, 64);
                 out.extend((0..n).map(|_| ALNUM[rng.below(ALNUM.len())]));
             }
-            3 => {
+            3 if digit_runs => {
                 let n = rng.range(1, 24);
                 out.extend((0..n).map(|_| b"0123456789 -"[rng.below(12)]));
             }
@@ -140,7 +145,7 @@ fn fuzz<'a>(name: &'static str, dict: &'a [&'a [u8]], max_len: usize, mem: usize
 fn run_text(name: &'static str, max_len: usize, mem: usize, target: fn(&[u8])) {
     let owned = text_dict();
     let dict: Vec<&[u8]> = owned.iter().map(Vec::as_slice).collect();
-    fuzz(name, &dict, max_len, mem).run(|rng| gen_text(rng, &owned, max_len), target);
+    fuzz(name, &dict, max_len, mem).run(|rng| gen_text(rng, &owned, max_len, true), target);
 }
 
 #[test]
@@ -192,12 +197,72 @@ fn fuzz_large_inputs() {
 #[test]
 #[ignore = "writes fuzz/corpus; run by hand"]
 fn write_seed_corpus() {
-    // Without the vendor-prefix and key-armor fragments (the first 17): committed files must
-    // not look like secrets to a secret scanner (GC-09).
-    let owned: Vec<Vec<u8>> = text_dict().split_off(SECRET_SHAPED);
+    // Without the sensitive-shaped fragments and digit runs: committed files must not look
+    // like secrets, card numbers or personal data (GC-09). `committed_corpus_is_not_sensitive`
+    // checks the result.
+    let owned: Vec<Vec<u8>> = text_dict().split_off(SENSITIVE_SHAPED);
     for (name, seed) in [("sensitive", 1u64), ("transforms", 2), ("tag_name", 3)] {
         let mut rng = Rng::new(seed);
-        let inputs: Vec<Vec<u8>> = (0..6).map(|_| gen_text(&mut rng, &owned, 512)).collect();
+        let inputs: Vec<Vec<u8>> = (0..6)
+            .map(|_| gen_text(&mut rng, &owned, 512, false))
+            .collect();
         darkclip_fuzzgen::write_corpus(name, &inputs).unwrap();
     }
+}
+
+/// Keywords and prefixes that must never appear in a committed seed file (GC-09), lower case
+/// and assembled at runtime.
+fn forbidden_fragments() -> Vec<String> {
+    let mut v: Vec<String> = text_dict()
+        .into_iter()
+        .take(SENSITIVE_SHAPED)
+        .map(|f| String::from_utf8_lossy(&f).trim().to_lowercase())
+        .filter(|f| f.chars().count() >= 3)
+        .collect();
+    for k in [
+        concat!("pass", "word"),
+        concat!("pass", "wd"),
+        concat!("pw", "d"),
+        concat!("sec", "ret"),
+        concat!("tok", "en"),
+        concat!("mật ", "khẩu"),
+        concat!("mat ", "khau"),
+        concat!("priv", "ate key"),
+    ] {
+        v.push(k.to_string());
+    }
+    v
+}
+
+/// Every committed seed file (all targets): the sensitive scanner finds nothing in it, and
+/// it holds no secret keyword or vendor prefix (GC-09). Not ignored.
+#[test]
+fn committed_corpus_is_not_sensitive() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/corpus");
+    let forbidden = forbidden_fragments();
+    let all = CATEGORIES.to_vec();
+    let mut files = 0;
+    for dir in std::fs::read_dir(&root).unwrap() {
+        let dir = dir.unwrap().path();
+        for f in std::fs::read_dir(&dir).unwrap() {
+            let path = f.unwrap().path();
+            let bytes = std::fs::read(&path).unwrap();
+            let name = path.display().to_string();
+            for text in [
+                String::from_utf8_lossy(&bytes),
+                String::from_utf8_lossy(bytes.get(1..).unwrap_or_default()),
+            ] {
+                assert!(
+                    scan(&text, &all).categories.is_empty(),
+                    "scanner hit in {name}"
+                );
+                let lower = text.to_lowercase();
+                for k in &forbidden {
+                    assert!(!lower.contains(k.as_str()), "forbidden fragment in {name}");
+                }
+            }
+            files += 1;
+        }
+    }
+    assert!(files >= 13 * 6, "corpus files found: {files}");
 }

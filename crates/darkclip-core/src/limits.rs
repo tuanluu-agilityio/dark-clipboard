@@ -24,8 +24,10 @@ const MAX_PLTE_LEN: u32 = 256 * 3;
 
 /// Whether every `PLTE` chunk of `png` holds 1 to 256 whole entries (a length that is a
 /// non-zero multiple of 3, at most 768). Decoders call this before handing the bytes to the
-/// `png` crate: version 0.18.1 panics while expanding a palette of any other length (fuzz
-/// finding, Task 406), and a panic aborts the release build.
+/// `png` crate: version 0.18.1 panics while expanding a palette whose length is not a
+/// multiple of 3 (fuzz finding, Task 406), and a panic aborts the release build. It already
+/// refuses lengths outside 3..=768 (`ChunkLengthWrong`); they are refused here as well so
+/// the check does not depend on that.
 ///
 /// Reads chunk headers only, in one linear pass, without allocating. Bytes that are not a
 /// PNG, or a chunk that runs past the end, end the walk with `true`: the decoder refuses

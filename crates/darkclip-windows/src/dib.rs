@@ -868,8 +868,9 @@ mod tests {
     }
 
     /// Fuzz finding (Task 406, `png_to_dibs`): a PLTE chunk whose length is not a multiple
-    /// of 3, or longer than 256 entries, made `png` 0.18.1 panic while expanding the palette
-    /// (an abort in release). Such a PNG is refused as malformed.
+    /// of 3 made `png` 0.18.1 panic while expanding the palette (an abort in release). Such a
+    /// PNG is refused as malformed. Lengths over 768 (more than 256 entries) were already
+    /// refused by `png` (`ChunkLengthWrong`); kept here as refusal cases.
     #[test]
     fn png_with_malformed_palette_is_refused_not_a_panic() {
         use darkclip_fuzzgen::png::indexed_1x1;

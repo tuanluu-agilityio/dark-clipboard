@@ -56,15 +56,21 @@ pub struct TrackingAlloc;
 // `GlobalAlloc` contract is the system allocator's; the accounting touches no allocation.
 unsafe impl GlobalAlloc for TrackingAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        track(signed(layout.size()));
         // SAFETY: same layout the caller passed to us, which the caller guarantees is valid.
-        unsafe { System.alloc(layout) }
+        let p = unsafe { System.alloc(layout) };
+        if !p.is_null() {
+            track(signed(layout.size()));
+        }
+        p
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        track(signed(layout.size()));
         // SAFETY: as for `alloc`.
-        unsafe { System.alloc_zeroed(layout) }
+        let p = unsafe { System.alloc_zeroed(layout) };
+        if !p.is_null() {
+            track(signed(layout.size()));
+        }
+        p
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -74,9 +80,13 @@ unsafe impl GlobalAlloc for TrackingAlloc {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        track(signed(new_size).saturating_sub(signed(layout.size())));
         // SAFETY: `ptr`/`layout` come from this allocator and `new_size` is the caller's
         // valid request, forwarded unchanged.
-        unsafe { System.realloc(ptr, layout, new_size) }
+        let p = unsafe { System.realloc(ptr, layout, new_size) };
+        // On failure the old block stays allocated and unchanged: nothing to count.
+        if !p.is_null() {
+            track(signed(new_size).saturating_sub(signed(layout.size())));
+        }
+        p
     }
 }
