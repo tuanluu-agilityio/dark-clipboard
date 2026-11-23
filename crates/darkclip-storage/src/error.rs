@@ -21,6 +21,8 @@ pub enum StorageError {
     /// The disk (or the database size limit) is full: SQLITE_FULL or an I/O `StorageFull`.
     /// The capture actor reacts with one retention run and one retry (F-02).
     StorageFull,
+    /// Compaction needs free disk space of at least the database size (Task 411).
+    InsufficientSpace,
     /// The clip violates a schema constraint (`Clip::validate`). Field name only.
     /// Added to the Task 007 interface: `upsert_clip` must call `Clip::validate`.
     Invalid(CoreError),
@@ -40,6 +42,7 @@ impl std::fmt::Display for StorageError {
                 "database schema version {found} is newer than supported version {supported}"
             ),
             Self::StorageFull => f.write_str("storage is full"),
+            Self::InsufficientSpace => f.write_str("not enough free disk space"),
             Self::NotFound => f.write_str("not found"),
             Self::ReadOnly => f.write_str("storage is read-only"),
             Self::Invalid(e) => write!(f, "invalid clip: {e}"),

@@ -16,6 +16,8 @@ use darkclip_core::ClipType;
 pub struct StorageStats {
     pub clips: u64,
     pub pinned: u64,
+    /// Members of the system Favorites collection.
+    pub favorites: u64,
     /// Clip count per kind, ordered by the kind's serde name.
     pub by_kind: Vec<(ClipType, u64)>,
     pub db_bytes: u64,
@@ -69,6 +71,7 @@ impl Storage {
         Ok(StorageStats {
             clips: count(clips)?,
             pinned: count(pinned)?,
+            favorites: 0,
             by_kind,
             db_bytes: self.db_bytes()?,
             blob_bytes: self.blob_bytes()?,

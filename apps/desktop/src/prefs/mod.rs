@@ -7,6 +7,7 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
 pub mod about;
+pub mod data;
 pub mod model;
 #[cfg(test)]
 mod model_tests;

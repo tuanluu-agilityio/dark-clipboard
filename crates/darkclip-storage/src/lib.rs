@@ -17,6 +17,7 @@ mod blobs;
 mod clips;
 mod db;
 mod error;
+mod maintenance;
 mod migrate;
 mod organize;
 mod retention;
@@ -30,6 +31,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub use error::StorageError;
+pub use maintenance::{CompactReport, OrphanReport};
 pub use organize::TagCount;
 pub use retention::RetentionReport;
 pub use search::{ClipSummary, Cursor, SearchQuery};
