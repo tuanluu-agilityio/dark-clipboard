@@ -390,6 +390,8 @@ pub struct App {
     /// Held while saving, so saves are serialized and the file matches memory.
     settings: Mutex<Settings>,
     settings_path: PathBuf,
+    /// The data folder (`export_collection` writes under `<data>/exports/`).
+    data_dir: PathBuf,
     /// False when the settings file must not be written (see `AppStatus::settings_read_only`).
     persist: bool,
     status: Arc<Mutex<StatusState>>,
@@ -623,6 +625,7 @@ impl App {
             cap,
             settings: Mutex::new(settings),
             settings_path: settings_path.to_path_buf(),
+            data_dir: data_dir.to_path_buf(),
             persist,
             status,
             clock,
@@ -1105,9 +1108,14 @@ impl ClipApi for App {
         })
     }
 
-    fn export_collection(&self, c: &Caller, _col: CollectionId) -> Result<ExportResult, ApiError> {
+    /// UI: writes `<data>/exports/<id>.dcexport` (T-11) and reports the masked or sensitive
+    /// clips left out (Task 405). The CLI gets it in P2.
+    fn export_collection(&self, c: &Caller, col: CollectionId) -> Result<ExportResult, ApiError> {
         PermissionGuard::check(c, Operation::ExportCollection)?;
-        Err(NOT_YET)
+        if *c != Caller::Ui {
+            return Err(NOT_YET);
+        }
+        self.export_collection_ui(col)
     }
 
     /// Applies the mode to the actor first, then saves it. If the save fails the mode stays

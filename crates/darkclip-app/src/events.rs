@@ -4,7 +4,7 @@
 
 use darkclip_core::policy::SkipReason;
 use darkclip_core::{CaptureMode, ClipId};
-use darkclip_storage::StorageError;
+use darkclip_storage::{ArchiveError, StorageError};
 use std::collections::HashMap;
 
 /// Published by the capture actor. Ids, reasons and static text only.
@@ -78,6 +78,12 @@ impl std::fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
+/// `InvalidArgument` texts of a refused backup or export file (Task 405).
+pub const FILE_TOO_LARGE: &str = "file too large";
+pub const FILE_INVALID: &str = "not a valid file";
+/// `InvalidArgument` text of an import refused in Private mode.
+pub const IMPORT_PRIVATE: &str = "private mode";
+
 /// The one `StorageError` -> `ApiError` mapping, shared by the API and the capture actor.
 pub(crate) fn map_storage(e: &StorageError) -> ApiError {
     match e {
@@ -87,6 +93,12 @@ pub(crate) fn map_storage(e: &StorageError) -> ApiError {
         // A name, tag or note that breaks a schema rule; the field is not echoed.
         StorageError::Invalid(_) => ApiError::InvalidArgument("invalid value"),
         StorageError::InsufficientSpace => ApiError::InvalidArgument("not enough free disk space"),
+        // Task 405: a backup or export file that was refused. A newer one has its own code.
+        StorageError::Archive(ArchiveError::NewerFormat) => ApiError::SchemaTooNew,
+        StorageError::Archive(ArchiveError::TooLarge | ArchiveError::TooManyEntries) => {
+            ApiError::InvalidArgument(FILE_TOO_LARGE)
+        }
+        StorageError::Archive(_) => ApiError::InvalidArgument(FILE_INVALID),
         _ => ApiError::Storage,
     }
 }

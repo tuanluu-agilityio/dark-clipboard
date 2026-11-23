@@ -331,6 +331,25 @@ impl Actor {
                 }
                 let _ = reply.send(r);
             }
+            ActorCommand::Transfer {
+                op,
+                deadline,
+                reply,
+            } => {
+                let r = if late(deadline) {
+                    Err(ApiError::Internal)
+                } else {
+                    self.transfer(op)
+                };
+                if matches!(
+                    r,
+                    Ok(super::TransferReply::Restore(_) | super::TransferReply::Import(_))
+                ) {
+                    // A restored or imported history: open windows refresh.
+                    self.emit(AppEvent::OrganizationChanged);
+                }
+                let _ = reply.send(r);
+            }
             ActorCommand::SetMode(mode) => {
                 let p = PrivacyPolicy {
                     mode,

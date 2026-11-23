@@ -107,6 +107,8 @@ fn write_zip(path: &Path, entries: &[(String, Vec<u8>)]) {
     z.finish().unwrap();
 }
 
+type Entries = Vec<(String, Vec<u8>)>;
+
 fn rebuild(src: &Path, dst: &Path, edit: impl FnOnce(&mut Vec<(String, Vec<u8>)>)) {
     let mut e = entries_of(src);
     edit(&mut e);
@@ -244,7 +246,7 @@ fn an_unsafe_or_mismatched_export_is_refused() {
     let (tmp, s, f, out) = made();
     export_all(&s, &f, &out);
     let crafted = tmp.path().join("crafted.dcexport");
-    let refused = |want: ArchiveError, edit: &dyn Fn(&mut Vec<(String, Vec<u8>)>)| {
+    let refused = |want: ArchiveError, edit: &dyn Fn(&mut Entries)| {
         rebuild(&out, &crafted, |e| edit(e));
         let got = ExportArchive::open(&crafted, ArchiveLimits::EXPORT).map(|_| ());
         assert_eq!(got, Err(StorageError::Archive(want)));
@@ -299,9 +301,7 @@ fn an_unsafe_or_mismatched_export_is_refused() {
         .flat_map(|c| c.representations.iter().filter_map(|r| r.blob_sha256))
         .collect();
     let results: Vec<_> = shas.iter().map(|sha| a.blob(sha)).collect();
-    assert!(results
-        .iter()
-        .any(|r| *r == Err(StorageError::Archive(ArchiveError::ChecksumMismatch))));
+    assert!(results.contains(&Err(StorageError::Archive(ArchiveError::ChecksumMismatch))));
 }
 
 #[test]

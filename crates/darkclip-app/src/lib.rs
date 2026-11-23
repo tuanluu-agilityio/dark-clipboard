@@ -16,7 +16,8 @@ pub mod settings;
 
 pub use api::{
     App, AppStatus, Caller, CaptureStatus, ClipApi, ClipDetailView, ClipSummaryView, ClipView,
-    CopyMode, GetOptions, ImageDetailView, PixelsView, StorageStatsView,
+    CopyMode, ExportResult, ExportSelection, GetOptions, ImageDetailView, ImportReport, PixelsView,
+    StorageStatsView,
 };
 pub use capture::{ActorCommand, CaptureHandle};
 pub use config::CaptureConfig;

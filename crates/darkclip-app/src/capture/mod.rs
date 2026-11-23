@@ -27,6 +27,7 @@ mod pipeline;
 mod retention;
 #[cfg(test)]
 mod tests;
+mod transfer;
 mod wipe;
 
 use crate::config::CaptureConfig;
@@ -46,6 +47,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+pub use transfer::{ImportReport, TransferOp, TransferReply, APP_VERSION};
 
 #[derive(Debug)]
 ///
@@ -107,6 +109,13 @@ pub enum ActorCommand {
         op: OrganizeOp,
         deadline: Instant,
         reply: Sender<Result<OrganizeReply, ApiError>>,
+    },
+    /// A backup, restore, export or import (Task 405). Long-running: callers wait longer
+    /// than for other commands.
+    Transfer {
+        op: TransferOp,
+        deadline: Instant,
+        reply: Sender<Result<TransferReply, ApiError>>,
     },
     UpdatePolicy(PrivacyPolicy, RetentionPolicy),
     /// Processes every command queued before it, stops the monitor and ends the actor.

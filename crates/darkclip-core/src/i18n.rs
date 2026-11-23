@@ -733,6 +733,9 @@ messages! {
         "Ctrl+D favorite · Ctrl+N note · Ctrl+G tags · Ctrl+L add to collection · Ctrl+Shift+L remove · Ctrl+Shift+N new collection",
         "Ctrl+D yêu thích · Ctrl+N ghi chú · Ctrl+G thẻ · Ctrl+L thêm vào bộ sưu tập · Ctrl+Shift+L bỏ khỏi · Ctrl+Shift+N bộ sưu tập mới"
     ),
+    // Backup, restore, export and import (Task 405)
+    ExportSelectedName => ("Selected clips", "Mục đã chọn"),
+    ImportCollectionName => ("Imported clips", "Mục đã nhập"),
     OrgCollectionKeys => (
         "Ctrl+Shift+R rename the shown collection · Ctrl+Shift+Del delete it",
         "Ctrl+Shift+R đổi tên bộ sưu tập đang xem · Ctrl+Shift+Del xóa"

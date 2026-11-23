@@ -20,7 +20,7 @@ fn backup_path(data_dir: &Path, version: u32) -> PathBuf {
 
 /// Consistent copy of the open database (including WAL content) via `VACUUM INTO`,
 /// into a fresh 0600 file.
-fn backup(conn: &Connection, target: &Path) -> Result<(), StorageError> {
+pub(crate) fn backup(conn: &Connection, target: &Path) -> Result<(), StorageError> {
     match std::fs::remove_file(target) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
         _ => {}
@@ -111,6 +111,9 @@ pub(crate) fn open_with(
         let _ = std::fs::remove_file(backup_path(data_dir, supported));
     }
 
+    // A successful start ends the life of an earlier restore's safety copy and of staging
+    // folders a crash left behind (Task 405). Best-effort, like the sweep.
+    crate::backup::cleanup_after_open(data_dir);
     // Best-effort; never fails the open. Leftovers are retried at the next open.
     let _ = blobs::sweep(&mut conn, data_dir);
     Ok(Storage::from_parts(conn, data_dir, mode, clock))

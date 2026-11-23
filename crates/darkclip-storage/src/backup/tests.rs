@@ -580,7 +580,11 @@ fn failure_during_the_swap_leaves_the_live_data() {
     let dst = tmp.path().join("dst");
     let (mut b, id) = live(&dst);
     b.fail_restore_swap = true;
-    assert!(b.restore_backup(&out).is_err());
+    // The fault fires after the first pages were copied into the live database.
+    assert_eq!(
+        b.restore_backup(&out),
+        Err(StorageError::Io(std::io::ErrorKind::Interrupted))
+    );
     assert_live_unchanged(&b, &id);
     assert_no_staging(&dst);
     assert_eq!(
