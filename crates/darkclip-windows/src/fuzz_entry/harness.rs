@@ -328,7 +328,10 @@ fn write_seed_corpus() {
 #[test]
 fn generators_reach_the_converters() {
     let mut rng = Rng::new(42);
-    let (mut dibs, mut pngs, mut drops, mut uris) = (0, 0, 0, 0);
+    let (mut dibs, mut pngs, mut drops) = (0, 0, 0);
+    // Only the Windows adapter converts uri-lists; elsewhere the count stays 0.
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut uris = 0;
     for _ in 0..300 {
         let d = gen_dib(&mut rng);
         dibs += usize::from(dib_to_png(&d[1..], u64::MAX).is_ok());
