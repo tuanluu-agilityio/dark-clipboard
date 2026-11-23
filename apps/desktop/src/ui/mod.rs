@@ -500,7 +500,10 @@ pub type CommandHandler = Box<dyn Fn(Command) + Send + Sync>;
 /// Creates the hidden window and runs the event loop until quit. `listen` installs the IPC
 /// server with the handler it must call for each valid command. Returns false when the app
 /// could not start.
-pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>) -> bool {
+pub fn run(
+    args: RunArgs,
+    listen: impl FnOnce(CommandHandler) -> Result<(), crate::single_instance::ListenError>,
+) -> bool {
     let log = args.log;
     let Ok(window) = MainWindow::new() else {
         log.event("start_failed", &[("stage", Val::Name("window"))]);

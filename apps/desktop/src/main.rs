@@ -14,6 +14,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod filedlg;
+mod hardening;
 mod history;
 mod log;
 mod organize;
@@ -23,6 +24,7 @@ mod renderer;
 mod seed;
 mod shortcut;
 mod single_instance;
+mod start_failure;
 mod theme;
 mod tray;
 mod ui;

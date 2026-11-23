@@ -17,6 +17,7 @@ mod archive;
 mod backup;
 mod blobs;
 mod clips;
+mod damaged;
 mod db;
 mod error;
 // Fuzz entry points (Task 406): tests and the `fuzzing` feature only.
@@ -39,6 +40,7 @@ use std::sync::Arc;
 
 pub use archive::{ArchiveError, ArchiveLimits, BACKUP_FORMAT, EXPORT_SCHEMA_VERSION};
 pub use backup::{BackupReport, RestoreReport};
+pub use damaged::move_damaged_aside;
 pub use error::StorageError;
 pub use maintenance::{CompactReport, OrphanReport};
 pub use organize::TagCount;

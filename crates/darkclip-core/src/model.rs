@@ -742,6 +742,20 @@ mod tests {
     }
 
     #[test]
+    fn keepass_2_is_a_builtin_exclusion_on_windows() {
+        // D-067 (F407-08): KeePass 2 (classic) next to KeePassXC.
+        let d = PrivacyPolicy::default();
+        let a = d
+            .excluded_apps
+            .iter()
+            .find(|a| a.app_id == "keepass.exe")
+            .unwrap();
+        assert!(a.builtin);
+        assert_eq!(a.platform, Platform::Windows);
+        assert_eq!(a.name.as_deref(), Some("KeePass"));
+    }
+
+    #[test]
     fn paused_policy_roundtrip() {
         let p: PrivacyPolicy = serde_json::from_str(PRIVACY_PAUSED).unwrap();
         assert!(matches!(p.mode, CaptureMode::Paused { .. }));

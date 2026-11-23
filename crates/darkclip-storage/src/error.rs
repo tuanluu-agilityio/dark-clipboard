@@ -32,6 +32,9 @@ pub enum StorageError {
     InvalidArgument(&'static str),
     /// A backup or export archive was refused (Task 405). Reason code only.
     Archive(crate::ArchiveError),
+    /// The database file is damaged or is not a database: `SQLITE_CORRUPT`, `SQLITE_NOTADB`
+    /// or a failed `PRAGMA quick_check` at open (Task 413).
+    Corrupt,
 }
 
 impl std::fmt::Display for StorageError {
@@ -50,6 +53,7 @@ impl std::fmt::Display for StorageError {
             Self::Invalid(e) => write!(f, "invalid clip: {e}"),
             Self::InvalidArgument(what) => write!(f, "invalid argument: {what}"),
             Self::Archive(e) => write!(f, "archive refused: {e:?}"),
+            Self::Corrupt => f.write_str("database is damaged"),
         }
     }
 }

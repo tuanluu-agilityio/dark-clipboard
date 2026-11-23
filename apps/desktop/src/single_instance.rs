@@ -150,14 +150,45 @@ pub fn name_hash(parts: &[&str]) -> String {
     format!("{h:016x}")
 }
 
+/// Why the IPC server could not start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListenError {
+    /// Our pipe name already exists although we hold the instance mutex: another program
+    /// (another account, or anything that guessed the name) created it first (F407-04).
+    Squatted,
+    /// Any other failure.
+    Other,
+}
+
+impl ListenError {
+    /// Static log name.
+    pub fn name(self) -> &'static str {
+        match self {
+            ListenError::Squatted => "squatted",
+            ListenError::Other => "other",
+        }
+    }
+}
+
+/// Maps the Win32 error of creating the first pipe instance. With
+/// `FILE_FLAG_FIRST_PIPE_INSTANCE`, an existing instance of the name fails with
+/// `ERROR_ACCESS_DENIED` (5).
+pub fn listen_error_from_win32(code: u32) -> ListenError {
+    let _ = code;
+    ListenError::Other
+}
+
 #[cfg(windows)]
-pub use win::{ui_language_id, WinTransport};
+pub use win::{current_user_sid, ui_language_id, WinTransport};
 
 /// UNSAFE MODULE: Win32 mutex and named pipe. Safe wrappers only leave this module.
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod win {
-    use super::{decode, encode, is_ack, name_hash, Command, Transport, ACK, MESSAGE_LEN};
+    use super::{
+        decode, encode, is_ack, listen_error_from_win32, name_hash, Command, ListenError,
+        Transport, ACK, MESSAGE_LEN,
+    };
     use crate::log::Log;
     use std::ffi::c_void;
     use std::path::Path;
@@ -219,7 +250,7 @@ mod win {
     }
 
     /// The current user's SID as a string (`S-1-5-...`).
-    fn current_user_sid() -> Option<String> {
+    pub fn current_user_sid() -> Option<String> {
         // SAFETY: every pointer passed points to live local storage of the right type and
         // size; the token handle is closed by `Owned`; the string allocated by Windows is
         // copied and then released with `LocalFree`.
@@ -309,8 +340,9 @@ mod win {
         }
 
         /// Creates one pipe instance restricted to the current user. `first` makes creation
-        /// fail when the name already exists (somebody else created the pipe first).
-        fn create_instance(&self, first: bool) -> Option<HANDLE> {
+        /// fail when the name already exists (somebody else created the pipe first). The error
+        /// is the Win32 code (0 when the descriptor could not be built).
+        fn create_instance(&self, first: bool) -> Result<HANDLE, u32> {
             let mut open = PIPE_ACCESS_DUPLEX;
             if first {
                 open |= FILE_FLAG_FIRST_PIPE_INSTANCE;
@@ -326,7 +358,7 @@ mod win {
                     &mut sd,
                     None,
                 )
-                .ok()?;
+                .map_err(|_| 0u32)?;
                 let sa = SECURITY_ATTRIBUTES {
                     nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
                     lpSecurityDescriptor: sd.0,
@@ -345,11 +377,13 @@ mod win {
                     0,
                     Some(&sa),
                 );
+                // Read before `LocalFree`, which may change the thread's last error.
+                let err = GetLastError().0;
                 let _ = LocalFree(Some(HLOCAL(sd.0)));
                 if h == INVALID_HANDLE_VALUE {
-                    None
+                    Err(err)
                 } else {
-                    Some(h)
+                    Ok(h)
                 }
             }
         }
@@ -361,9 +395,12 @@ mod win {
             &self,
             log: Arc<Log>,
             on_command: impl Fn(Command) + Send + Sync + 'static,
-        ) -> Result<(), ()> {
+        ) -> Result<(), ListenError> {
             // Owned until the thread has it, so a failed spawn closes the pipe.
-            let first = Owned(self.create_instance(true).ok_or(())?);
+            let first = Owned(
+                self.create_instance(true)
+                    .map_err(listen_error_from_win32)?,
+            );
             let server = Server {
                 t: WinTransport {
                     mutex_name: Vec::new(),
@@ -383,7 +420,7 @@ mod win {
                     std::mem::forget(first);
                     Ok(())
                 }
-                Err(_) => Err(()),
+                Err(_) => Err(ListenError::Other),
             }
         }
     }
@@ -441,11 +478,11 @@ mod win {
                 if !ok {
                     drop(Owned(handle_from(cur)));
                     match self.t.create_instance(false) {
-                        Some(h) => {
+                        Ok(h) => {
                             cur = h.0 as isize;
                             continue;
                         }
-                        None => break,
+                        Err(_) => break,
                     }
                 }
                 let next = self.t.create_instance(false);
@@ -467,8 +504,8 @@ mod win {
                     }
                 }
                 match next {
-                    Some(h) => cur = h.0 as isize,
-                    None => break,
+                    Ok(h) => cur = h.0 as isize,
+                    Err(_) => break,
                 }
             }
             self.log.event("ipc_stopped", &[]);
@@ -567,12 +604,43 @@ mod win {
             Err(())
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// A pipe of our name that exists before we listen (a squatter, played here by a
+        /// second transport of the same temporary scope) is reported as `Squatted`.
+        #[test]
+        fn a_pipe_name_taken_first_is_reported_as_squatted() {
+            let tmp = tempfile::tempdir().unwrap();
+            let scope = tmp.path().join("squat-test");
+            let squatter = WinTransport::new(Some(&scope)).unwrap();
+            let held = Owned(squatter.create_instance(true).unwrap());
+            let ours = WinTransport::new(Some(&scope)).unwrap();
+            let log = Arc::new(Log::open(tmp.path()));
+            assert_eq!(ours.listen(log, |_| {}), Err(ListenError::Squatted));
+            drop(held);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
+
+    #[test]
+    fn creating_an_existing_first_pipe_instance_means_squatted() {
+        // ERROR_ACCESS_DENIED
+        assert_eq!(listen_error_from_win32(5), ListenError::Squatted);
+        // ERROR_INVALID_PARAMETER, ERROR_FILE_NOT_FOUND, no code
+        for code in [87, 2, 0] {
+            assert_eq!(listen_error_from_win32(code), ListenError::Other);
+        }
+        assert_eq!(ListenError::Squatted.name(), "squatted");
+        assert_eq!(ListenError::Other.name(), "other");
+    }
 
     #[test]
     fn encode_is_version_then_command() {

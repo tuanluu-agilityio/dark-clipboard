@@ -364,7 +364,12 @@ fn the_darkshot_entry_has_its_own_removal_question() {
         remove_builtin_msg(&find("darkshot.exe")),
         Msg::SettingsConfirmRemoveDarkshot
     );
-    for id in ["keepassxc.exe", "1password.exe", "bitwarden.exe"] {
+    for id in [
+        "keepassxc.exe",
+        "keepass.exe",
+        "1password.exe",
+        "bitwarden.exe",
+    ] {
         assert_eq!(
             remove_builtin_msg(&find(id)),
             Msg::SettingsConfirmRemoveBuiltin

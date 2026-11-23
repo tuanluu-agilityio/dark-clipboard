@@ -354,3 +354,20 @@ fn show_file_dialog(
         Ok(std::path::PathBuf::from(path))
     }
 }
+
+/// `WerAddExcludedApplication(exe_name, FALSE)` (Task 413). Stub.
+pub fn wer_add_excluded_application(exe_name: &std::ffi::OsStr) -> bool {
+    let _ = exe_name;
+    false
+}
+
+/// `WerSetFlags(WER_FAULT_REPORTING_FLAG_NOHEAP)` (Task 413). Stub.
+pub fn wer_set_no_heap() -> bool {
+    false
+}
+
+/// The owner and DACL of `path` as SDDL text (Task 413). Stub.
+pub fn security_sddl(path: &std::path::Path) -> Option<String> {
+    let _ = path;
+    None
+}
