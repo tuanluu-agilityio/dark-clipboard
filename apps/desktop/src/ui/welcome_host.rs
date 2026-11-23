@@ -179,6 +179,12 @@ fn hide() {
     }
 }
 
+/// Before quitting: the window goes away without answering (an unanswered welcome shows again
+/// at the next start).
+pub fn shutdown() {
+    hide();
+}
+
 /// Esc or the Close button.
 fn close() {
     if window().is_some_and(|w| w.get_busy()) {

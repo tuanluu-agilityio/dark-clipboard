@@ -160,6 +160,39 @@ fn now_and_offset() -> (darkclip_core::Timestamp, i32) {
     )
 }
 
+/// The chips for `f` and the source names behind the source chips.
+fn chip_rows(f: &Filters, sources: &[String], lang: Lang) -> Vec<Chip> {
+    chips::popup_chips(f, sources, lang)
+        .into_iter()
+        .map(|c| Chip {
+            id: c.id,
+            label: c.label.into(),
+            on: c.on,
+        })
+        .collect()
+}
+
+/// Forgets the list of a popup session that ended (D-056, like the history window's `leave`):
+/// the rows, the source names behind the source chips, the chip focus and the model itself.
+/// The model's generation moves on, so an answer still in flight is dropped when it arrives,
+/// and the next show starts from an empty list: no clip from before (deleted in History,
+/// cleared in Settings or expired meanwhile) can be drawn or acted on before its first page.
+fn forget_list(
+    model: &mut ListModel,
+    rows: &VecModel<ClipRow>,
+    chips: &VecModel<Chip>,
+    sources: &mut Vec<String>,
+    chip_focus: &mut ChipFocus,
+    lang: Lang,
+) {
+    model.clear();
+    rows.set_vec(Vec::new());
+    sources.clear();
+    *chip_focus = ChipFocus::default();
+    // The fixed chips stay (all off); no source chip names an app from before.
+    chips.set_vec(chip_rows(model.filters(), sources, lang));
+}
+
 impl Host {
     fn window(&self) -> Option<MainWindow> {
         self.window.upgrade()
@@ -183,14 +216,7 @@ impl Host {
 
     fn rebuild_chips(&mut self) {
         self.sources = self.model.sources(MAX_SOURCES);
-        let chips: Vec<Chip> = chips::popup_chips(self.model.filters(), &self.sources, self.lang)
-            .into_iter()
-            .map(|c| Chip {
-                id: c.id,
-                label: c.label.into(),
-                on: c.on,
-            })
-            .collect();
+        let chips = chip_rows(self.model.filters(), &self.sources, self.lang);
         // Changed chips are updated in place, so a toggled chip keeps the keyboard focus; the
         // model is replaced only when the set of chips changes (e.g. other source apps).
         let old: Vec<Chip> = self.chips.iter().collect();
@@ -313,6 +339,32 @@ impl Host {
         if let Some(t) = common::set_text_if_changed(&w.get_detail_text(), text) {
             w.set_detail_text(t);
         }
+    }
+
+    /// The popup session ended (hide, or the system closed the window): nothing of it stays.
+    /// A delete waiting for its undo is sent first, so the next show cannot list it.
+    fn end_session(&mut self) {
+        self.debounce.stop();
+        self.loading.stop();
+        self.commit_delete();
+        self.clear_toast();
+        self.slow = false;
+        self.typed_search = None;
+        forget_list(
+            &mut self.model,
+            &self.rows,
+            &self.chips,
+            &mut self.sources,
+            &mut self.chip_focus,
+            self.lang,
+        );
+        // Decoded images and loaded text do not outlive the popup.
+        self.detail.clear();
+        if let Some(w) = self.window() {
+            w.set_query(SharedString::new());
+        }
+        self.sync_state_only();
+        self.render_detail();
     }
 
     fn scroll_to_selected(&self) {
@@ -821,12 +873,15 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
             h.sync_state();
         });
     });
+    // A double-click copies and returns the focus; it never pastes (D-056).
     w.on_row_activated(|i| {
         with_host(|h| {
             let n = usize::try_from(i).unwrap_or(0);
             h.model.select(n);
             h.sync_state();
-            h.act(Action::Copy(CopyKind::Original));
+            let id = h.model.selected_item().map(|i| i.id);
+            let (kind, via) = paste_rules::row_activation();
+            h.copy(id, kind, via);
         });
     });
     // The buttons only restore (never paste, whatever the setting).
@@ -928,10 +983,9 @@ pub fn show(w: &MainWindow, asked: Instant, trigger: Trigger) {
     }
     w.set_query(SharedString::new());
     with_host(|h| {
-        h.model.clear_hidden();
-        h.clear_toast();
-        h.detail.clear();
-        h.render_detail();
+        // Normally done by the hide before; again here so a show can never start from the
+        // rows of an earlier session (D-056).
+        h.end_session();
         h.search(Filters::default());
         h.sync_state();
     });
@@ -948,18 +1002,12 @@ fn focus_os_window(w: &MainWindow) {
     let _ = w.window().with_winit_window(|ww| ww.focus_window());
 }
 
-/// Hides the popup; a delete waiting for its undo is sent now.
+/// Hides the popup; a delete waiting for its undo is sent now, and the rows, chips and model
+/// of this session are forgotten (D-056).
 pub fn hide(w: &MainWindow) {
     // A show that never drew a frame is not timed by a later one.
     SHOW_ASKED.set(None);
-    with_host(|h| {
-        h.debounce.stop();
-        h.commit_delete();
-        h.clear_toast();
-        // Decoded images and loaded text do not outlive the popup.
-        h.detail.clear();
-        h.render_detail();
-    });
+    with_host(Host::end_session);
     let _ = w.hide();
 }
 
@@ -1007,12 +1055,8 @@ pub fn watch_window_events(w: &MainWindow) {
 
 /// The window was closed by the system (Alt+F4): like `hide`, without hiding twice.
 pub fn shutdown_pending() {
-    with_host(|h| {
-        h.debounce.stop();
-        h.commit_delete();
-        h.clear_toast();
-        h.detail.clear();
-    });
+    SHOW_ASKED.set(None);
+    with_host(Host::end_session);
 }
 
 /// Before quitting: a delete waiting for its undo is sent (the worker runs it before stopping).
@@ -1023,4 +1067,102 @@ pub fn shutdown() {
         h.loading.stop();
         h.toast.stop();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use darkclip_core::{ClipType, Timestamp};
+
+    const NOW: Timestamp = Timestamp(1_795_320_000_000);
+
+    fn view(n: u32, source: &str) -> ClipSummaryView {
+        ClipSummaryView {
+            id: ClipId::new_v7(Timestamp(NOW.0 + i64::from(n))),
+            kind: ClipType::Text,
+            preview: format!("old clip {n}"),
+            pinned: false,
+            last_copied_at: NOW,
+            masked: false,
+            source_app: Some(source.to_string()),
+        }
+    }
+
+    fn page(items: Vec<ClipSummaryView>) -> Page<ClipSummaryView> {
+        Page {
+            items,
+            limit: 50,
+            next_cursor: None,
+        }
+    }
+
+    #[test]
+    fn after_hide_the_next_show_draws_no_previous_row_before_its_first_page() {
+        // A popup session: one page shown, with a source chip, and a refresh still running
+        // when the popup hides.
+        let mut model = ListModel::new();
+        let first = model.search(Filters::default(), NOW, 0);
+        assert!(matches!(
+            model.apply(
+                first.gen,
+                false,
+                Ok(page(vec![view(1, "editor.exe"), view(2, "editor.exe")]))
+            ),
+            Applied::Replaced
+        ));
+        model.select(1);
+        let rows = VecModel::<ClipRow>::default();
+        rows.set_vec(
+            model
+                .visible()
+                .iter()
+                .enumerate()
+                .map(|(i, item)| clip_row(item, i, Lang::En, ""))
+                .collect::<Vec<_>>(),
+        );
+        let mut sources = model.sources(MAX_SOURCES);
+        let chips = VecModel::<Chip>::default();
+        chips.set_vec(chip_rows(model.filters(), &sources, Lang::En));
+        let mut focus = ChipFocus::default();
+        if let Some(last) = chips.iter().last() {
+            focus.report(last.id, true);
+        }
+        let in_flight = model.refresh(NOW, 0);
+        assert_eq!(rows.row_count(), 2);
+        assert_eq!(sources, vec!["editor.exe".to_string()]);
+
+        // Hide.
+        forget_list(
+            &mut model,
+            &rows,
+            &chips,
+            &mut sources,
+            &mut focus,
+            Lang::En,
+        );
+
+        // The next show starts its search; its first page has not arrived yet.
+        let _second = model.search(Filters::default(), NOW, 0);
+        assert_eq!(
+            rows.row_count(),
+            0,
+            "no row of the previous session is drawn"
+        );
+        assert!(model.visible().is_empty());
+        // Enter and Alt+n have nothing to act on.
+        assert!(model.selected_item().is_none());
+        assert!(model.nth(0).is_none());
+        assert!(sources.is_empty());
+        assert!(!focus.focused(false));
+        assert!(chips
+            .iter()
+            .all(|c| !c.label.as_str().contains("editor.exe")));
+        // The answer of the refresh that was running at hide is dropped.
+        assert!(matches!(
+            model.apply(in_flight.gen, false, Ok(page(vec![view(1, "editor.exe")]))),
+            Applied::Ignored
+        ));
+        assert!(model.visible().is_empty());
+        assert_eq!(rows.row_count(), 0);
+    }
 }

@@ -597,6 +597,12 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
     // A delete still waiting for its undo is sent before the worker stops.
     popup_host::shutdown();
     history_host::shutdown();
+    // Every window goes away before the worker stops, so none stays on screen while it does
+    // (and the popup and history forget their rows).
+    popup_host::hide(&window);
+    history_host::hide();
+    settings_host::hide();
+    welcome_host::shutdown();
     // Remove the icon first, so it does not linger while the app shuts down.
     tray_host::destroy();
     shortcut_host::release();

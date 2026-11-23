@@ -1,6 +1,6 @@
 # Windows alpha artifact (Task 210)
 
-Facts about the release build that was hashed for the internal Windows alpha 0.1.0-alpha. This is a record, not a release: no tag was created, no GitHub release exists and the file was not uploaded anywhere.
+Facts about the release build that was hashed for the internal Windows alpha. "0.1.0-alpha" is the milestone name only: the binary reports version 0.0.1 (`CARGO_PKG_VERSION`, the `start` log line and Settings > About), and the version is not bumped until the owner asks for a release (D-056). This is a record, not a release: no tag was created, no GitHub release exists and the file was not uploaded anywhere.
 
 | Item | Value |
 |---|---|

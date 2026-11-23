@@ -510,10 +510,6 @@ impl ListModel {
         };
     }
 
-    pub fn clear_hidden(&mut self) {
-        self.hidden.clear();
-    }
-
     /// Distinct source names of the loaded rows, first seen first, at most `max`; the active
     /// source filter is always included.
     pub fn sources(&self, max: usize) -> Vec<String> {

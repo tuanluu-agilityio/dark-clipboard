@@ -205,30 +205,34 @@ pub fn running_image_names() -> Vec<String> {
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
         TH32CS_SNAPPROCESS,
     };
-    // SAFETY: the snapshot handle is owned here and closed before returning; `entry` is a
-    // valid, writable PROCESSENTRY32W whose `dwSize` is set as the API requires.
-    unsafe {
-        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
-            return Vec::new();
-        };
-        let mut out = Vec::new();
-        let mut entry = PROCESSENTRY32W {
-            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
-            ..Default::default()
-        };
-        let mut ok = Process32FirstW(snap, &mut entry).is_ok();
-        while ok {
-            let len = entry
-                .szExeFile
-                .iter()
-                .position(|&c| c == 0)
-                .unwrap_or(entry.szExeFile.len());
-            out.push(String::from_utf16_lossy(&entry.szExeFile[..len]));
-            ok = Process32NextW(snap, &mut entry).is_ok();
+    // SAFETY: plain value arguments; the returned snapshot handle is owned here and closed
+    // below on every path.
+    let Ok(snap) = (unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut entry = PROCESSENTRY32W {
+        dwSize: u32::try_from(std::mem::size_of::<PROCESSENTRY32W>()).unwrap_or(0),
+        ..Default::default()
+    };
+    // SAFETY: `snap` is the open snapshot; `entry` is a valid, writable PROCESSENTRY32W whose
+    // `dwSize` is set as the API requires.
+    let mut ok = unsafe { Process32FirstW(snap, &mut entry) }.is_ok();
+    while ok {
+        let len = entry
+            .szExeFile
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(entry.szExeFile.len());
+        if let Some(name) = entry.szExeFile.get(..len) {
+            out.push(String::from_utf16_lossy(name));
         }
-        let _ = CloseHandle(snap);
-        out
+        // SAFETY: as for `Process32FirstW`.
+        ok = unsafe { Process32NextW(snap, &mut entry) }.is_ok();
     }
+    // SAFETY: `snap` is owned here and closed exactly once.
+    let _ = unsafe { CloseHandle(snap) };
+    out
 }
 
 /// The Windows folder (for example `C:\\Windows`), from `GetWindowsDirectoryW`.

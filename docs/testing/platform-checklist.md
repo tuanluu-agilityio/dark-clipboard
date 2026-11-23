@@ -169,6 +169,26 @@ Use a throwaway data folder for the welcome rows: `dark-clipboard.exe --data-dir
 
 The registry round trip also exists as an ignored test: `cargo test -p darkclip-windows -- --ignored autostart` (uses the value name `DarkClipboardTest`, removed at the end).
 
+## Windows: Phase 3 review fixes (Task 213)
+
+All rows **untested** until the owner runs them (agents never click, type or take screenshots, GC-19). Use a scratch history (`--seed-demo-clips 200 --data-dir <temp>`, then run with the same `--data-dir`) unless a row says otherwise.
+
+| Row | Expected | Result |
+|---|---|---|
+| Open the popup, note a clip, close it. Delete that clip in the history window (Delete, confirm), then open the popup | The deleted clip never appears, not even for one frame; the list fills from empty | **untested** |
+| Open the popup, close it. Settings > History > Clear history (keep pinned off), then open the popup | No clip from before is drawn, not even for one frame; the empty-history state shows | **untested** |
+| Open the popup, close it, delete a clip in History, open the popup and press Enter (or Alt+1) at once | Only a clip of the new list is copied (paste in Notepad to check); never the deleted one | **untested** |
+| Set "Enter also pastes" on (Settings > General, Save). Notepad focused, open the popup, double-click a row | The clip is copied and Notepad gets the focus back, but nothing is typed; Ctrl+V pastes it. The log has no `paste` line for it | **untested** |
+| Same with "Enter also pastes" off | Same: copied, focus returned, nothing typed | **untested** |
+| Default profile (no `--data-dir`), start at login off: open Settings and leave it open; open the welcome (Settings > About > Show welcome), check "Start with Windows", press Start; back in Settings change only the language, Save | `reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v DarkClipboard` still shows the value; reopen Settings: the toggle is on. (This row changes your login items; remove the entry afterwards) | **untested** |
+| Notepad focused, press the shortcut to open the popup, then press the shortcut again to close it | Notepad has the keyboard focus again (type a letter: it appears in Notepad) | **untested** |
+| Start without `--data-dir`, change a setting and Save | The change is in `%APPDATA%\DarkClipboard\settings.json`; nothing named `settings.json` appears in `%LOCALAPPDATA%\DarkClipboard` | **untested** |
+| Start with `--data-dir <temp>`, change a setting and Save | The change is in `<temp>\settings.json`; `%APPDATA%\DarkClipboard\settings.json` is unchanged | **untested** |
+| Start with `--data-dir "%LOCALAPPDATA%\DarkClipboard"` (the default folder, also written in other case) | Treated as the normal profile: settings from `%APPDATA%\DarkClipboard\settings.json`, `--toggle` without `--data-dir` reaches it, the start-at-login toggle is enabled | **untested** |
+| Hand-edit `settings.json` (app quit) to give an excluded app a name containing U+202E (for example `"name": "Pay‮roll"`), start, Settings > Privacy | The name is shown with a replacement mark (U+FFFD) instead of reversing the text | **untested** |
+| Settings > Privacy: Remove on the built-in Darkshot entry, then on KeePassXC (Cancel both) | Darkshot's question says Darkshot marks its own copies so they stay excluded; KeePassXC's says its copies will be stored again. Same in Vietnamese | **untested** |
+| Open the popup, history, settings and welcome windows, then tray > Quit | Every window disappears at once, before the icon goes; the process ends within 2 s | **untested** |
+
 ## macOS
 
 All rows **untested** (no hardware, Q-04).

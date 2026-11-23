@@ -6,9 +6,10 @@
 //!   within about a second reports failure, so a command is never lost silently.
 //! * `start_or_forward` holds the decision logic behind the small [`Transport`] trait, so it is
 //!   tested without a second process.
-//! * The Windows transport (and the OS UI-language lookup, one more FFI call) (per-user mutex plus a named pipe whose DACL grants the current
-//!   user's SID only) is the only `unsafe` code of the desktop app. It lives in the marked
-//!   `win` module below; every `unsafe` block carries a `// SAFETY:` line. No network.
+//! * The Windows transport (a per-user mutex plus a named pipe whose DACL grants the current
+//!   user's SID only) and the OS UI-language lookup are `unsafe` code. They live in the marked
+//!   `win` module below; the desktop app's other Win32 helpers are in `winsys.rs`. Every
+//!   `unsafe` block carries a `// SAFETY:` line. No network.
 //!
 //! Nothing here sees clipboard data: the only thing that crosses the pipe is a command byte.
 // The Windows transport is cfg(windows); other platforms get it in Phase 4.
@@ -120,10 +121,21 @@ pub fn scope_for(
 ) -> Option<std::path::PathBuf> {
     let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let dir = canon(data_dir?);
-    if default_dir.is_some_and(|d| canon(d) == dir) {
+    if default_dir.is_some_and(|d| same_dir(&canon(d), &dir)) {
         return None;
     }
     Some(dir)
+}
+
+/// Two canonical paths name the same folder. Windows compares without case (NTFS default),
+/// which matters for a path that did not exist and so was not canonicalised.
+fn same_dir(a: &std::path::Path, b: &std::path::Path) -> bool {
+    if cfg!(windows) {
+        a.as_os_str().to_string_lossy().to_lowercase()
+            == b.as_os_str().to_string_lossy().to_lowercase()
+    } else {
+        a == b
+    }
 }
 
 /// FNV-1a, 64 bit, as 16 hex digits. A name component, not a security primitive.
