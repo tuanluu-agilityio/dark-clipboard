@@ -19,6 +19,10 @@ mod blobs;
 mod clips;
 mod db;
 mod error;
+// Fuzz entry points (Task 406): tests and the `fuzzing` feature only.
+#[cfg(any(test, feature = "fuzzing"))]
+#[doc(hidden)]
+pub mod fuzz_entry;
 mod maintenance;
 mod migrate;
 mod organize;

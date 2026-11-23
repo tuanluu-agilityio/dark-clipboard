@@ -10,3 +10,4 @@ description = "Test-only: seeded input generator, mutator and runner for the sta
 workspace = true
 
 [dependencies]
+png = "0.18.1"

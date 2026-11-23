@@ -26,7 +26,7 @@ use crate::blobs;
 use crate::StorageError;
 use sha2::{Digest, Sha256};
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 /// Backup format written and accepted (`manifest.json` `format`).
@@ -184,9 +184,10 @@ pub(crate) fn classify_entry(name: &str) -> Option<EntryKind> {
     (shard.len() == 2 && file.get(..2) == Some(shard)).then_some(EntryKind::Blob(sha))
 }
 
-/// An opened archive whose entry names, count and file size passed the checks.
-pub(crate) struct CheckedZip {
-    zip: zip::ZipArchive<File>,
+/// An opened archive whose entry names, count and file size passed the checks. `R` is the
+/// file in the product; the fuzz entry points (Task 406) read from memory.
+pub(crate) struct CheckedZip<R = File> {
+    zip: zip::ZipArchive<R>,
     /// Allowed entries, by kind, with their index in the zip.
     pub entries: Vec<(EntryKind, usize)>,
     pub limits: ArchiveLimits,
@@ -197,7 +198,7 @@ pub(crate) struct CheckedZip {
     read_work: u64,
 }
 
-impl CheckedZip {
+impl CheckedZip<File> {
     /// Opens `path` and checks every entry name, the count and the file size. `allowed`
     /// says which non-blob kinds this archive type may contain; blobs are always allowed.
     pub fn open(
@@ -207,11 +208,23 @@ impl CheckedZip {
     ) -> Result<Self, StorageError> {
         let file = File::open(path)?;
         let len = file.metadata()?.len();
+        Self::from_reader(file, len, limits, allowed)
+    }
+}
+
+impl<R: Read + Seek> CheckedZip<R> {
+    /// [`CheckedZip::open`] over any reader; `len` is the size of the whole archive.
+    pub fn from_reader(
+        reader: R,
+        len: u64,
+        limits: ArchiveLimits,
+        allowed: &[EntryKind],
+    ) -> Result<Self, StorageError> {
         // The compressed archive cannot usefully be larger than everything it may hold.
         if len > limits.max_total_bytes.saturating_add(limits.max_json_bytes) {
             return Err(ArchiveError::TooLarge.into());
         }
-        let mut zip = zip::ZipArchive::new(file).map_err(|_| ArchiveError::NotAnArchive)?;
+        let mut zip = zip::ZipArchive::new(reader).map_err(|_| ArchiveError::NotAnArchive)?;
         if zip.len() > limits.max_entries {
             return Err(ArchiveError::TooManyEntries.into());
         }

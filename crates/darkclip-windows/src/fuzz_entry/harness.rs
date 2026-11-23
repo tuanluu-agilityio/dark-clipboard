@@ -3,6 +3,7 @@
 //! synthetic. No OS calls; this file must not log (GC-06): the runner reports.
 
 use super::*;
+use darkclip_fuzzgen::png::{gen_png, PNG_DICT};
 use darkclip_fuzzgen::{fix_png_crcs, Fuzz, Rng, TrackingAlloc};
 use std::time::Duration;
 
@@ -32,8 +33,8 @@ pub(super) fn gen_dib(rng: &mut Rng) -> Vec<u8> {
     let h = rng.range(1, 40) as i32;
     let w = if rng.one_in(32) { -w } else { w };
     let h = if rng.one_in(3) { -h } else { h };
-    let bpp: u16 = *rng.pick(&[24, 32, 32, 8, 16, 1]).unwrap_or(&32);
-    let comp: u32 = *rng.pick(&[0, 3, 0, 1, 4]).unwrap_or(&0);
+    let bpp: u16 = *rng.pick(&[24, 32, 32, 24, 32, 8, 16, 1]).unwrap_or(&32);
+    let comp: u32 = *rng.pick(&[0, 3, 0, 3, 0, 1, 4]).unwrap_or(&0);
     let clr_used = if rng.one_in(8) {
         rng.range(1, 16) as u32
     } else {
@@ -81,57 +82,6 @@ pub(super) fn gen_dib(rng: &mut Rng) -> Vec<u8> {
         n = rng.below(n + 64);
     }
     out.extend(rng.bytes(n));
-    out
-}
-
-/// A valid PNG of random type, depth and size (small), optionally with extra chunks.
-pub(crate) fn gen_png(rng: &mut Rng) -> Vec<u8> {
-    use png::{BitDepth, ColorType};
-    let combos = [
-        (ColorType::Grayscale, BitDepth::One),
-        (ColorType::Grayscale, BitDepth::Two),
-        (ColorType::Grayscale, BitDepth::Four),
-        (ColorType::Grayscale, BitDepth::Eight),
-        (ColorType::Grayscale, BitDepth::Sixteen),
-        (ColorType::Rgb, BitDepth::Eight),
-        (ColorType::Rgb, BitDepth::Sixteen),
-        (ColorType::Indexed, BitDepth::One),
-        (ColorType::Indexed, BitDepth::Four),
-        (ColorType::Indexed, BitDepth::Eight),
-        (ColorType::GrayscaleAlpha, BitDepth::Eight),
-        (ColorType::GrayscaleAlpha, BitDepth::Sixteen),
-        (ColorType::Rgba, BitDepth::Eight),
-        (ColorType::Rgba, BitDepth::Sixteen),
-    ];
-    let (color, depth) = combos[rng.below(combos.len())];
-    let (w, h) = (rng.range(1, 24) as u32, rng.range(1, 24) as u32);
-    let mut out = Vec::new();
-    {
-        let mut enc = png::Encoder::new(&mut out, w, h);
-        enc.set_color(color);
-        enc.set_depth(depth);
-        if color == ColorType::Indexed {
-            let entries = rng.range(1, 256);
-            enc.set_palette(rng.bytes(entries * 3));
-            if rng.one_in(2) {
-                let n = rng.range(1, entries);
-                enc.set_trns(rng.bytes(n));
-            }
-        }
-        let Ok(mut writer) = enc.write_header() else {
-            return out;
-        };
-        let samples = match color {
-            ColorType::Grayscale | ColorType::Indexed => 1,
-            ColorType::GrayscaleAlpha => 2,
-            ColorType::Rgb => 3,
-            ColorType::Rgba => 4,
-        };
-        let bits = samples * depth as usize;
-        let row = (w as usize * bits).div_ceil(8);
-        let data = rng.bytes(row * h as usize);
-        let _ = writer.write_image_data(&data);
-    }
     out
 }
 
@@ -223,10 +173,8 @@ fn gen_uri_list(rng: &mut Rng) -> Vec<u8> {
         }
         out.push_str(lines[rng.below(lines.len())]);
         if rng.one_in(3) {
-            out.push_str(
-                *rng.pick(&["%41", "%e1%ba%bf", "/sub", " ", "%", "%F0%9F"])
-                    .unwrap_or(&""),
-            );
+            let tails = ["%41", "%e1%ba%bf", "/sub", " ", "%", "%F0%9F"];
+            out.push_str(tails[rng.below(tails.len())]);
         }
     }
     out.into_bytes()
@@ -273,24 +221,6 @@ fn gen_cf_html(rng: &mut Rng) -> Vec<u8> {
     out.extend_from_slice(post);
     out
 }
-
-const PNG_DICT: &[&[u8]] = &[
-    b"\x89PNG\r\n\x1a\n",
-    b"IHDR",
-    b"IDAT",
-    b"IEND",
-    b"PLTE",
-    b"tRNS",
-    b"iCCP",
-    b"tEXt",
-    b"zTXt",
-    b"acTL",
-    b"fcTL",
-    b"fdAT",
-    b"\x00\x00\x80\x00",
-    b"\x00\x00\x7f\xff",
-    b"\x78\x9c",
-];
 
 const DIB_DICT: &[&[u8]] = &[
     &[40, 0, 0, 0],
@@ -384,7 +314,38 @@ fn write_seed_corpus() {
     ];
     for (i, (name, gen)) in gens.into_iter().enumerate() {
         let mut rng = Rng::new(100 + i as u64);
-        let inputs: Vec<Vec<u8>> = (0..6).map(|_| gen(&mut rng)).collect();
+        let mut inputs: Vec<Vec<u8>> = (0..6).map(|_| gen(&mut rng)).collect();
+        if name == "png_to_dibs" {
+            // The minimised Task 406 finding: a 4-byte PLTE chunk.
+            inputs.push(darkclip_fuzzgen::png::indexed_1x1(&[1; 4]));
+        }
         darkclip_fuzzgen::write_corpus(name, &inputs).unwrap();
+    }
+}
+
+/// The generators must produce inputs the converters accept, or the runs above only
+/// exercise the first rejection. Not ignored: fast and deterministic.
+#[test]
+fn generators_reach_the_converters() {
+    let mut rng = Rng::new(42);
+    let (mut dibs, mut pngs, mut drops, mut uris) = (0, 0, 0, 0);
+    for _ in 0..300 {
+        let d = gen_dib(&mut rng);
+        dibs += usize::from(dib_to_png(&d[1..], u64::MAX).is_ok());
+        pngs += usize::from(png_to_dibs(&gen_png(&mut rng)).is_ok());
+        let f = gen_dropfiles(&mut rng);
+        drops += usize::from(parse_dropfiles(&f[1..], true, 1 << 20).is_some());
+        #[cfg(windows)]
+        {
+            uris += usize::from(
+                crate::access::uri_list_to_dropfiles(&gen_uri_list(&mut rng)).is_some(),
+            );
+        }
+    }
+    assert!(dibs >= 50, "DIBs converted: {dibs}");
+    assert!(pngs >= 200, "PNGs converted: {pngs}");
+    assert!(drops >= 100, "DROPFILES parsed: {drops}");
+    if cfg!(windows) {
+        assert!(uris >= 20, "uri-lists converted: {uris}");
     }
 }

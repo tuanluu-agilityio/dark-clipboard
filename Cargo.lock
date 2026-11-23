@@ -1105,6 +1105,9 @@ dependencies = [
 [[package]]
 name = "darkclip-fuzzgen"
 version = "0.0.1"
+dependencies = [
+ "png",
+]
 
 [[package]]
 name = "darkclip-platform"
@@ -1121,6 +1124,7 @@ version = "0.0.1"
 dependencies = [
  "boon",
  "darkclip-core",
+ "darkclip-fuzzgen",
  "png",
  "rusqlite",
  "serde",

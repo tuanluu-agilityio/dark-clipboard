@@ -171,6 +171,7 @@ pub fn crc32(data: &[u8]) -> u32 {
 /// Recomputes the CRC of every PNG chunk whose length fits in `buf`, so that mutations of
 /// chunk data and headers reach the decoder instead of failing the checksum. Stops at the
 /// first chunk that does not fit.
+#[allow(clippy::ptr_arg)] // Matches the `Fuzz::fixup` signature.
 pub fn fix_png_crcs(buf: &mut Vec<u8>) {
     let mut at = 8usize;
     while let Some(len_bytes) = buf.get(at..at + 4) {

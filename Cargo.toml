@@ -1,5 +1,7 @@
 [workspace]
 members = ["crates/*", "apps/*"]
+# cargo-fuzz targets (Task 406): their own workspace, nightly only.
+exclude = ["fuzz"]
 resolver = "2"
 
 [workspace.package]

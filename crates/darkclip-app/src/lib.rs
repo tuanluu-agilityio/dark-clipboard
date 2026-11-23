@@ -10,6 +10,9 @@ pub mod capture;
 pub mod config;
 pub mod envelope;
 pub mod events;
+#[cfg(any(test, feature = "fuzzing"))]
+#[doc(hidden)]
+pub mod fuzz_entry;
 pub mod image;
 pub mod permission;
 pub mod settings;
