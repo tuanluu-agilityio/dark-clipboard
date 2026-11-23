@@ -78,7 +78,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 403 Organization UI | task/403-organization-ui | builder | sonnet | done | 319,456 | 143,609 (reviewer opus ×2: CR (blocking: dialog keys never reached the host, also Task 404 edit panel; D-052 dialog state) → APPROVED) | 16,574 | 479,639 |
 | 405 Backup / export / import | task/405-backup-export | specialist | opus | done | 455,716 | 249,327 (security-reviewer opus ×3: CR (blocking: UTF-16 backup broke the store; NoCloud clips exported) → CR (blocking: hidden `sqlite_*` trigger survived the schema check; pending copy read after a queued Private) → APPROVED) | 150,115 (2 rounds) | 855,158 |
 | 406 Fuzzing | task/406-fuzzing | specialist | opus | done (stable fallback harness; libFuzzer not run, no nightly) | 295,069 | 98,678 (security-reviewer opus: APPROVED with 2 should-fix (secret-shaped seed corpus, decisions) → fixed) | 16,219 | 409,966 |
-| 412 Update check | task/412-update-check | builder | sonnet | pending | | | | |
+| 412 Update check | task/412-update-check | builder | sonnet | in progress | | | | |
 | 407 Security re-review | task/407-security-review | security-reviewer | opus | pending | | | | |
 | 409 Licence | — | — | — | done in Task 201 (D-045) | | | | |
 | 408, 410 Release workflow, 0.1.0 docs | — | — | — | pending (owner authorized releases and tags, D-058) | | | | |
