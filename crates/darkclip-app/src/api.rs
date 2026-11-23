@@ -24,6 +24,7 @@ use darkclip_core::{
 use darkclip_platform::{Capabilities, PlatformBundle};
 use darkclip_storage::{ClipSummary, OpenMode, SearchQuery, Storage};
 
+mod transfer;
 mod transform_ui;
 pub use crate::capture::SaveOutcome;
 use serde::Serialize;
@@ -33,6 +34,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+pub use transfer::{ExportSelection, ImportReport};
 pub use transform_ui::TransformPreview;
 
 /// Who is calling. The App is in-process in Phase 1; the P2 CLI and MCP processes
@@ -222,6 +224,8 @@ pub struct TagView {
 pub struct ExportResult {
     pub path: String,
     pub clip_count: u64,
+    /// Masked or sensitive clips left out (they are never exported; Task 405).
+    pub excluded_sensitive: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -2324,13 +2328,19 @@ file:///C:/c.txt
             .collect()
     }
 
+    /// Task 405: `export_collection` works for the UI (tests in `transfer_tests`); the CLI
+    /// gets it in P2.
     #[test]
-    fn export_stays_unavailable() {
+    fn export_stays_unavailable_outside_the_ui() {
         let h = start(&[("x", false)], None);
         let a = h.app();
         let col = CollectionId::new_v7(Timestamp(T0));
         let nope = ApiError::InvalidArgument("not available until P1");
-        assert_eq!(a.export_collection(&Caller::Ui, col).unwrap_err(), nope);
+        assert_eq!(a.export_collection(&Caller::Cli, col).unwrap_err(), nope);
+        assert!(matches!(
+            a.export_collection(&mcp(), col).unwrap_err(),
+            ApiError::PermissionDenied(_)
+        ));
     }
 
     #[test]
@@ -2681,5 +2691,6 @@ file:///C:/c.txt
         assert_eq!(json["favorite"], true);
     }
 
+    mod transfer_tests;
     mod transform_ui_tests;
 }

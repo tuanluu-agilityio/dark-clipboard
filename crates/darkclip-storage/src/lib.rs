@@ -13,6 +13,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+mod archive;
+mod backup;
 mod blobs;
 mod clips;
 mod db;
@@ -23,6 +25,7 @@ mod organize;
 mod retention;
 mod search;
 mod stats;
+mod transfer;
 
 use darkclip_core::{
     Classified, ClipId, ClipboardSource, Clock, RawRepresentation, Sensitivity, Timestamp,
@@ -30,12 +33,15 @@ use darkclip_core::{
 use std::path::PathBuf;
 use std::sync::Arc;
 
+pub use archive::{ArchiveError, ArchiveLimits, BACKUP_FORMAT, EXPORT_SCHEMA_VERSION};
+pub use backup::{BackupReport, RestoreReport};
 pub use error::StorageError;
 pub use maintenance::{CompactReport, OrphanReport};
 pub use organize::TagCount;
 pub use retention::RetentionReport;
 pub use search::{ClipSummary, Cursor, SearchQuery};
 pub use stats::StorageStats;
+pub use transfer::{ExportArchive, ExportReport};
 
 /// The clip store: one SQLite connection plus the data directory.
 pub struct Storage {
@@ -51,6 +57,9 @@ pub struct Storage {
     /// Test hook: fail `upsert_clip` after blobs are written, before commit.
     #[cfg(test)]
     fail_before_commit: bool,
+    /// Test hook: fail a restore during the swap, after part of the data was copied.
+    #[cfg(test)]
+    fail_restore_swap: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

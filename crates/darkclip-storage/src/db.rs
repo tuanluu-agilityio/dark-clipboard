@@ -128,6 +128,8 @@ impl Storage {
             optimize_runs: 0,
             #[cfg(test)]
             fail_before_commit: false,
+            #[cfg(test)]
+            fail_restore_swap: false,
         }
     }
 
