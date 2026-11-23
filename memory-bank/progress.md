@@ -72,7 +72,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
 |---|---|---|---|---|---|---|---|---|
 | 401 Migration 2 | task/401-migration-2 | specialist | opus | done | 252,014 | 127,875 (security-reviewer opus: APPROVED with 5 should-fix → fixed, verified by orchestrator gate) | 29,644 | 409,533 |
-| 402 Organization API | task/402-organization-api | builder | sonnet | pending | | | | |
+| 402 Organization API | task/402-organization-api | builder | sonnet | in progress | | | | |
 | 404 Transforms + edit copy | task/404-transforms-edit | builder | sonnet | pending | | | | |
 | 411 Data management | task/411-data-management | builder | sonnet | pending | | | | |
 | 403 Organization UI | task/403-organization-ui | builder | sonnet | pending | | | | |

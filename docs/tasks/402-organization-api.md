@@ -8,7 +8,8 @@
 2. `SearchQuery` collection/tag filters reachable from the API; `ClipSummaryView` gains `favorite: bool` and `tags` (names). Update `docs/architecture/schemas/*.json` and examples only if the serialized shape changes, then run `node tools/schema-check/validate.mjs`.
 3. Permission: `Caller::Ui` allowed; `Caller::Cli`/`Mcp` keep the existing guard behaviour (no new grants in P1). `export_collection` stays `NOT_YET` (405).
 4. Masked or expired clips: organisation calls return `NotFound` like other reads.
-5. An `AppEvent` notifies the UI after a mutation so open windows refresh.
+5. Map `StorageError::InvalidArgument` to `ApiError::InvalidArgument` in `map_storage` (`crates/darkclip-app/src/events.rs`); storage methods from Task 401 live in `crates/darkclip-storage/src/organize.rs` (Favorites id `darkclip_core::FAVORITES_COLLECTION_ID`, D-059).
+6. An `AppEvent` notifies the UI after a mutation so open windows refresh.
 
 ## Tests (first, failing)
 One test per method (happy path; invalid name/tag → `InvalidArgument`; unknown id → `NotFound`; system collection rename/delete refused); favorites survive retention through the API; a mutation from a non-UI caller follows the guard; schema validation passes.
