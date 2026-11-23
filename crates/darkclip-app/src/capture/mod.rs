@@ -93,8 +93,8 @@ pub enum ActorCommand {
     },
 }
 
-/// An organisation mutation (Task 402). Names and notes are user text: this type has no
-/// `Debug` output of its own beyond the derive on `ActorCommand`, which is never logged.
+/// An organisation mutation (Task 402). Names and notes are user text, so the manual `Debug`
+/// below prints the variant name only (the derived `Debug` of `ActorCommand` uses it).
 pub enum OrganizeOp {
     CreateCollection(String),
     RenameCollection(CollectionId, String),

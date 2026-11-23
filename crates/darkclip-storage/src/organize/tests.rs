@@ -721,3 +721,29 @@ fn vietnamese_d_stroke_folds_in_tags_and_notes() {
     q.tag = Some("other".into());
     assert!(s.search(&q).unwrap().0.is_empty());
 }
+
+#[test]
+fn clip_labels_batch_matches_the_single_lookup() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut s = open(tmp.path(), clock());
+    let ids: Vec<ClipId> = ["one", "two", "three"]
+        .iter()
+        .map(|t| match s.upsert_clip(&text_clip(t)).unwrap() {
+            crate::UpsertOutcome::Inserted(id) | crate::UpsertOutcome::Bumped(id) => id,
+        })
+        .collect();
+    let fav = s.favorites_id().unwrap();
+    s.add_to_collection(&fav, &ids[0]).unwrap();
+    s.set_clip_tags(&ids[0], &["work", "ideas"]).unwrap();
+    s.set_clip_tags(&ids[1], &["work"]).unwrap();
+    let ghost = ClipId::new_v7(Timestamp(T0));
+    let mut asked = ids.clone();
+    asked.push(ghost);
+    let batch = s.clip_labels_batch(&asked).unwrap();
+    for id in &ids {
+        assert_eq!(batch.get(id).cloned().unwrap(), s.clip_labels(id).unwrap());
+    }
+    assert_eq!(batch[&ids[0]], (true, vec!["ideas".into(), "work".into()]));
+    assert_eq!(batch[&ids[2]], (false, Vec::<String>::new()));
+    assert!(s.clip_labels_batch(&[]).unwrap().is_empty());
+}

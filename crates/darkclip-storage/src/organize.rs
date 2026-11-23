@@ -30,6 +30,7 @@ use darkclip_core::{
     TAGS_PER_CLIP_MAX,
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// A tag with the number of clips that carry it.
@@ -246,6 +247,47 @@ impl Storage {
         )?;
         let tags = tags_text(&self.conn, &clip_s)?;
         Ok((fav, tags.split_whitespace().map(str::to_owned).collect()))
+    }
+
+    /// `clip_labels` for many clips at once: two queries (favorites, tags) however many ids.
+    /// Ids that do not exist are absent from the map; existing clips always have an entry.
+    pub fn clip_labels_batch(
+        &self,
+        ids: &[ClipId],
+    ) -> Result<HashMap<ClipId, (bool, Vec<String>)>, StorageError> {
+        let mut out: HashMap<ClipId, (bool, Vec<String>)> = HashMap::new();
+        if ids.is_empty() {
+            return Ok(out);
+        }
+        let json = serde_json::to_string(&ids.iter().map(ToString::to_string).collect::<Vec<_>>())
+            .map_err(|_| decode_err())?;
+        let mut st = self.conn.prepare_cached(
+            "SELECT c.id, EXISTS(SELECT 1 FROM collection_clips m JOIN collections k              ON k.id = m.collection_id WHERE m.clip_id = c.id AND k.system_key = 'favorites')              FROM clips c WHERE c.id IN (SELECT value FROM json_each(?1))",
+        )?;
+        let rows = st.query_map([&json], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?))
+        })?;
+        for row in rows {
+            let (id, fav) = row?;
+            out.insert(
+                ClipId::parse(&id).map_err(|_| decode_err())?,
+                (fav, Vec::new()),
+            );
+        }
+        let mut st = self.conn.prepare_cached(
+            "SELECT ct.clip_id, t.name FROM clip_tags ct JOIN tags t ON t.id = ct.tag_id              WHERE ct.clip_id IN (SELECT value FROM json_each(?1)) ORDER BY t.name",
+        )?;
+        let rows = st.query_map([&json], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (id, name) = row?;
+            let id = ClipId::parse(&id).map_err(|_| decode_err())?;
+            if let Some(e) = out.get_mut(&id) {
+                e.1.push(name);
+            }
+        }
+        Ok(out)
     }
 
     /// Creates a user collection. The name is trimmed (1-80 characters); `color` must be

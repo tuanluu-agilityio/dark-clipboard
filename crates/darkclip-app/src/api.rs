@@ -815,15 +815,20 @@ impl ClipApi for App {
         };
         let st = self.reader();
         let (rows, next) = st.search(&q).map_err(|e| map_storage(&e))?;
-        let mut items = Vec::with_capacity(rows.len());
-        for row in rows {
-            let id = row.id;
-            let mut v = ClipSummaryView::from(row);
-            let (favorite, tags) = st.clip_labels(&id).map_err(|e| map_storage(&e))?;
-            v.favorite = favorite;
-            v.tags = tags;
-            items.push(v);
-        }
+        let ids: Vec<ClipId> = rows.iter().map(|r| r.id).collect();
+        let mut labels = st.clip_labels_batch(&ids).map_err(|e| map_storage(&e))?;
+        let items = rows
+            .into_iter()
+            .map(|row| {
+                let id = row.id;
+                let mut v = ClipSummaryView::from(row);
+                if let Some((favorite, tags)) = labels.remove(&id) {
+                    v.favorite = favorite;
+                    v.tags = tags;
+                }
+                v
+            })
+            .collect();
         drop(st);
         Ok(Page {
             items,
@@ -920,6 +925,7 @@ impl ClipApi for App {
         clip: ClipId,
     ) -> Result<(), ApiError> {
         PermissionGuard::check(c, Operation::RemoveClipFromCollection)?;
+        self.organize_target(c, &clip, false)?;
         self.organize_done(OrganizeOp::RemoveFromCollection(col, clip))
     }
 
@@ -931,6 +937,7 @@ impl ClipApi for App {
         index: u32,
     ) -> Result<(), ApiError> {
         PermissionGuard::check(c, Operation::ReorderClipInCollection)?;
+        self.organize_target(c, &clip, false)?;
         self.organize_done(OrganizeOp::Reorder(col, clip, index))
     }
 
@@ -2303,6 +2310,16 @@ file:///C:/c.txt
                 .unwrap_err(),
             ApiError::NotFound
         );
+        assert_eq!(
+            a.remove_clip_from_collection(ui, col.id, ghost_clip)
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.reorder_clip_in_collection(ui, col.id, ghost_clip, 0)
+                .unwrap_err(),
+            ApiError::NotFound
+        );
         // A tag filter that is not a valid name matches nothing.
         let mut bad = query(None);
         bad.tag = Some("no way!".into());
@@ -2491,6 +2508,16 @@ file:///C:/c.txt
         );
         assert_eq!(
             a.update_clip_tags(&Caller::Cli, h.ids[1], vec![])
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.remove_clip_from_collection(&Caller::Cli, col.id, h.ids[1])
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.reorder_clip_in_collection(&Caller::Cli, col.id, h.ids[1], 0)
                 .unwrap_err(),
             ApiError::NotFound
         );
