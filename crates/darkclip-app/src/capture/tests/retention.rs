@@ -250,3 +250,89 @@ fn retention_runs_on_start() {
     h.sentinel();
     assert_eq!(h.clip_count(), 1);
 }
+
+/// A word that is unique in the file and far from secret-shaped (GC-09).
+const TOKEN: &str = "qzvkjxwunique";
+
+fn file_has_token(h: &H) -> bool {
+    let mut all = std::fs::read(h.dir.path().join("history.db")).unwrap();
+    if let Ok(wal) = std::fs::read(h.dir.path().join("history.db-wal")) {
+        all.extend(wal);
+    }
+    all.windows(TOKEN.len()).any(|w| w == TOKEN.as_bytes())
+}
+
+fn copy_at(h: &H, ms: i64, text: &str) {
+    h.clock.set(T0 + ms);
+    h.fake.copy(text_copy(text));
+    h.wait_added();
+}
+
+fn two_item_limit() -> RetentionPolicy {
+    RetentionPolicy {
+        max_items: 2,
+        max_age_days: 0,
+        max_storage_mb: 0,
+        ..RetentionPolicy::default()
+    }
+}
+
+/// B1 follow-up: the merge deadline starts at the first pending eviction and later captures
+/// (each of which re-arms the retention interval) must not push it back.
+#[test]
+fn evicted_words_leave_the_file_ten_minutes_after_the_first_eviction_despite_steady_captures() {
+    const MIN: i64 = 60_000;
+    let h = start_with(
+        PrivacyPolicy::default(),
+        two_item_limit(),
+        test_cfg(),
+        |_| {},
+    );
+    copy_at(&h, 0, &format!("oldest {TOKEN}"));
+    copy_at(&h, 1_000, "second clip");
+    // The third copy evicts the oldest one: the merge is deferred, the word is still there.
+    copy_at(&h, 2_000, "third clip");
+    assert_eq!(h.clip_count(), 2);
+    assert!(file_has_token(&h), "automatic eviction defers the merge");
+    // A copy at least every 10 minutes keeps the retention interval from ever elapsing.
+    copy_at(&h, 4 * MIN, "fourth clip");
+    copy_at(&h, 8 * MIN, "fifth clip");
+    copy_at(&h, 9 * MIN + 30_000, "sixth clip");
+    assert!(
+        file_has_token(&h),
+        "not yet 10 minutes after the first eviction"
+    );
+    copy_at(&h, 10 * MIN + 5_000, "seventh clip");
+    assert!(
+        !file_has_token(&h),
+        "10 minutes after the first pending eviction the index was merged"
+    );
+}
+
+/// The retention tick merges what automatic evictions left pending.
+#[test]
+fn the_retention_tick_merges_pending_evictions() {
+    let h = start_with(
+        PrivacyPolicy::default(),
+        two_item_limit(),
+        test_cfg(),
+        |_| {},
+    );
+    copy_at(&h, 0, &format!("oldest {TOKEN}"));
+    copy_at(&h, 1_000, "second clip");
+    copy_at(&h, 2_000, "third clip");
+    assert!(file_has_token(&h));
+    // A short interval from now on; a policy update runs retention, which re-arms it.
+    h.cap().hooks.tick_ms.store(50, Ordering::SeqCst);
+    h.cap()
+        .send(ActorCommand::UpdatePolicy(
+            PrivacyPolicy::default(),
+            two_item_limit(),
+        ))
+        .unwrap();
+    let until = Instant::now() + WAIT;
+    while file_has_token(&h) && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!file_has_token(&h), "the tick merged the pending index");
+}

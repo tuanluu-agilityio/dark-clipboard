@@ -98,7 +98,14 @@ impl Actor {
             self.retention_retry_at = Some(now.checked_add(step).unwrap_or(now));
             self.emit(AppEvent::Unavailable(UNAVAILABLE_RETENTION));
         }
+        #[cfg(test)]
+        let every = match self.hooks.tick_ms.load(Ordering::SeqCst) {
+            0 => RETENTION_EVERY,
+            ms => Duration::from_millis(ms),
+        };
+        #[cfg(not(test))]
+        let every = RETENTION_EVERY;
         let now = Instant::now();
-        self.next_retention = now.checked_add(RETENTION_EVERY).unwrap_or(now);
+        self.next_retention = now.checked_add(every).unwrap_or(now);
     }
 }

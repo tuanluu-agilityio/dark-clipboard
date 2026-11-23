@@ -187,6 +187,9 @@ struct RetentionHooks {
     attempts: AtomicU32,
     #[cfg(test)]
     fail: std::sync::atomic::AtomicBool,
+    /// Tests: the retention interval in milliseconds (0 = the real 10 minutes).
+    #[cfg(test)]
+    tick_ms: std::sync::atomic::AtomicU64,
     /// Tests: errors the next `upsert_clip` calls return, in order, before touching storage.
     #[cfg(test)]
     inject: Mutex<std::collections::VecDeque<StorageError>>,
