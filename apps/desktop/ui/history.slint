@@ -6,6 +6,7 @@
 import { ListView, ScrollView, Palette } from "std-widgets.slint";
 import { Theme, Strings } from "theme.slint";
 import { ClipRow, ActionButton, RowView, DetailPane, DetailState, RowMetrics } from "popup.slint";
+import { TransformPanel, EditPanel } from "transform.slint";
 
 // One line of the left pane: a filter, or a group heading (`header`).
 export struct FilterItem {
@@ -133,6 +134,18 @@ export component HistoryWindow inherits Window {
     in property <string> detail-text;
     // Non-empty while the delete confirmation is open (the text it asks).
     in property <string> confirm-text;
+    // "Copy as..." and "Edit..." (Task 404). `can-transform`: one text clip, not masked.
+    in property <bool> can-transform;
+    in property <bool> tf-open;
+    in property <[string]> tf-labels;
+    in property <int> tf-selected;
+    in property <string> tf-preview;
+    in property <string> tf-note;
+    in property <bool> tf-note-error;
+    in property <bool> tf-can-copy;
+    in property <bool> edit-open;
+    in property <string> edit-note;
+    in-out property <string> edit-text;
     in-out property <string> query;
     // Where the context menu opens (window coordinates).
     private property <length> menu-x;
@@ -150,6 +163,13 @@ export component HistoryWindow inherits Window {
     callback row-activated(int);
     callback act-copy();
     callback act-copy-plain();
+    callback act-copy-as();
+    callback act-edit();
+    callback tf-chosen(int);
+    callback tf-copy();
+    callback tf-cancel();
+    callback edit-save();
+    callback edit-cancel();
     callback act-pin();
     callback act-delete();
     callback act-select-all();
@@ -402,6 +422,20 @@ export component HistoryWindow inherits Window {
                     }
                 }
                 ActionButton {
+                    text: Strings.copy-as;
+                    visible: root.can-transform;
+                    clicked => {
+                        root.act-copy-as();
+                    }
+                }
+                ActionButton {
+                    text: Strings.edit;
+                    visible: root.can-transform;
+                    clicked => {
+                        root.act-edit();
+                    }
+                }
+                ActionButton {
                     text: root.will-unpin ? Strings.unpin : Strings.pin;
                     visible: root.has-selection;
                     clicked => {
@@ -484,6 +518,22 @@ export component HistoryWindow inherits Window {
                         }
                     }
                     MenuEntry {
+                        text: Strings.copy-as;
+                        enabled: root.can-transform;
+                        clicked => {
+                            menu.close();
+                            root.act-copy-as();
+                        }
+                    }
+                    MenuEntry {
+                        text: Strings.edit;
+                        enabled: root.can-transform;
+                        clicked => {
+                            menu.close();
+                            root.act-edit();
+                        }
+                    }
+                    MenuEntry {
                         text: root.will-unpin ? Strings.unpin : Strings.pin;
                         enabled: root.has-selection;
                         clicked => {
@@ -556,6 +606,36 @@ export component HistoryWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    // "Copy as..." and "Edit..." (Task 404): each covers the window and takes every click.
+    if root.tf-open: TransformPanel {
+        labels: root.tf-labels;
+        selected: root.tf-selected;
+        preview: root.tf-preview;
+        note: root.tf-note;
+        note-is-error: root.tf-note-error;
+        can-copy: root.tf-can-copy;
+        chosen(i) => {
+            root.tf-chosen(i);
+        }
+        copy => {
+            root.tf-copy();
+        }
+        cancel => {
+            root.tf-cancel();
+        }
+    }
+
+    if root.edit-open: EditPanel {
+        text <=> root.edit-text;
+        note: root.edit-note;
+        save => {
+            root.edit-save();
+        }
+        cancel => {
+            root.edit-cancel();
         }
     }
 }

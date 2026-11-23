@@ -28,6 +28,10 @@ pub enum HistoryAction {
     /// Delete: opens the confirmation.
     Delete,
     TogglePin,
+    /// Ctrl+T: "Copy as..." for the clip (Task 404).
+    CopyAs,
+    /// Ctrl+E: edit a copy of the clip's text (Task 404).
+    Edit,
     SelectAll,
     /// Space: marks or unmarks the clip under the cursor.
     ToggleMark,
@@ -87,6 +91,8 @@ pub fn map_key(k: Key, m: Mods, ctx: HistoryCtx) -> Option<HistoryAction> {
         Key::Delete if plain && !m.shift && list_keys => Some(HistoryAction::Delete),
         Key::Menu if plain => Some(HistoryAction::OpenMenu),
         Key::Char('p' | 'P' | '\u{10}') if m.ctrl && !m.alt => Some(HistoryAction::TogglePin),
+        Key::Char('t' | 'T' | '\u{14}') if ctrl_only => Some(HistoryAction::CopyAs),
+        Key::Char('e' | 'E' | '\u{5}') if ctrl_only => Some(HistoryAction::Edit),
         // Ctrl+A selects text in a non-empty search box; otherwise it selects every loaded row.
         Key::Char('a' | 'A' | '\u{1}') if m.ctrl && !m.alt && list_keys => {
             Some(HistoryAction::SelectAll)
@@ -176,6 +182,25 @@ mod tests {
             map_key(Key::Char('A'), CTRL, empty_focused),
             Some(A::SelectAll)
         );
+    }
+
+    #[test]
+    fn copy_as_and_edit_keys() {
+        for c in ['t', 'T', '\u{14}'] {
+            assert_eq!(map_key(Key::Char(c), CTRL, TYPING), Some(A::CopyAs));
+        }
+        for c in ['e', 'E', '\u{5}'] {
+            assert_eq!(map_key(Key::Char(c), CTRL, TYPING), Some(A::Edit));
+            assert_eq!(map_key(Key::Char(c), CTRL, LIST), Some(A::Edit));
+        }
+        assert_eq!(map_key(Key::Char('e'), NONE, TYPING), None);
+        assert_eq!(map_key(Key::Char('t'), SHIFT, TYPING), None);
+        // The modal delete dialog still swallows them.
+        let confirming = HistoryCtx {
+            confirming: true,
+            ..LIST
+        };
+        assert_eq!(map_key(Key::Char('t'), CTRL, confirming), Some(A::Swallow));
     }
 
     #[test]

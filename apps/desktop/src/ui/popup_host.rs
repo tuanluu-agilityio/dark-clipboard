@@ -34,6 +34,7 @@ use crate::popup::detail::{DetailModel, DetailRequest};
 use crate::popup::keys::{self, Action, ChipFocus, CopyKind, KeyCtx, Mods};
 use crate::popup::list::{Applied, Filters, Item, ListModel, Request, View};
 use crate::popup::paste::{self as paste_rules, AfterCopy, Via};
+use crate::popup::transform::{self as tf, PanelKey, Session};
 use darkclip_app::api::{Caller, CopyMode};
 use darkclip_app::{ClipApi, ClipSummaryView, Page};
 use darkclip_core::i18n::{t, Lang, Msg};
@@ -109,6 +110,8 @@ struct Host {
     injector: Option<Injector>,
     /// A focus return or paste is running: further copies wait for it.
     pasting: bool,
+    /// The open "Copy as..." panel (Task 404), if any.
+    tf: Option<Session>,
     /// The detail pane's state and its decoded-image cache.
     detail: DetailModel<Px>,
     /// The clip the pane wants loaded now. Worker jobs for any other clip are skipped before
@@ -259,6 +262,7 @@ impl Host {
         let item = self.model.selected_item();
         w.set_has_selection(item.is_some());
         w.set_selected_pinned(item.is_some_and(|i| i.pinned));
+        w.set_can_transform(item.is_some_and(|i| tf::can_transform(i.kind, i.masked)));
     }
 
     /// The selection or the pane changed: load what the pane needs and redraw it.
@@ -347,6 +351,7 @@ impl Host {
         self.debounce.stop();
         self.loading.stop();
         self.commit_delete();
+        self.close_copy_as();
         self.clear_toast();
         self.slow = false;
         self.typed_search = None;
@@ -543,6 +548,136 @@ impl Host {
         });
     }
 
+    // ---- "Copy as..." (Task 404) ----
+
+    /// Opens the panel for the selected clip (never for a masked one, an image or files).
+    fn open_copy_as(&mut self) {
+        let Some(item) = self.model.selected_item() else {
+            return;
+        };
+        if self.tf.is_some() || !tf::can_transform(item.kind, item.masked) {
+            return;
+        }
+        self.tf = Some(Session::new(item.id));
+        if let Some(w) = self.window() {
+            w.set_tf_labels(common::transform_labels(self.lang));
+            w.set_tf_selected(0);
+            self.show_preview(&w, common::empty_preview());
+            w.set_tf_open(true);
+        }
+        self.request_preview();
+    }
+
+    fn show_preview(&self, w: &MainWindow, v: common::PreviewView) {
+        w.set_tf_preview(v.text);
+        w.set_tf_note(v.note);
+        w.set_tf_note_error(v.is_error);
+        w.set_tf_can_copy(v.can_copy);
+    }
+
+    /// Asks the worker for the highlighted transform's output (nothing is written).
+    fn request_preview(&mut self) {
+        let Some(s) = self.tf.as_mut() else {
+            return;
+        };
+        let (id, transform, gen) = (s.clip(), s.transform(), s.next_gen());
+        let ui = self.window.clone();
+        self.poster.post_quiet(move |app| {
+            let r = app.ui_transform_preview(&Caller::Ui, id, transform);
+            let _ = ui.upgrade_in_event_loop(move |_| {
+                with_host(|h| h.on_preview(gen, &r));
+            });
+        });
+    }
+
+    fn on_preview(
+        &mut self,
+        gen: u64,
+        r: &Result<darkclip_app::api::TransformPreview, darkclip_app::ApiError>,
+    ) {
+        if !self.tf.as_ref().is_some_and(|s| s.is_current(gen)) {
+            return;
+        }
+        if let Some(w) = self.window() {
+            self.show_preview(&w, common::preview_view(self.lang, r));
+        }
+    }
+
+    fn choose_transform(&mut self, i: usize) {
+        let moved = self.tf.as_mut().is_some_and(|s| s.select(i));
+        self.after_highlight(moved);
+    }
+
+    fn after_highlight(&mut self, moved: bool) {
+        if !moved {
+            return;
+        }
+        if let (Some(w), Some(s)) = (self.window(), self.tf.as_ref()) {
+            w.set_tf_selected(i32::try_from(s.selected()).unwrap_or(0));
+            self.show_preview(&w, common::empty_preview());
+        }
+        self.request_preview();
+    }
+
+    fn panel_key(&mut self, k: PanelKey) {
+        match k {
+            PanelKey::Previous | PanelKey::Next => {
+                let moved = self.tf.as_mut().is_some_and(|s| s.step(k));
+                self.after_highlight(moved);
+            }
+            PanelKey::Copy => self.copy_transformed(),
+            PanelKey::Close => self.close_copy_as(),
+            PanelKey::Swallow => {}
+        }
+    }
+
+    /// Writes the previewed output to the clipboard (a self-write; nothing is stored), then
+    /// does what a normal copy does: the focus goes back and the popup closes.
+    fn copy_transformed(&mut self) {
+        let Some(w) = self.window() else {
+            return;
+        };
+        let Some(s) = self.tf.as_ref() else {
+            return;
+        };
+        if !w.get_tf_can_copy() {
+            return;
+        }
+        if self.pasting {
+            self.show_toast(paste_rules::BUSY_TOAST, false);
+            return;
+        }
+        let (id, transform) = (s.clip(), s.transform());
+        let ui = self.window.clone();
+        self.poster.post_quiet(move |app| {
+            let ok = app.ui_copy_transformed(&Caller::Ui, id, transform).is_ok();
+            let _ = ui.upgrade_in_event_loop(move |w| {
+                if ok {
+                    with_host(|h| h.close_copy_as());
+                    let started =
+                        with_host(|h| h.return_focus(AfterCopy::Restore)).unwrap_or(false);
+                    if !started {
+                        hide(&w);
+                    }
+                } else {
+                    with_host(|h| {
+                        h.close_copy_as();
+                        h.show_toast(Msg::UiActionFailed, false);
+                    });
+                }
+            });
+        });
+    }
+
+    /// Closes the panel; no output text stays in the window.
+    fn close_copy_as(&mut self) {
+        self.tf = None;
+        if let Some(w) = self.window() {
+            w.set_tf_open(false);
+            self.show_preview(&w, common::empty_preview());
+        }
+    }
+
     fn copy(&mut self, item: Option<ClipId>, kind: CopyKind, via: Via) {
         let Some(id) = item else {
             return;
@@ -656,6 +791,7 @@ impl Host {
             Action::Undo => self.undo_delete(),
             Action::ToggleDetail => self.toggle_detail(),
             Action::OpenDetail => self.set_detail_open(true),
+            Action::CopyAs => self.open_copy_as(),
             Action::CloseDetail => self.set_detail_open(false),
             Action::OpenHistory => {
                 // Close the popup (without returning the focus: the history is a window of its
@@ -814,6 +950,7 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
         chip_focus: ChipFocus::default(),
         injector: None,
         pasting: false,
+        tf: None,
         detail: DetailModel::default(),
         wanted: Arc::new(Mutex::new(None)),
         typed_search: None,
@@ -844,6 +981,11 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
     });
     w.on_key(|text, ctrl, shift, alt, meta, search_focused| {
         with_host(|h| {
+            // The "Copy as..." panel is modal: it takes every key.
+            if h.tf.is_some() {
+                h.panel_key(tf::panel_key(keys::key_from_text(&text)));
+                return true;
+            }
             let query_empty = h.window().is_none_or(|w| w.get_query().is_empty());
             let ctx = KeyCtx {
                 query_empty,
@@ -863,6 +1005,18 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
             }
         })
         .unwrap_or(false)
+    });
+    w.on_act_copy_as(|| {
+        with_host(|h| h.open_copy_as());
+    });
+    w.on_tf_chosen(|i| {
+        with_host(|h| h.choose_transform(usize::try_from(i).unwrap_or(usize::MAX)));
+    });
+    w.on_tf_copy(|| {
+        with_host(|h| h.copy_transformed());
+    });
+    w.on_tf_cancel(|| {
+        with_host(|h| h.close_copy_as());
     });
     w.on_chip_toggled(|id| {
         with_host(|h| h.toggle_chip(id));

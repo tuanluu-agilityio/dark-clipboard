@@ -282,4 +282,100 @@ where
     s.set_no_image_preview(t(lang, Msg::UiNoImagePreview).into());
     s.set_masked_detail(t(lang, Msg::UiMaskedDetail).into());
     s.set_text_cut(fill(t(lang, Msg::UiTextCut), (TEXT_DISPLAY_CAP / 1024) as u64).into());
+    s.set_copy_as(t(lang, Msg::TfCopyAs).into());
+    s.set_tf_result(t(lang, Msg::TfPreviewLabel).into());
+    s.set_tf_hint(t(lang, Msg::TfPickHint).into());
+    s.set_edit(t(lang, Msg::TfEdit).into());
+    s.set_edit_hint(t(lang, Msg::TfEditHint).into());
+    s.set_save_new(t(lang, Msg::TfSaveNew).into());
+}
+
+/// The "Copy as..." panel's result area, from the worker's answer (Task 404).
+pub struct PreviewView {
+    pub text: SharedString,
+    pub note: SharedString,
+    pub is_error: bool,
+    pub can_copy: bool,
+}
+
+/// What the panel shows while a preview is on its way (or after the panel closed).
+pub fn empty_preview() -> PreviewView {
+    PreviewView {
+        text: SharedString::new(),
+        note: SharedString::new(),
+        is_error: false,
+        can_copy: false,
+    }
+}
+
+/// A transform that cannot run says why (static text, no content); a cut result says so.
+pub fn preview_view(
+    lang: Lang,
+    r: &Result<darkclip_app::api::TransformPreview, darkclip_app::ApiError>,
+) -> PreviewView {
+    match r {
+        Ok(p) => match p.error {
+            Some(e) => PreviewView {
+                text: SharedString::new(),
+                note: t(lang, e.message()).into(),
+                is_error: true,
+                can_copy: false,
+            },
+            None if p.text.is_empty() => PreviewView {
+                text: SharedString::new(),
+                note: t(lang, Msg::TfEmptyResult).into(),
+                is_error: false,
+                can_copy: false,
+            },
+            None => PreviewView {
+                text: p.text.as_str().into(),
+                note: if p.truncated {
+                    fill(t(lang, Msg::UiTextCut), (TEXT_DISPLAY_CAP / 1024) as u64).into()
+                } else {
+                    SharedString::new()
+                },
+                is_error: false,
+                can_copy: true,
+            },
+        },
+        Err(_) => PreviewView {
+            text: SharedString::new(),
+            note: t(lang, Msg::UiActionFailed).into(),
+            is_error: true,
+            can_copy: false,
+        },
+    }
+}
+
+/// The transforms' menu labels, in `Transform::ALL` order.
+pub fn transform_labels(lang: Lang) -> ModelRc<SharedString> {
+    ModelRc::new(VecModel::from(
+        darkclip_core::transform::Transform::ALL
+            .iter()
+            .map(|tf| SharedString::from(t(lang, tf.label())))
+            .collect::<Vec<_>>(),
+    ))
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+    use darkclip_app::api::TransformPreview;
+
+    fn ok(text: &str) -> Result<TransformPreview, darkclip_app::ApiError> {
+        Ok(TransformPreview {
+            text: text.to_string(),
+            truncated: false,
+            error: None,
+        })
+    }
+
+    #[test]
+    fn an_empty_result_has_a_note_and_cannot_be_copied() {
+        let v = preview_view(Lang::En, &ok(""));
+        assert!(!v.can_copy && !v.is_error);
+        assert_eq!(v.note.as_str(), t(Lang::En, Msg::TfEmptyResult));
+        let v = preview_view(Lang::En, &ok("x"));
+        assert!(v.can_copy && v.note.is_empty());
+    }
 }

@@ -59,6 +59,21 @@ pub enum ActorCommand {
         deadline: Instant,
         reply: Sender<Result<(), ApiError>>,
     },
+    /// "Copy as...": writes this text to the clipboard as our own write (never captured,
+    /// never stored; Task 404).
+    CopyText {
+        text: darkclip_core::Redacted<String>,
+        deadline: Instant,
+        reply: Sender<Result<(), ApiError>>,
+    },
+    /// "Save as new clip": the edited text goes through capture's classify, kind check,
+    /// sensitive handling and size limit (Task 404). Not gated by the capture mode: the user
+    /// asked for it.
+    SaveText {
+        text: darkclip_core::Redacted<String>,
+        deadline: Instant,
+        reply: Sender<Result<SaveOutcome, ApiError>>,
+    },
     SetMode(CaptureMode),
     /// Language for masked previews stored from now on.
     SetLang(Lang),
@@ -91,6 +106,16 @@ pub enum ActorCommand {
     Shutdown {
         reply: Sender<()>,
     },
+}
+
+/// What saving an edited text produced (Task 404).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveOutcome {
+    Saved(ClipId),
+    /// The same content is already in history: nothing was touched (Task 404 review).
+    Exists(ClipId),
+    /// Capture's own rules refused it (a secret under "drop", a disabled kind); nothing stored.
+    Dropped(darkclip_core::policy::SkipReason),
 }
 
 /// An organisation mutation (Task 402). Names and notes are user text, so the manual `Debug`

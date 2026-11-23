@@ -513,6 +513,78 @@ messages! {
         "Capture is on, but start at login could not be set. You can try again in Settings.",
         "Đã bật ghi lại, nhưng không đặt được khởi động cùng hệ thống. Bạn có thể thử lại trong Cài đặt."
     ),
+    // Text transforms and edited copies (Task 404)
+    TfCopyAs => ("Copy as...", "Sao chép dưới dạng..."),
+    TfTrim => ("Trim whitespace", "Cắt khoảng trắng"),
+    TfTrimLines => ("Trim each line", "Cắt khoảng trắng từng dòng"),
+    TfLf => ("Line endings: LF", "Kết thúc dòng: LF"),
+    TfCrlf => ("Line endings: CRLF", "Kết thúc dòng: CRLF"),
+    TfUpper => ("UPPER CASE", "CHỮ HOA"),
+    TfLower => ("lower case", "chữ thường"),
+    TfJsonPretty => ("JSON: pretty print", "JSON: định dạng dễ đọc"),
+    TfJsonMinify => ("JSON: minify", "JSON: rút gọn"),
+    TfUrlEncode => ("URL encode", "Mã hóa URL"),
+    TfUrlDecode => ("URL decode", "Giải mã URL"),
+    TfB64Encode => ("Base64 encode", "Mã hóa Base64"),
+    TfB64Decode => ("Base64 decode", "Giải mã Base64"),
+    TfHtmlToText => ("HTML to text", "HTML sang văn bản"),
+    TfPreviewLabel => ("Result", "Kết quả"),
+    TfPickHint => (
+        "Choose a transform to see the result. Up/Down choose, Enter copy, Esc back.",
+        "Chọn một phép biến đổi để xem kết quả. Lên/Xuống chọn, Enter sao chép, Esc quay lại."
+    ),
+    TfErrTooLarge => (
+        "Too large to transform (over 1 MiB).",
+        "Quá lớn để biến đổi (trên 1 MiB)."
+    ),
+    TfErrJson => ("This text is not valid JSON.", "Văn bản này không phải JSON hợp lệ."),
+    TfErrDeep => ("This JSON is nested too deeply.", "JSON này lồng quá sâu."),
+    TfErrUrl => (
+        "This text is not valid percent-encoding.",
+        "Văn bản này không phải mã hóa phần trăm hợp lệ."
+    ),
+    TfErrBase64 => ("This text is not valid Base64.", "Văn bản này không phải Base64 hợp lệ."),
+    TfErrUtf8 => (
+        "The decoded bytes are not text.",
+        "Các byte sau khi giải mã không phải văn bản."
+    ),
+    TfCopiedAs => ("Copied the result", "Đã sao chép kết quả"),
+    TfEdit => ("Edit...", "Sửa..."),
+    TfEditHint => (
+        "Editing a copy. The original clip stays unchanged.",
+        "Đang sửa một bản sao. Mục gốc không thay đổi."
+    ),
+    TfSaveNew => ("Save as new clip", "Lưu thành mục mới"),
+    TfSaved => ("Saved as a new clip", "Đã lưu thành mục mới"),
+    TfNotSavedSensitive => (
+        "Not saved: it looks like a secret.",
+        "Không lưu: nội dung có vẻ là thông tin bí mật."
+    ),
+    TfNotSavedKind => (
+        "Not saved: this kind of clip is turned off in Settings.",
+        "Không lưu: loại nội dung này đã tắt trong Cài đặt."
+    ),
+    TfNotSavedEmpty => ("There is nothing to save.", "Không có gì để lưu."),
+    TfNotSavedLarge => (
+        "Too large to save as a clip.",
+        "Quá lớn để lưu thành mục."
+    ),
+    TfEditTooLarge => (
+        "Too large to edit here (over 256 KiB).",
+        "Quá lớn để sửa tại đây (trên 256 KiB)."
+    ),
+    TfAlreadyExists => (
+        "Already in history",
+        "Đã có trong lịch sử"
+    ),
+    TfEmptyResult => (
+        "The result is empty, so there is nothing to copy.",
+        "Kết quả trống nên không có gì để sao chép."
+    ),
+    TfNotSavedPrivate => (
+        "Not saved: private mode is on.",
+        "Không lưu: chế độ riêng tư đang bật."
+    ),
 }
 
 /// Messages allowed to read the same in both languages.

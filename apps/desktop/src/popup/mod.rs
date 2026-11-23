@@ -12,6 +12,7 @@ pub mod list;
 pub mod paste;
 pub mod place;
 pub mod row;
+pub mod transform;
 
 /// How to bring a model from `old` to `new` without replacing rows needlessly (a replaced
 /// chip loses the keyboard focus). `None`: the set changed (length or `key` per slot), rebuild.

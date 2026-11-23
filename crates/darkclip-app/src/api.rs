@@ -23,6 +23,9 @@ use darkclip_core::{
 };
 use darkclip_platform::{Capabilities, PlatformBundle};
 use darkclip_storage::{ClipSummary, OpenMode, SearchQuery, Storage};
+
+mod transform_ui;
+pub use crate::capture::SaveOutcome;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -30,6 +33,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+pub use transform_ui::TransformPreview;
 
 /// Who is calling. The App is in-process in Phase 1; the P2 CLI and MCP processes
 /// will reach it over IPC.
@@ -2553,4 +2557,6 @@ file:///C:/c.txt
         assert_eq!(json["tags"][0], "work");
         assert_eq!(json["favorite"], true);
     }
+
+    mod transform_ui_tests;
 }

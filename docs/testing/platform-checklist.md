@@ -191,6 +191,35 @@ All rows **untested** until the owner runs them (agents never click, type or tak
 | Same disabled entry: Settings > About > Show welcome | The "Start with Windows" box shows off; Start without touching it leaves the entry disabled in Task Manager; ticking it and pressing Start enables it (remove the entry afterwards) | **untested** |
 | Open the popup, history, settings and welcome windows, then tray > Quit | Every window disappears at once, before the icon goes; the process ends within 2 s | **untested** |
 
+## Windows: text transforms and edited copies (Task 404)
+
+All rows **untested** until the owner runs them (agents never click, type, take screenshots or write the real clipboard, GC-19). Use a scratch history (`--seed-demo-clips 50 --data-dir <temp>`, or copy a few texts into a `--data-dir <temp>` instance). Paste into Notepad to check what is on the clipboard.
+
+| Row | Expected | Result |
+|---|---|---|
+| Popup: select a text clip, press Ctrl+T | A panel lists the 13 transforms with a preview of the first one; the list behind it does not react to keys | **untested** |
+| In the panel press Down/Up, then click a transform | The highlight moves, the preview updates; Up at the top and Down at the bottom stop | **untested** |
+| Choose "UPPER CASE", press Enter | The popup closes, focus returns to the previous window; Ctrl+V pastes the upper-case text. History has no new clip (open the history window and count) | **untested** |
+| Choose "JSON: pretty print" on a clip that is not JSON | The preview is empty and a red note says the text is not valid JSON; Copy is not shown and Enter does nothing | **untested** |
+| Copy `{"a":[1,2,{"b":null}]}`, then Copy as > JSON pretty > Enter, paste | Two-space indented JSON; Copy as > JSON minify gives the compact form again | **untested** |
+| Copy `<p>Hi <b>there</b></p><script>alert(1)</script><ul><li>a</li><li>b</li></ul>`, Copy as > HTML to text | `Hi there`, `a`, `b` on separate lines; no script text anywhere | **untested** |
+| Copy as > Base64 encode on a clip with `Xin chào 😀`, paste, copy the pasted text and Copy as > Base64 decode; also Base64 decode on a text that is not Base64 | The round trip gives back `Xin chào 😀`; decoding non-Base64 shows a red "not valid Base64" note | **untested** |
+| Copy a text longer than 32 KiB, Copy as > Upper case | The preview ends with a note that only the first 32 KiB is shown; pasting gives the whole text in upper case | **untested** |
+| Copy a text over 1 MiB (the default text limit is 1 MiB, so raise it in Settings first), Copy as | A red note says it is too large to transform | **untested** |
+| Select an image clip, a file clip and a masked clip (copy a fake API key with the sensitive setting "Store masked") | No "Copy as..." button, Ctrl+T does nothing, in popup and history; the same for Edit in history | **untested** |
+| Esc in the panel | The panel closes, the popup stays; the preview text is gone when it is reopened | **untested** |
+| Hide the popup with the panel open (click elsewhere), show it again | The panel is closed and no output text is visible | **untested** |
+| History window: select one text clip, press Ctrl+E | An editor opens with the clip's text and a note that the original stays unchanged; Esc closes it without saving | **untested** |
+| Edit the text, press "Save as new clip" (or Ctrl+Enter) | The editor closes, a footer message says it was saved, a new clip appears at the top; the original clip is unchanged | **untested** |
+| Edit the text to contain a fake API key (type `sk-` followed by 40 random letters and digits), save, with Settings > Privacy "sensitive handling" at the default | The editor stays open with a red note that it was not saved because it looks like a secret; no new clip appears | **untested** |
+| Same with sensitive handling "Store masked" | The clip is saved and shows as masked in the list | **untested** |
+| Select a clip with more than 256 KiB of text, press Ctrl+E | A footer message says it is too large to edit here; no editor opens | **untested** |
+| Edit, then clear the text and save | The editor stays open with "There is nothing to save" | **untested** |
+| Switch the language to Vietnamese (Settings), open Copy as and Edit | Labels, hints and notes are in Vietnamese | **untested** |
+| Screen reader (Narrator) on the panel and the editor | The panel, transform names, result and buttons are read | **untested** |
+| History: edit a clip, change nothing, Save as new clip | The editor closes, "Already in history" shows and the original clip is selected; its time and counts did not change | **untested** |
+| Tray > Private mode on, then edit and save in the history window | The editor stays open with "Not saved: private mode is on."; with Pause instead, the save works | **untested** |
+
 ## macOS
 
 All rows **untested** (no hardware, Q-04).
