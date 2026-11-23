@@ -179,6 +179,7 @@ Deletion is real deletion: `DELETE` plus `PRAGMA secure_delete = ON` for the cli
 - Backup = SQLite online backup API to `backup-YYYYMMDD.db` + copy of referenced blobs into a zip (`.dcbackup`), with a manifest `{ schema_version, app_version, created_at, clip_count, sha256 per file }`.
 - Restore validates the manifest, imports into a temporary DB, runs migrations, then swaps.
 - Export collection (P1/P2 `export_collection`) = JSON document matching `export.schema.json` + blobs; sensitive clips are never exported.
+- (Changed by D-064, 2026-11-24: backups use `VACUUM INTO` plus a purge instead of the online backup API; restore copies the checked staging DB onto the live writer with the online backup API instead of a file swap; migration 3 adds `clips.no_export INTEGER NOT NULL DEFAULT 0` (0/1), set from the Windows NoCloud marker and excluded from exports. Full rules in D-064.)
 
 ## 9. Encryption at rest
 

@@ -35,7 +35,7 @@ The function `policy::decide_pre_read` (steps 1–7) is pure, in `darkclip-core`
 |---|---|---|
 | Windows | `ExcludeClipboardContentFromMonitorProcessing` (any data) | `OsConcealed` (mandatory) |
 | Windows | `CanIncludeInClipboardHistory` with DWORD 0 | `OsConcealed` (mandatory) |
-| Windows | `CanUploadToCloudClipboard` with DWORD 0 alone | **not** a skip (means "do not sync", not "do not store"); recorded as `NoCloud` and forces the clip to never be exported or synced (P3) |
+| Windows | `CanUploadToCloudClipboard` with DWORD 0 alone | **not** a skip (means "do not sync", not "do not store"); recorded as `NoCloud` and forces the clip to never be exported or synced (P3). (Changed by D-064, 2026-11-24: persisted as `clips.no_export` since migration 3 and excluded from exports in P1; backups keep it) |
 | Windows | Darkshot set = the three formats above together | `DarkshotExcluded` (reported separately for stats; same effect) |
 | Windows | `Clipboard Viewer Ignore` | `OsConcealed` (convention used by several managers) |
 | macOS | `org.nspasteboard.ConcealedType` | `OsConcealed` |

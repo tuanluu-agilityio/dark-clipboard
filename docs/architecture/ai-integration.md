@@ -59,7 +59,7 @@ Transport: stdio (`darkclip mcp serve --client <id>`). Server name `dark-clipboa
 | `update_clip_tags` | write | `clips:write-organization` | `clip_id`, `tags[]` (≤ 20) | `Tag[]` | Replaces the tag set |
 | `pin_clip` | write | `clips:write-organization` | `clip_id`, `pinned` | ok | |
 | `copy_clip_to_clipboard` | **privileged** | `clipboard:write` | `clip_id`, `mode` | ok | Via IPC to the desktop; desktop shows a toast; fails with `APP_NOT_RUNNING` otherwise |
-| `export_collection` | **privileged** | `export` | `collection_id` | `{ path, clip_count }` | Writes only under `<data>/exports/`; never takes a path; masked clips excluded |
+| `export_collection` | **privileged** | `export` | `collection_id` | `{ path, clip_count, excluded_sensitive }` | Writes only under `<data>/exports/`; never takes a path; masked, sensitive and `no_export` clips excluded (Changed by D-064, 2026-11-24: `excluded_sensitive` added) |
 
 Not in the catalog by design: delete, clear history, change settings, change grants, read audit, set capture mode, raw clipboard read.
 
