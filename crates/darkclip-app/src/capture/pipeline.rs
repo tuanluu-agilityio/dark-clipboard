@@ -529,6 +529,12 @@ impl Actor {
             wipe_string(&mut text);
             return Err(ApiError::InvalidArgument("too large"));
         }
+        // Private mode saves nothing at all. Paused and "capture off" only stop watching the
+        // clipboard; this is an explicit user action that reads no clipboard (orchestrator decision, Task 404 review).
+        if self.policy.mode == darkclip_core::CaptureMode::Private {
+            wipe_string(&mut text);
+            return Ok(SaveOutcome::Dropped(SkipReason::Private));
+        }
         let reps = vec![RawRepresentation {
             mime: Mime::TextPlain,
             platform_format: "text/plain".to_string(),
@@ -540,12 +546,31 @@ impl Actor {
         let now = self.clock.now();
         match self.prepare(reps, None, now) {
             Err(reason) => Ok(SaveOutcome::Dropped(reason)),
-            Ok(new) => match self.insert_new(new) {
-                Some(UpsertOutcome::Inserted(id) | UpsertOutcome::Bumped(id)) => {
-                    Ok(SaveOutcome::Saved(id))
+            Ok(mut new) => {
+                // Content already in history: touch nothing (an upsert would bump the
+                // original and could rewrite its sensitivity or expiry).
+                match self.storage.clip_id_by_hash(&new.hash) {
+                    Ok(Some(id)) => {
+                        wipe_reps(&mut new.reps);
+                        wipe_string(&mut new.classified.preview);
+                        if let Some(t) = new.classified.plain_text.as_mut() {
+                            wipe_string(t);
+                        }
+                        return Ok(SaveOutcome::Exists(id));
+                    }
+                    Ok(None) => {}
+                    Err(_) => {
+                        wipe_reps(&mut new.reps);
+                        return Err(ApiError::Storage);
+                    }
                 }
-                None => Err(ApiError::Storage),
-            },
+                match self.insert_new(new) {
+                    Some(UpsertOutcome::Inserted(id) | UpsertOutcome::Bumped(id)) => {
+                        Ok(SaveOutcome::Saved(id))
+                    }
+                    None => Err(ApiError::Storage),
+                }
+            }
         }
     }
 }

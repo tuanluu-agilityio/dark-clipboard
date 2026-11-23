@@ -9,7 +9,7 @@ fn is_unreserved(b: u8) -> bool {
 const HEX: &[u8; 16] = b"0123456789ABCDEF";
 
 /// Percent-encodes every UTF-8 byte except the RFC 3986 unreserved set.
-pub(super) fn url_encode(input: &str) -> String {
+pub(super) fn url_encode(input: &str) -> Result<String, TransformError> {
     let mut out = String::with_capacity(input.len());
     for &b in input.as_bytes() {
         if is_unreserved(b) {
@@ -19,8 +19,11 @@ pub(super) fn url_encode(input: &str) -> String {
             out.push(char::from(HEX[usize::from(b >> 4)]));
             out.push(char::from(HEX[usize::from(b & 0xF)]));
         }
+        if out.len() > MAX_INPUT_BYTES {
+            return Err(TransformError::TooLarge);
+        }
     }
-    out
+    Ok(out)
 }
 
 fn hex_val(b: u8) -> Option<u8> {
@@ -57,7 +60,10 @@ pub(super) fn url_decode(input: &str) -> Result<String, TransformError> {
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-pub(super) fn base64_encode(bytes: &[u8]) -> String {
+pub(super) fn base64_encode(bytes: &[u8]) -> Result<String, TransformError> {
+    if bytes.len().div_ceil(3) * 4 > MAX_INPUT_BYTES {
+        return Err(TransformError::TooLarge);
+    }
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = u32::from(chunk.first().copied().unwrap_or(0));
@@ -70,7 +76,7 @@ pub(super) fn base64_encode(bytes: &[u8]) -> String {
         out.push(if chunk.len() > 1 { idx(6) } else { '=' });
         out.push(if chunk.len() > 2 { idx(0) } else { '=' });
     }
-    out
+    Ok(out)
 }
 
 fn b64_val(b: u8) -> Option<u32> {

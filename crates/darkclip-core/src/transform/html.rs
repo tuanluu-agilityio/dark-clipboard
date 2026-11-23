@@ -113,13 +113,20 @@ pub(super) fn to_text(input: &str) -> String {
                 }
             }
             b'&' => {
-                let decoded = input
-                    .get(i + 1..)
-                    .and_then(|r| r.get(..r.len().min(12)))
-                    .and_then(|r| r.find(';').map(|p| (p, r.get(..p).unwrap_or(""))))
+                // `;` is ASCII, so search bytes: a multi-byte character may straddle the
+                // 12-byte window. Entity bodies are ASCII, so `get` below is a boundary check.
+                let window = b.get(i + 1..(i + 13).min(b.len())).unwrap_or_default();
+                let decoded = window
+                    .iter()
+                    .position(|&c| c == b';')
+                    .and_then(|p| input.get(i + 1..i + 1 + p).map(|body| (p, body)))
                     .and_then(|(p, body)| entity(body).map(|c| (p, c)));
                 if let Some((p, ch)) = decoded {
-                    out.push(ch);
+                    if ch == ' ' {
+                        out.space = true;
+                    } else {
+                        out.push(ch);
+                    }
                     i += p + 2;
                 } else {
                     out.push('&');

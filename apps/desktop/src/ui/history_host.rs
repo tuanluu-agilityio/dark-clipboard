@@ -554,7 +554,18 @@ impl Host {
 
     fn on_saved(&mut self, r: Result<SaveOutcome, ApiError>) {
         let msg = match r {
-            Ok(SaveOutcome::Exists(_)) => Msg::UiActionFailed,
+            Ok(SaveOutcome::Exists(id)) => {
+                self.close_edit();
+                self.show_toast(t(self.lang, Msg::TfAlreadyExists).to_string());
+                // Show the clip that already holds this text, if it is in the loaded list.
+                if let Some(i) = self.ids().iter().position(|c| *c == id) {
+                    self.model.select(i);
+                    self.multi.plain(Some(id));
+                    self.after_move();
+                }
+                return;
+            }
+            Ok(SaveOutcome::Dropped(SkipReason::Private)) => Msg::TfNotSavedPrivate,
             Ok(SaveOutcome::Saved(_)) => {
                 self.close_edit();
                 self.show_toast(t(self.lang, Msg::TfSaved).to_string());

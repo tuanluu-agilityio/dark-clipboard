@@ -321,6 +321,12 @@ pub fn preview_view(
                 is_error: true,
                 can_copy: false,
             },
+            None if p.text.is_empty() => PreviewView {
+                text: SharedString::new(),
+                note: t(lang, Msg::TfEmptyResult).into(),
+                is_error: false,
+                can_copy: false,
+            },
             None => PreviewView {
                 text: p.text.as_str().into(),
                 note: if p.truncated {
@@ -349,4 +355,27 @@ pub fn transform_labels(lang: Lang) -> ModelRc<SharedString> {
             .map(|tf| SharedString::from(t(lang, tf.label())))
             .collect::<Vec<_>>(),
     ))
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+    use darkclip_app::api::TransformPreview;
+
+    fn ok(text: &str) -> Result<TransformPreview, darkclip_app::ApiError> {
+        Ok(TransformPreview {
+            text: text.to_string(),
+            truncated: false,
+            error: None,
+        })
+    }
+
+    #[test]
+    fn an_empty_result_has_a_note_and_cannot_be_copied() {
+        let v = preview_view(Lang::En, &ok(""));
+        assert!(!v.can_copy && !v.is_error);
+        assert_eq!(v.note.as_str(), t(Lang::En, Msg::TfEmptyResult));
+        let v = preview_view(Lang::En, &ok("x"));
+        assert!(v.can_copy && v.note.is_empty());
+    }
 }

@@ -68,7 +68,8 @@ impl Transform {
         Self::HtmlToText,
     ];
 
-    /// Applies the transform. Input over [`MAX_INPUT_BYTES`] is refused, never cut.
+    /// Applies the transform. Input over [`MAX_INPUT_BYTES`] is refused, never cut, and so
+    /// is output over the same cap (checked while the output is built).
     pub fn apply(self, input: &str) -> Result<String, TransformError> {
         if input.len() > MAX_INPUT_BYTES {
             return Err(TransformError::TooLarge);
@@ -77,18 +78,42 @@ impl Transform {
             Self::Trim => Ok(input.trim().to_string()),
             Self::TrimLines => Ok(trim_lines(input)),
             Self::LineEndingsLf => Ok(to_lf(input)),
-            Self::LineEndingsCrlf => Ok(to_lf(input).replace('\n', "\r\n")),
-            Self::Upper => Ok(input.to_uppercase()),
-            Self::Lower => Ok(input.to_lowercase()),
+            Self::LineEndingsCrlf => crlf(input),
+            Self::Upper => map_case(input, true),
+            Self::Lower => map_case(input, false),
             Self::JsonPretty => json::format(input, true),
             Self::JsonMinify => json::format(input, false),
-            Self::UrlEncode => Ok(codec::url_encode(input)),
+            Self::UrlEncode => codec::url_encode(input),
             Self::UrlDecode => codec::url_decode(input),
-            Self::Base64Encode => Ok(codec::base64_encode(input.as_bytes())),
+            Self::Base64Encode => codec::base64_encode(input.as_bytes()),
             Self::Base64Decode => codec::base64_decode(input),
             Self::HtmlToText => Ok(html::to_text(input)),
         }
     }
+}
+
+fn crlf(input: &str) -> Result<String, TransformError> {
+    let lf = to_lf(input);
+    let extra = lf.bytes().filter(|&b| b == b'\n').count();
+    if lf.len() + extra > MAX_INPUT_BYTES {
+        return Err(TransformError::TooLarge);
+    }
+    Ok(lf.replace('\n', "\r\n"))
+}
+
+fn map_case(input: &str, upper: bool) -> Result<String, TransformError> {
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        if upper {
+            out.extend(c.to_uppercase());
+        } else {
+            out.extend(c.to_lowercase());
+        }
+        if out.len() > MAX_INPUT_BYTES {
+            return Err(TransformError::TooLarge);
+        }
+    }
+    Ok(out)
 }
 
 fn to_lf(input: &str) -> String {

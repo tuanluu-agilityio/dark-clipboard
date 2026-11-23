@@ -2,7 +2,7 @@
 //! reordering, no number rewriting); only whitespace changes. Depth is counted, so a
 //! hostile document cannot overflow the stack.
 
-use super::{TransformError, MAX_JSON_DEPTH};
+use super::{TransformError, MAX_INPUT_BYTES, MAX_JSON_DEPTH};
 
 struct Parser<'a> {
     src: &'a str,
@@ -50,13 +50,19 @@ impl Parser<'_> {
         }
     }
 
-    fn newline(&mut self, depth: usize) {
+    /// A line break and indent (pretty only). Output past the cap is refused as it grows,
+    /// so a deep, long document never allocates its full expanded size.
+    fn newline(&mut self, depth: usize) -> Result<(), TransformError> {
         if self.pretty {
             self.out.push('\n');
             for _ in 0..depth {
                 self.out.push_str("  ");
             }
+            if self.out.len() > MAX_INPUT_BYTES {
+                return Err(TransformError::TooLarge);
+            }
         }
+        Ok(())
     }
 
     fn value(&mut self, depth: usize) -> Result<(), TransformError> {
@@ -169,7 +175,7 @@ impl Parser<'_> {
             return Ok(());
         }
         loop {
-            self.newline(depth);
+            self.newline(depth)?;
             self.ws();
             if open == b'{' {
                 if self.peek() != Some(b'"') {
@@ -189,7 +195,7 @@ impl Parser<'_> {
                 }
                 Some(c) if c == close => {
                     self.pos += 1;
-                    self.newline(depth - 1);
+                    self.newline(depth - 1)?;
                     self.out.push(char::from(close));
                     return Ok(());
                 }

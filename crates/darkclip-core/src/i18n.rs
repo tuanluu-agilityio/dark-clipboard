@@ -573,6 +573,18 @@ messages! {
         "Too large to edit here (over 256 KiB).",
         "Quá lớn để sửa tại đây (trên 256 KiB)."
     ),
+    TfAlreadyExists => (
+        "Already in history",
+        "Đã có trong lịch sử"
+    ),
+    TfEmptyResult => (
+        "The result is empty, so there is nothing to copy.",
+        "Kết quả trống nên không có gì để sao chép."
+    ),
+    TfNotSavedPrivate => (
+        "Not saved: private mode is on.",
+        "Không lưu: chế độ riêng tư đang bật."
+    ),
 }
 
 /// Messages allowed to read the same in both languages.

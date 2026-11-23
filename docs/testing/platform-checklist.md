@@ -217,6 +217,8 @@ All rows **untested** until the owner runs them (agents never click, type, take 
 | Edit, then clear the text and save | The editor stays open with "There is nothing to save" | **untested** |
 | Switch the language to Vietnamese (Settings), open Copy as and Edit | Labels, hints and notes are in Vietnamese | **untested** |
 | Screen reader (Narrator) on the panel and the editor | The panel, transform names, result and buttons are read | **untested** |
+| History: edit a clip, change nothing, Save as new clip | The editor closes, "Already in history" shows and the original clip is selected; its time and counts did not change | **untested** |
+| Tray > Private mode on, then edit and save in the history window | The editor stays open with "Not saved: private mode is on."; with Pause instead, the save works | **untested** |
 
 ## macOS
 

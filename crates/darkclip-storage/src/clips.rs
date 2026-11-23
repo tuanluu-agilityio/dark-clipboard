@@ -481,6 +481,21 @@ impl Storage {
         }
     }
 
+    /// The id of the clip with this content hash, if any. A read only: nothing is changed
+    /// (Task 404 uses it to tell an unchanged "save edited copy" from a new clip).
+    pub fn clip_id_by_hash(&self, hash: &[u8; 32]) -> Result<Option<ClipId>, StorageError> {
+        let id: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT id FROM clips WHERE content_hash = ?1",
+                [hash],
+                |r| r.get(0),
+            )
+            .optional()?;
+        id.map(|s| ClipId::parse(&s).map_err(|_| decode_err()))
+            .transpose()
+    }
+
     pub fn mark_used(&mut self, id: &ClipId) -> Result<(), StorageError> {
         self.ensure_writable()?;
         let now = self.clock.now();
