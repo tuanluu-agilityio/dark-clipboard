@@ -90,6 +90,15 @@ A masked clip (one that may contain a secret) takes no add action: it cannot be 
 
 Settings > History shows what is stored (clips, pinned, favorites, database size, blob size, clips per kind) and has cleanup tools. Each one asks first and names how many clips or files it will touch: **Clear history** (keeps pinned clips and favorites unless you untick the box), **Delete old clips** (older than N days; pinned clips and favorites are kept), **Remove orphaned files** (data files no clip uses; reports how many and how much space it freed) and **Compact database** (needs free disk space of twice the database size, otherwise it refuses). Deletions are real: when you delete (a clip, Clear history, Delete old clips, Compact), the search index is merged and the write-ahead log truncated at once, so the deleted words are gone from the database file as well. Clips removed automatically by the retention limits leave the database file within about 10 minutes (the next periodic merge, or at shutdown). Everything runs locally.
 
+### Backup, restore, export and import
+
+Settings > History > **Backup and transfer**:
+- **Back up now...** writes your whole history (clips, images, collections, tags, notes, favorites) to a `.dcbackup` file you choose. Masked clips, and clips that would expire within minutes, are left out. The file appears only when it is complete.
+- **Restore from backup...** replaces your whole history with a backup after you confirm. The file is checked completely first (names, sizes, checksums, the database itself); a file that is damaged, unsafe or made by a newer Dark Clipboard is refused with a message and nothing changes. Your current history is kept next to it as `history.db.pre-restore-<time>` until Dark Clipboard starts again. Retention limits then apply to the restored clips as usual.
+- **Import clips...** adds the clips of a `.dcexport` file. Nothing in the file is trusted or run: kinds, previews and hashes are worked out again, the source app is dropped, dates in the future become now, secrets follow your sensitive-content setting (dropped by default), turned-off kinds, file lists and over-limit clips are skipped, and clips you already have are merged (no second copy). The result names how many were imported, merged and skipped, per reason. Import is refused in private mode.
+
+In the history window, **Ctrl+Shift+E** exports the collection the list is filtered to, or else the marked clips, to a `.dcexport` file you choose. Masked and sensitive clips are never exported; the message says how many were left out. Exports carry no source app. All of this is local; the file picker is the Windows one (not available on macOS and Linux yet).
+
 ### Known limits
 
 See "Known issues" in the [CHANGELOG](CHANGELOG.md). In short: the Windows build has no console, so `--toggle`, `--quit` and `--help` do not set a shell exit code interactively; a popup opened from the tray only copies; the context menu in the history window is mouse only; an Explorer restart may remove the tray icon; GNOME on Wayland may not support background capture later.

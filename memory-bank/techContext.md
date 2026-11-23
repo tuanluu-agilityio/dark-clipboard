@@ -36,6 +36,10 @@ Updated: 2026-11-22
 | `slint` / `slint-build` **~1.19.0** (pinned: feature `unstable-winit-030` is outside semver, used only for focus loss, bring-to-front and popup timing in `popup_host.rs`); Windows default renderer: Slint **software** renderer on the winit backend (D-055, Task 212), `SLINT_BACKEND` overrides, `global-hotkey` 0.10, `tray-icon` 0.26 (Windows), `ksni` (Linux, later) | apps/desktop | UI shell (ADR-0001) |
 | `unicode-normalization` 0.1.26 | core (Task 401) | NFC for tag names |
 | `darkclip-storage` (workspace) | apps/desktop | demo seeding and the search cursor type (Task 204) |
+| `zip` **~9.0.5** (default features off; `deflate-flate2-zlib-rs` only; adds `typed-path`, reuses `flate2`/`zlib-rs`/`crc32fast` already in the tree) | storage (Task 405); app dev-dependency (test fixtures) | `.dcbackup` / `.dcexport` archives. Pinned below 9.1: zip 9.1+ depends on `windows-sys` on Windows, which GC-01 bans in the portable crates |
+| `rusqlite` feature `backup` | storage (Task 405) | online backup API for the restore swap |
+| `boon` 0.6 (dev only) | storage tests (Task 405) | validates `export.json` against `export.schema.json` (JSON Schema 2020-12; no network) |
+| `windows` features `Win32_System_Com`, `Win32_UI_Shell`, `Win32_UI_Shell_Common` | apps/desktop (Task 405) | the shell's save and open file dialogs |
 
 ## Constraints
 - Release profile: `opt-level="z"`, `lto=true`, `codegen-units=1`, `panic="abort"`, `strip=true` (Darkshot).
