@@ -3,6 +3,7 @@ import { Theme, Strings } from "theme.slint";
 import { Seg, ClipRow, FileRow, Chip, ChipView, ActionButton, RowView, DetailPane, DetailState, RowMetrics } from "popup.slint";
 
 import { HistoryWindow, FilterItem } from "history.slint";
+import { TransformPanel } from "transform.slint";
 import { SettingsWindow, SText, AppRow, KindItem } from "settings.slint";
 import { WelcomeWindow, WText } from "welcome.slint";
 
@@ -33,6 +34,15 @@ export component MainWindow inherits Window {
     in property <bool> detail-open;
     in property <DetailState> detail;
     in property <string> detail-text;
+    // "Copy as..." panel (Task 404).
+    in property <bool> can-transform;
+    in property <bool> tf-open;
+    in property <[string]> tf-labels;
+    in property <int> tf-selected;
+    in property <string> tf-preview;
+    in property <string> tf-note;
+    in property <bool> tf-note-error;
+    in property <bool> tf-can-copy;
     in-out property <string> query;
     // Whole rows that fit in the list (for Page Up / Page Down).
     out property <int> page-rows: max(1, floor(clip-list.visible-height / RowMetrics.height));
@@ -47,6 +57,10 @@ export component MainWindow inherits Window {
     callback row-activated(int);
     callback act-copy();
     callback act-copy-plain();
+    callback act-copy-as();
+    callback tf-chosen(int);
+    callback tf-copy();
+    callback tf-cancel();
     callback act-pin();
     callback act-delete();
     callback act-undo();
@@ -288,6 +302,13 @@ export component MainWindow inherits Window {
                         }
                     }
                     ActionButton {
+                        text: Strings.copy-as;
+                        visible: root.has-selection && root.can-transform;
+                        clicked => {
+                            root.act-copy-as();
+                        }
+                    }
+                    ActionButton {
                         text: root.selected-pinned ? Strings.unpin : Strings.pin;
                         visible: root.has-selection;
                         clicked => {
@@ -326,6 +347,25 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    // "Copy as..." (Task 404): covers the popup and takes every click; keys are Rust's.
+    if root.tf-open: TransformPanel {
+        labels: root.tf-labels;
+        selected: root.tf-selected;
+        preview: root.tf-preview;
+        note: root.tf-note;
+        note-is-error: root.tf-note-error;
+        can-copy: root.tf-can-copy;
+        chosen(i) => {
+            root.tf-chosen(i);
+        }
+        copy => {
+            root.tf-copy();
+        }
+        cancel => {
+            root.tf-cancel();
         }
     }
 }

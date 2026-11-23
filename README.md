@@ -63,6 +63,10 @@ With `--data-dir <folder>` the history, log and settings all live in that folder
 - No account, no cloud, no network access in the app, no telemetry.
 - Verified: KeePassXC 2.8.0 and Darkshot 0.6.0 clips were not stored (see the checklist). Not verified: Bitwarden, 1Password, Office, RDP.
 
+### Text transforms and edited copies
+
+Select a text clip and press `Ctrl+T` (popup or history window) or use "Copy as...": pick a transform (trim, line endings, upper or lower case, JSON pretty or minify, URL or Base64 encode or decode, HTML to text), check the result in the preview and press Copy. The result goes to the clipboard as Dark Clipboard's own write; nothing is stored. In the history window, "Edit..." (`Ctrl+E`) opens a copy of a text clip in an editor and "Save as new clip" stores the edit as a new clip; the original never changes. A text that looks like a secret follows your sensitive-content setting (dropped by default). Masked clips, images and files have neither. All of this runs locally.
+
 ### Known limits
 
 See "Known issues" in the [CHANGELOG](CHANGELOG.md). In short: the Windows build has no console, so `--toggle`, `--quit` and `--help` do not set a shell exit code interactively; a popup opened from the tray only copies; the context menu in the history window is mouse only; an Explorer restart may remove the tray icon; GNOME on Wayland may not support background capture later.

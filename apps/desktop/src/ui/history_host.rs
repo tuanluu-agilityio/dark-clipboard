@@ -26,9 +26,12 @@ use crate::popup::detail::{DetailModel, DetailRequest};
 use crate::popup::keys::{self, ChipFocus, CopyKind, Mods};
 use crate::popup::list::{Applied, Filters, Item, ListModel, Request, View};
 use crate::popup::row::fill;
-use darkclip_app::api::{Caller, CopyMode};
+use crate::popup::transform::{self as tf, PanelKey, Session};
+use darkclip_app::api::{Caller, CopyMode, SaveOutcome};
+use darkclip_app::ApiError;
 use darkclip_app::{ClipApi, ClipSummaryView, Page};
 use darkclip_core::i18n::{t, Lang, Msg};
+use darkclip_core::policy::SkipReason;
 use darkclip_core::ClipId;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
@@ -68,6 +71,8 @@ struct Host {
     toast: Timer,
     slow: bool,
     chip_focus: ChipFocus,
+    /// The open "Copy as..." panel (Task 404), if any.
+    tf: Option<Session>,
     detail: DetailModel<Px>,
     /// The clip the pane wants loaded now (queued jobs for other clips are skipped).
     wanted: Arc<Mutex<Option<ClipId>>>,
@@ -222,6 +227,7 @@ impl Host {
         let targets = self.targets();
         w.set_has_selection(!targets.is_empty());
         w.set_can_copy(can_copy(&targets));
+        w.set_can_transform(self.transformable().is_some());
         let pinned: Vec<(ClipId, bool)> = targets
             .iter()
             .filter_map(|id| self.item(*id).map(|i| (i.id, i.pinned)))
@@ -387,6 +393,188 @@ impl Host {
 
     // ---- actions on the selection ----
 
+    // ---- "Copy as..." and "Edit..." (Task 404) ----
+
+    fn transformable(&self) -> Option<Item> {
+        self.subject()
+            .filter(|i| tf::can_transform(i.kind, i.masked))
+    }
+
+    fn open_copy_as(&mut self) {
+        let Some(item) = self.transformable() else {
+            return;
+        };
+        if self.tf.is_some() || self.win.get_edit_open() {
+            return;
+        }
+        self.tf = Some(Session::new(item.id));
+        self.win.set_tf_labels(common::transform_labels(self.lang));
+        self.win.set_tf_selected(0);
+        self.show_preview(common::empty_preview());
+        self.win.set_tf_open(true);
+        self.request_preview();
+    }
+
+    fn show_preview(&self, v: common::PreviewView) {
+        self.win.set_tf_preview(v.text);
+        self.win.set_tf_note(v.note);
+        self.win.set_tf_note_error(v.is_error);
+        self.win.set_tf_can_copy(v.can_copy);
+    }
+
+    fn request_preview(&mut self) {
+        let Some(s) = self.tf.as_mut() else {
+            return;
+        };
+        let (id, transform, gen) = (s.clip(), s.transform(), s.next_gen());
+        let ui = self.win.as_weak();
+        self.poster.post_quiet(move |app| {
+            let r = app.ui_transform_preview(&Caller::Ui, id, transform);
+            let _ = ui.upgrade_in_event_loop(move |_| {
+                with_host(|h| {
+                    if h.tf.as_ref().is_some_and(|s| s.is_current(gen)) {
+                        h.show_preview(common::preview_view(h.lang, &r));
+                    }
+                });
+            });
+        });
+    }
+
+    fn choose_transform(&mut self, i: usize) {
+        let moved = self.tf.as_mut().is_some_and(|s| s.select(i));
+        self.after_highlight(moved);
+    }
+
+    fn after_highlight(&mut self, moved: bool) {
+        if !moved {
+            return;
+        }
+        if let Some(s) = self.tf.as_ref() {
+            self.win
+                .set_tf_selected(i32::try_from(s.selected()).unwrap_or(0));
+            self.show_preview(common::empty_preview());
+        }
+        self.request_preview();
+    }
+
+    fn panel_key(&mut self, k: PanelKey) {
+        match k {
+            PanelKey::Previous | PanelKey::Next => {
+                let moved = self.tf.as_mut().is_some_and(|s| s.step(k));
+                self.after_highlight(moved);
+            }
+            PanelKey::Copy => self.copy_transformed(),
+            PanelKey::Close => self.close_copy_as(),
+            PanelKey::Swallow => {}
+        }
+    }
+
+    /// Writes the previewed output to the clipboard (a self-write; nothing is stored).
+    fn copy_transformed(&mut self) {
+        let Some(s) = self.tf.as_ref() else {
+            return;
+        };
+        if !self.win.get_tf_can_copy() {
+            return;
+        }
+        let (id, transform) = (s.clip(), s.transform());
+        let ui = self.win.as_weak();
+        self.poster.post_quiet(move |app| {
+            let ok = app.ui_copy_transformed(&Caller::Ui, id, transform).is_ok();
+            let _ = ui.upgrade_in_event_loop(move |_| {
+                with_host(|h| {
+                    h.close_copy_as();
+                    let msg = if ok {
+                        Msg::TfCopiedAs
+                    } else {
+                        Msg::UiActionFailed
+                    };
+                    h.show_toast(t(h.lang, msg).to_string());
+                });
+            });
+        });
+    }
+
+    /// Closes the panel; no output text stays in the window.
+    fn close_copy_as(&mut self) {
+        self.tf = None;
+        self.win.set_tf_open(false);
+        self.show_preview(common::empty_preview());
+    }
+
+    /// Loads the text (on the worker) and opens the editor on a copy of it.
+    fn open_edit(&mut self) {
+        let Some(item) = self.transformable() else {
+            return;
+        };
+        if self.tf.is_some() || self.win.get_edit_open() {
+            return;
+        }
+        let id = item.id;
+        let ui = self.win.as_weak();
+        self.poster.post_quiet(move |app| {
+            let r = app.ui_edit_text(&Caller::Ui, id);
+            let _ = ui.upgrade_in_event_loop(move |_| {
+                with_host(|h| {
+                    // The selection moved on while the text was loading: drop the answer.
+                    if h.transformable().map(|i| i.id) != Some(id) {
+                        return;
+                    }
+                    match r {
+                        Ok(text) => {
+                            h.win.set_edit_note(SharedString::new());
+                            h.win.set_edit_text(text.into());
+                            h.win.set_edit_open(true);
+                        }
+                        Err(ApiError::InvalidArgument(_)) => {
+                            h.show_toast(t(h.lang, Msg::TfEditTooLarge).to_string());
+                        }
+                        Err(_) => h.show_toast(t(h.lang, Msg::UiActionFailed).to_string()),
+                    }
+                });
+            });
+        });
+    }
+
+    /// Saves the editor's text as a new clip. A refusal stays in the editor with its reason.
+    fn save_edit(&mut self) {
+        if !self.win.get_edit_open() {
+            return;
+        }
+        let text = self.win.get_edit_text().to_string();
+        let ui = self.win.as_weak();
+        // Not quiet: the status refresh afterwards re-runs the search, so the new clip shows.
+        self.poster.post(move |app| {
+            let r = app.ui_save_edited(&Caller::Ui, text);
+            let _ = ui.upgrade_in_event_loop(move |_| {
+                with_host(|h| h.on_saved(r));
+            });
+        });
+    }
+
+    fn on_saved(&mut self, r: Result<SaveOutcome, ApiError>) {
+        let msg = match r {
+            Ok(SaveOutcome::Saved(_)) => {
+                self.close_edit();
+                self.show_toast(t(self.lang, Msg::TfSaved).to_string());
+                return;
+            }
+            Ok(SaveOutcome::Dropped(SkipReason::Sensitive)) => Msg::TfNotSavedSensitive,
+            Ok(SaveOutcome::Dropped(_)) => Msg::TfNotSavedKind,
+            Err(ApiError::InvalidArgument("nothing to save")) => Msg::TfNotSavedEmpty,
+            Err(ApiError::InvalidArgument("too large")) => Msg::TfNotSavedLarge,
+            Err(_) => Msg::UiActionFailed,
+        };
+        self.win.set_edit_note(t(self.lang, msg).into());
+    }
+
+    /// Closes the editor; the text it held is dropped.
+    fn close_edit(&mut self) {
+        self.win.set_edit_open(false);
+        self.win.set_edit_text(SharedString::new());
+        self.win.set_edit_note(SharedString::new());
+    }
+
     fn copy(&mut self, plain: bool) {
         let targets = self.targets();
         let [id] = targets.as_slice() else {
@@ -549,6 +737,8 @@ impl Host {
                 self.flow.cancel();
                 self.sync_props();
             }
+            HistoryAction::CopyAs => self.open_copy_as(),
+            HistoryAction::Edit => self.open_edit(),
             HistoryAction::Swallow => {}
         }
         true
@@ -602,6 +792,8 @@ impl Host {
 
     /// Drops everything the window holds: rows, search text, selection, pane, messages.
     fn leave(&mut self) {
+        self.close_copy_as();
+        self.close_edit();
         self.debounce.stop();
         self.loading.stop();
         self.clear_toast();
@@ -741,6 +933,7 @@ fn create() -> Option<()> {
         toast: Timer::default(),
         slow: false,
         chip_focus: ChipFocus::default(),
+        tf: None,
         detail: DetailModel::default(),
         wanted: Arc::new(Mutex::new(None)),
     };
@@ -769,6 +962,22 @@ fn connect(w: &HistoryWindow) {
     });
     w.on_key(|text, ctrl, shift, alt, meta, search_focused| {
         with_host(|h| {
+            let key = keys::key_from_text(&text);
+            // The "Copy as..." panel is modal: it takes every key.
+            if h.tf.is_some() {
+                h.panel_key(tf::panel_key(key));
+                return true;
+            }
+            // The editor takes Esc (cancel) and Ctrl+Enter (save); every other key goes to
+            // its text box.
+            if h.win.get_edit_open() {
+                match key {
+                    keys::Key::Escape => h.close_edit(),
+                    keys::Key::Enter if ctrl => h.save_edit(),
+                    _ => return false,
+                }
+                return true;
+            }
             let ctx = HistoryCtx {
                 query_empty: h.win.get_query().is_empty(),
                 search_focused,
@@ -818,6 +1027,27 @@ fn connect(w: &HistoryWindow) {
     });
     w.on_act_copy_plain(|| {
         with_host(|h| h.copy(true));
+    });
+    w.on_act_copy_as(|| {
+        with_host(|h| h.open_copy_as());
+    });
+    w.on_act_edit(|| {
+        with_host(|h| h.open_edit());
+    });
+    w.on_tf_chosen(|i| {
+        with_host(|h| h.choose_transform(usize::try_from(i).unwrap_or(usize::MAX)));
+    });
+    w.on_tf_copy(|| {
+        with_host(|h| h.copy_transformed());
+    });
+    w.on_tf_cancel(|| {
+        with_host(|h| h.close_copy_as());
+    });
+    w.on_edit_save(|| {
+        with_host(|h| h.save_edit());
+    });
+    w.on_edit_cancel(|| {
+        with_host(|h| h.close_edit());
     });
     w.on_act_pin(|| {
         with_host(|h| h.toggle_pin());

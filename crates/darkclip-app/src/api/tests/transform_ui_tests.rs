@@ -39,7 +39,7 @@ fn preview_shows_the_output_and_reports_transform_errors() {
         .unwrap();
     assert_eq!(e.error, Some(TransformError::InvalidJson));
     assert_eq!(e.text, "");
-    assert_eq!(format!("{p:?}").contains("VIỆT"), false);
+    assert!(!format!("{p:?}").contains("VIỆT"));
 }
 
 #[test]
@@ -221,7 +221,7 @@ fn save_edited_follows_the_sensitive_handling_setting() {
     };
     // Stored masked: the preview is not the text, mcp cannot see it, the UI list can.
     assert!(a.get_clip(&mcp(), id, GetOptions::default()).is_err());
-    assert_eq!(a.ui_clip_detail(&ui(), id).unwrap().masked, true);
+    assert!(a.ui_clip_detail(&ui(), id).unwrap().masked);
     let page = a
         .search_clips(
             &ui(),

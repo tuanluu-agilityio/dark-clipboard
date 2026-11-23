@@ -1,0 +1,255 @@
+// "Copy as..." and "Edit..." panels (Task 404), shared by the popup and the history window.
+// Both cover their window and take every click; the keys are handled in Rust (the hosts'
+// `key` callbacks see them first). Every string comes from Rust (`Strings`).
+import { Theme, Strings } from "theme.slint";
+import { ActionButton } from "popup.slint";
+
+component TfItem inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked();
+
+    height: 28px;
+    border-radius: 4px;
+    background: root.active ? Theme.accent : (touch.has-hover ? Theme.line : transparent);
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    Text {
+        x: 8px;
+        width: parent.width - 16px;
+        text: root.text;
+        color: root.active ? Theme.bg : Theme.text;
+        font-size: 12px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Pick a transform, see its result, copy it. Nothing is stored.
+export component TransformPanel inherits Rectangle {
+    in property <[string]> labels;
+    in property <int> selected;
+    in property <string> preview;
+    // A message under the result: the reason a transform failed, or that the result was cut.
+    in property <string> note;
+    in property <bool> note-is-error;
+    in property <bool> can-copy;
+    callback chosen(int);
+    callback copy();
+    callback cancel();
+
+    background: #000000a0;
+    accessible-role: groupbox;
+    accessible-label: Strings.copy-as;
+
+    TouchArea { }
+
+    Rectangle {
+        width: min(600px, parent.width - 24px);
+        height: min(460px, parent.height - 24px);
+        background: Theme.surface;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.line;
+
+        VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+
+            Text {
+                text: Strings.copy-as;
+                color: Theme.text;
+                font-size: 14px;
+                font-weight: 700;
+                accessible-role: AccessibleRole.text;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                vertical-stretch: 1;
+
+                Flickable {
+                    width: 170px;
+                    content-height: items.preferred-height;
+                    items := VerticalLayout {
+                        spacing: 2px;
+                        for l[i] in root.labels: TfItem {
+                            text: l;
+                            active: i == root.selected;
+                            clicked => {
+                                root.chosen(i);
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: Theme.bg;
+                    border-radius: 6px;
+                    accessible-role: groupbox;
+                    accessible-label: Strings.tf-result;
+
+                    Flickable {
+                        x: 8px;
+                        y: 8px;
+                        width: parent.width - 16px;
+                        height: parent.height - 16px;
+                        content-height: body.preferred-height;
+                        body := Text {
+                            width: parent.width;
+                            text: root.preview;
+                            color: Theme.text;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                            accessible-role: AccessibleRole.text;
+                        }
+                    }
+                }
+            }
+
+            Text {
+                visible: root.note != "";
+                height: root.note != "" ? self.preferred-height : 0px;
+                text: root.note;
+                color: root.note-is-error ? Theme.danger : Theme.text-muted;
+                font-size: 11px;
+                wrap: word-wrap;
+                accessible-role: AccessibleRole.text;
+            }
+
+            Text {
+                text: Strings.tf-hint;
+                color: Theme.text-muted;
+                font-size: 11px;
+                wrap: word-wrap;
+                accessible-role: none;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+                height: 30px;
+                ActionButton {
+                    text: Strings.cancel;
+                    clicked => {
+                        root.cancel();
+                    }
+                }
+                ActionButton {
+                    text: Strings.copy;
+                    visible: root.can-copy;
+                    clicked => {
+                        root.copy();
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Edit a copy of a text clip. "Save as new clip" creates a new clip; the original stays.
+export component EditPanel inherits Rectangle {
+    in-out property <string> text;
+    // Why the last save did not happen (empty when there is nothing to say).
+    in property <string> note;
+    callback save();
+    callback cancel();
+
+    background: #000000a0;
+    accessible-role: groupbox;
+    accessible-label: Strings.edit;
+
+    TouchArea { }
+
+    Rectangle {
+        width: min(720px, parent.width - 24px);
+        height: min(520px, parent.height - 24px);
+        background: Theme.surface;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.line;
+
+        VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+
+            Text {
+                text: Strings.edit-hint;
+                color: Theme.text-muted;
+                font-size: 12px;
+                wrap: word-wrap;
+                accessible-role: AccessibleRole.text;
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                background: Theme.bg;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: input.has-focus ? Theme.accent : Theme.line;
+
+                Flickable {
+                    x: 8px;
+                    y: 8px;
+                    width: parent.width - 16px;
+                    height: parent.height - 16px;
+                    content-height: max(self.height, input.preferred-height);
+                    input := TextInput {
+                        width: parent.width;
+                        text <=> root.text;
+                        wrap: word-wrap;
+                        single-line: false;
+                        color: Theme.text;
+                        font-size: 13px;
+                        selection-background-color: Theme.accent;
+                        selection-foreground-color: Theme.bg;
+                        accessible-label: Strings.edit;
+                        init => {
+                            self.focus();
+                        }
+                    }
+                }
+            }
+
+            Text {
+                visible: root.note != "";
+                height: root.note != "" ? self.preferred-height : 0px;
+                text: root.note;
+                color: Theme.danger;
+                font-size: 11px;
+                wrap: word-wrap;
+                accessible-role: AccessibleRole.text;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+                height: 30px;
+                ActionButton {
+                    text: Strings.cancel;
+                    clicked => {
+                        root.cancel();
+                    }
+                }
+                ActionButton {
+                    text: Strings.save-new;
+                    clicked => {
+                        root.save();
+                    }
+                }
+            }
+        }
+    }
+}

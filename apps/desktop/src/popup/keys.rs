@@ -83,6 +83,8 @@ pub enum Action {
     CloseDetail,
     /// Ctrl+H: open the history window (Task 211).
     OpenHistory,
+    /// Ctrl+T: "Copy as..." for the selected clip (Task 404).
+    CopyAs,
 }
 
 /// Which filter chip has the keyboard focus, from per-chip gained/lost reports. The reports of
@@ -178,6 +180,7 @@ pub fn map_key(k: Key, m: Mods, ctx: KeyCtx) -> Option<Action> {
         Key::Escape => Some(Action::Close),
         Key::Delete if plain && !m.shift && list_keys => Some(Action::Delete),
         Key::Char('p' | 'P' | '\u{10}') if m.ctrl && !m.alt => Some(Action::TogglePin),
+        Key::Char('t' | 'T' | '\u{14}') if m.ctrl && !m.alt && !m.shift => Some(Action::CopyAs),
         // Ctrl+H may arrive as Backspace's control code; Ctrl+Backspace edits a non-empty
         // search box, so that code opens the history only when the list owns the keys.
         Key::Char('h' | 'H') if m.ctrl && !m.alt && !m.shift => Some(Action::OpenHistory),
@@ -354,6 +357,16 @@ mod tests {
         assert_eq!(map_key(Key::Delete, NONE, FRESH), Some(Action::Delete));
         assert_eq!(map_key(Key::Delete, NONE, LIST), Some(Action::Delete));
         assert_eq!(map_key(Key::Delete, CTRL, LIST), None);
+    }
+
+    #[test]
+    fn ctrl_t_opens_copy_as_from_anywhere() {
+        for c in ['t', 'T', '\u{14}'] {
+            assert_eq!(map_key(Key::Char(c), CTRL, TYPING), Some(Action::CopyAs));
+            assert_eq!(map_key(Key::Char(c), CTRL, LIST), Some(Action::CopyAs));
+        }
+        assert_eq!(map_key(Key::Char('t'), NONE, TYPING), None);
+        assert_eq!(map_key(Key::Char('t'), ALT, TYPING), None);
     }
 
     #[test]
