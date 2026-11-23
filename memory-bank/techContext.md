@@ -42,6 +42,8 @@ Updated: 2026-11-22
 | `boon` 0.6 (dev only) | storage tests (Task 405) | validates `export.json` against `export.schema.json` (JSON Schema 2020-12; no network) |
 | `windows` features `Win32_System_Com`, `Win32_UI_Shell`, `Win32_UI_Shell_Common` | apps/desktop (Task 405) | the shell's save and open file dialogs |
 | `darkclip-fuzzgen` (workspace crate, dev-dependency only; depends on `png` already in the tree) | dev-dependency of core, app, storage, windows (Task 406) | seeded generator, mutator, heap-tracking allocator and runner of the stable `#[ignore]` fuzz harness; no product crate depends on it in a normal build |
+| `ureq` 3.5.2 (default features off; feature `rustls` only: rustls 0.23 with the `ring` provider and `webpki-roots` 1.0; no OpenSSL, no native-tls, no gzip, no cookies, no json; adds `ureq-proto`, `rustls`, `rustls-webpki`, `rustls-pki-types`, `ring`, `webpki-roots`, `http`, `httparse`, `subtle`, `untrusted`, `utf8-zero`, `getrandom` 0.2) | apps/desktop only (Task 412, D-057) | opt-in update check in `src/update.rs`. `webpki-roots` is CDLA-Permissive-2.0: `deny.toml` has a per-crate licence exception. The gate fails if a crate under `crates/` depends on any HTTP or TLS client |
+| `serde_json` 1.0.154 | apps/desktop (Task 412; already in the tree) | parse the release answer (`tag_name`, `html_url`) |
 | `libfuzzer-sys` 0.4 (only in `fuzz/`, its own workspace, excluded from the product workspace and from `cargo deny`) | `fuzz/` cargo-fuzz targets (Task 406) | libFuzzer entry points; needs nightly + `cargo install cargo-fuzz`, not installed on this machine |
 
 ## Constraints

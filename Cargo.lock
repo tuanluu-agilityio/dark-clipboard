@@ -1065,6 +1065,7 @@ dependencies = [
  "darkclip-storage",
  "darkclip-windows",
  "global-hotkey",
+ "serde_json",
  "slint",
  "slint-build",
  "tempfile",

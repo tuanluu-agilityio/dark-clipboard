@@ -26,11 +26,12 @@ use crate::prefs::model::{
 };
 use crate::prefs::sys;
 use crate::prefs::transfer::{self, RestoreFlow};
+use crate::update::{self, Outcome, ReleaseUrl, UreqFetch};
 use darkclip_app::api::{AppStatus, Caller, CaptureStatus, StorageStatsView};
-use darkclip_app::settings::{PopupPosition, Settings};
+use darkclip_app::settings::{PopupPosition, Settings, UpdateSettings};
 use darkclip_app::{ApiError, App, ClipApi, TransferReply, TransferWait, UiTransfer};
 use darkclip_core::i18n::{t, Lang, Msg};
-use darkclip_core::{CaptureMode, ClipType, SensitiveHandling, FAR_FUTURE};
+use darkclip_core::{CaptureMode, ClipType, Clock, SensitiveHandling, Timestamp, FAR_FUTURE};
 use darkclip_platform::Capabilities;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
@@ -83,6 +84,156 @@ thread_local! {
     static SNAP: RefCell<Option<Snapshot>> = const { RefCell::new(None) };
     /// The live start-at-login state differs from the stored choice (set when the window opens).
     static LOGIN_DRIFT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// What the About section shows for the update check (kept while the window is closed).
+    static UPDATE_VIEW: RefCell<UpdateView> = const { RefCell::new(UpdateView::Idle) };
+}
+
+/// The update check as About shows it (Task 412).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum UpdateView {
+    Idle,
+    Checking,
+    Done(Outcome),
+}
+
+/// The result line and whether the "open the release page" button shows.
+fn update_texts(lang: Lang, view: &UpdateView) -> (String, bool) {
+    match view {
+        UpdateView::Idle => (String::new(), false),
+        UpdateView::Checking => (t(lang, Msg::SettingsUpdateChecking).to_string(), false),
+        UpdateView::Done(Outcome::UpToDate) => {
+            (t(lang, Msg::SettingsUpdateUpToDate).to_string(), false)
+        }
+        UpdateView::Done(Outcome::Available { shown, .. }) => (
+            format!("{} {shown}", t(lang, Msg::SettingsUpdateAvailable)),
+            true,
+        ),
+        UpdateView::Done(Outcome::Failed) => {
+            (t(lang, Msg::SettingsUpdateFailed).to_string(), false)
+        }
+    }
+}
+
+fn show_update_view(w: &SettingsWindow, lang: Lang) {
+    let view = UPDATE_VIEW.with(|v| v.borrow().clone());
+    let (text, found) = update_texts(lang, &view);
+    w.set_update_status(text.into());
+    w.set_update_found(found);
+    w.set_update_busy(view == UpdateView::Checking);
+}
+
+/// Runs one check on its own thread (the network never blocks the UI or the worker) and
+/// returns the outcome on the event loop. The thread holds no clip data. `gate` is the weekly
+/// path: the settings and time it must be due under; `None` is the button.
+fn spawn_check(gate: Option<(UpdateSettings, Timestamp)>) {
+    let started = std::thread::Builder::new()
+        .name("darkclip-update-check".into())
+        .spawn(move || {
+            let current = about::version();
+            let outcome = match gate {
+                None => Some(update::check_now(&UreqFetch, current)),
+                Some((u, now)) => update::check_if_due(&u, now, &UreqFetch, current),
+            };
+            let view = outcome.map_or(UpdateView::Idle, UpdateView::Done);
+            let _ = slint::invoke_from_event_loop(move || set_update_view(view));
+        });
+    if started.is_err() {
+        let _ =
+            slint::invoke_from_event_loop(|| set_update_view(UpdateView::Done(Outcome::Failed)));
+    }
+}
+
+fn set_update_view(view: UpdateView) {
+    UPDATE_VIEW.with(|v| *v.borrow_mut() = view);
+    with_host(|h| show_update_view(&h.win, h.lang));
+}
+
+/// "Check for updates" pressed: the only way to a request besides the weekly toggle.
+fn check_updates() {
+    if UPDATE_VIEW.with(|v| *v.borrow() == UpdateView::Checking) {
+        return;
+    }
+    set_update_view(UpdateView::Checking);
+    spawn_check(None);
+}
+
+/// The weekly check on the worker: asks nothing unless the toggle is on and a week has passed.
+/// The attempt time is saved before the request, so a failing network cannot cause a retry
+/// loop; when it cannot be saved there is no request at all.
+fn run_due_check(poster: &Poster) {
+    poster.post_quiet(|app: &App| {
+        let settings = app.settings();
+        let now = crate::SystemClock.now();
+        if !update::auto_due(&settings.updates, now) {
+            return;
+        }
+        let due = (settings.updates.clone(), now);
+        let mut next = settings;
+        next.updates.last_check_ms = Some(now.0);
+        if app.update_settings(next).is_err() {
+            return;
+        }
+        let _ = slint::invoke_from_event_loop(|| set_update_view(UpdateView::Checking));
+        spawn_check(Some(due));
+    });
+}
+
+/// How often the app looks again whether the weekly check is due.
+const AUTO_LOOK_EVERY: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+/// Starts the weekly check: once now and then every few hours, each time only when due.
+/// With the toggle off (the default) this never makes a request.
+pub fn start_auto_check(poster: Poster) {
+    let _ = std::thread::Builder::new()
+        .name("darkclip-update-timer".into())
+        .spawn(move || loop {
+            run_due_check(&poster);
+            std::thread::sleep(AUTO_LOOK_EVERY);
+        });
+}
+
+/// The weekly toggle changed: saved at once (About has no Save bar); turning it on checks now
+/// when a check is due.
+fn auto_update_toggled(on: bool) {
+    let Some(poster) = with_host(|h| h.poster.clone()) else {
+        return;
+    };
+    let again = poster.clone();
+    poster.post(move |app: &App| {
+        let mut s = app.settings();
+        s.updates.auto_check = on;
+        let saved = app.update_settings(s).is_ok();
+        let live = app.settings().updates.auto_check;
+        let _ = slint::invoke_from_event_loop(move || {
+            with_host(|h| {
+                h.win.set_auto_update(live);
+                let msg = (!saved).then(|| (t(h.lang, Msg::SettingsSaveFailed).to_string(), true));
+                h.set_status(msg);
+            });
+        });
+        if saved && on {
+            run_due_check(&again);
+        }
+    });
+}
+
+/// Opens the release page of the last result. Only an address that passed the allow check is
+/// ever kept in the result, so nothing else can be opened from here.
+fn open_release() {
+    let url: Option<ReleaseUrl> = UPDATE_VIEW.with(|v| match &*v.borrow() {
+        UpdateView::Done(Outcome::Available { url, .. }) => Some(url.clone()),
+        _ => None,
+    });
+    if let Some(url) = url {
+        if !update::open_release(&url) {
+            with_host(|h| {
+                h.set_status(Some((
+                    t(h.lang, Msg::SettingsOpenFolderFailed).to_string(),
+                    true,
+                )))
+            });
+        }
+    }
 }
 
 /// Runs `f` on the host; does nothing when it is missing or already borrowed (re-entry).
@@ -229,6 +380,12 @@ fn set_strings(w: &SettingsWindow, lang: Lang, snap: Option<&Snapshot>) {
     s.set_restore_do(m(Msg::SettingsRestoreDo));
     s.set_import_do(m(Msg::SettingsImportDo));
     s.set_restore_yes(m(Msg::SettingsRestoreYes));
+    s.set_updates_heading(m(Msg::SettingsUpdatesHeading));
+    s.set_update_check(m(Msg::SettingsUpdateCheck));
+    s.set_update_auto(m(Msg::SettingsUpdateAuto));
+    s.set_update_note(m(Msg::SettingsUpdateNote));
+    s.set_update_open(m(Msg::SettingsUpdateOpen));
+    show_update_view(w, lang);
     w.set_version_text(format!("{} {}", t(lang, Msg::SettingsVersion), about::version()).into());
     // Parts that follow the latest status refresh.
     let (read_only, caps, warning, capture) = snap
@@ -319,6 +476,7 @@ impl Host {
         w.set_position_index(i32::from(d.popup_position == PopupPosition::Center));
         w.set_close_on_focus_loss(d.close_on_focus_loss);
         w.set_enter_pastes(d.enter_pastes);
+        w.set_auto_update(settings.updates.auto_check);
         w.set_sensitive_index(match d.sensitive {
             SensitiveHandling::Drop => 0,
             SensitiveHandling::StoreMasked => 1,
@@ -1164,6 +1322,9 @@ fn connect(w: &SettingsWindow) {
         });
     });
     w.on_show_welcome(super::welcome_host::show);
+    w.on_check_updates(check_updates);
+    w.on_auto_update_toggled(auto_update_toggled);
+    w.on_open_release(open_release);
     w.on_start_capturing(super::welcome_host::show);
     w.on_open_folder(|| {
         with_host(|h| {

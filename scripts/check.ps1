@@ -37,6 +37,23 @@ if ($hasWorkspace) {
     }
 }
 
+if ($hasWorkspace) {
+    # GC-08 as amended by D-057: the only network code is the opt-in update check in apps/desktop
+    # (src/update.rs). Nothing under crates/ may depend on an HTTP or TLS client, on any target.
+    Write-Host '== crates/ stay network-free (GC-08, D-057)'
+    $netPattern = '^(ureq[\w-]*|reqwest|hyper[\w-]*|isahc|surf|attohttpc|curl[\w-]*|minreq|h2|rustls[\w-]*|tokio-rustls|native-tls|openssl[\w-]*|webpki[\w-]*) v'
+    foreach ($manifest in @(Get-ChildItem -Path 'crates' -Directory | ForEach-Object { Join-Path $_.FullName 'Cargo.toml' } | Where-Object { Test-Path -LiteralPath $_ })) {
+        $tree = cargo tree --manifest-path $manifest -e normal,build --target all --prefix none
+        if ($LASTEXITCODE -ne 0) { Fail "cargo tree --manifest-path $manifest" }
+        $net = $tree | Where-Object { $_ -match $netPattern } | Sort-Object -Unique
+        if ($net) {
+            Write-Host "CHECK FAILED: $manifest depends on a network crate:"
+            $net | ForEach-Object { Write-Host "  $_" }
+            exit 1
+        }
+    }
+}
+
 # Static rules over Rust sources (no-ops until the files exist).
 $rs = @()
 if (Test-Path -LiteralPath 'crates') { $rs += @(Get-ChildItem -Path 'crates' -Recurse -File -Filter '*.rs' | Where-Object { $_.FullName -notmatch '\\target\\' }) }
@@ -94,6 +111,16 @@ foreach ($f in $rs) {
     foreach ($h in @(Select-String -LiteralPath $f.FullName -Pattern $typeUse)) {
         if ($h.Line -match '^\s*//') { continue }
         Write-Host "CHECK FAILED: ClipboardAccess used outside capture actor in ${rel}:$($h.LineNumber)"; $bad = $true
+    }
+}
+if ($bad) { exit 1 }
+
+Write-Host '== network APIs only in apps/desktop/src/update.rs (GC-08, D-057)'
+foreach ($f in $rs) {
+    if ((Rel $f) -eq 'apps/desktop/src/update.rs') { continue }
+    foreach ($h in @(Select-String -LiteralPath $f.FullName -Pattern '\bureq::|\buse ureq\b|\bstd::net\b|\b(TcpStream|TcpListener|UdpSocket)\b')) {
+        if ($h.Line -match '^\s*//') { continue }
+        Write-Host "CHECK FAILED: network API outside update.rs in $(Rel $f):$($h.LineNumber)"; $bad = $true
     }
 }
 if ($bad) { exit 1 }

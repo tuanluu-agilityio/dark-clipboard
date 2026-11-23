@@ -31,6 +31,7 @@ pub const THIRD_PARTY: &[(&str, &str, &str)] = &[
     ),
     ("thiserror", "2.0.21", "MIT OR Apache-2.0"),
     ("tray-icon", "0.26.1", "MIT OR Apache-2.0"),
+    ("ureq", "3.5.2", "MIT OR Apache-2.0"),
     ("uuid", "1.29.3", "Apache-2.0 OR MIT"),
     ("windows", "0.62.2", "MIT OR Apache-2.0"),
     ("zeroize", "1.9.2", "Apache-2.0 OR MIT"),

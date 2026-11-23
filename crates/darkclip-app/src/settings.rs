@@ -135,6 +135,9 @@ pub struct Settings {
     /// welcome and keeps the capture state in the file. Only `first_run` writes `false`.
     #[serde(default = "default_true")]
     pub onboarding_done: bool,
+    /// The opt-in update check (Task 412, D-057); missing in older files, which means off.
+    #[serde(default)]
+    pub updates: UpdateSettings,
 }
 
 impl Default for Settings {
@@ -147,6 +150,7 @@ impl Default for Settings {
             ui: UiSettings::default(),
             startup: StartupSettings::default(),
             onboarding_done: true,
+            updates: UpdateSettings::default(),
         }
     }
 }

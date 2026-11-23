@@ -17,7 +17,8 @@ use std::time::Duration;
 
 pub const LATEST_URL: &str =
     "https://api.github.com/repos/tuanluu-agilityio/dark-clipboard/releases/latest";
-pub const RELEASE_URL_PREFIX: &str = "https://github.com/tuanluu-agilityio/dark-clipboard/releases/";
+pub const RELEASE_URL_PREFIX: &str =
+    "https://github.com/tuanluu-agilityio/dark-clipboard/releases/";
 /// The most response bytes read (256 KiB).
 pub const MAX_BODY_BYTES: usize = 256 * 1024;
 pub const TIMEOUT: Duration = Duration::from_secs(10);
@@ -33,13 +34,21 @@ pub enum UpdateError {
     BadUrl,
 }
 
-/// A release page address that passed the allow check.
+/// A release page address that passed the allow check: the fixed prefix and then only
+/// letters, digits and `. _ ~ / + -`; no `..`, query, fragment, escape or space. It is the only
+/// address the app ever opens.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseUrl(String);
 
 impl ReleaseUrl {
-    pub fn parse(_s: &str) -> Option<ReleaseUrl> {
-        unimplemented!()
+    pub fn parse(s: &str) -> Option<ReleaseUrl> {
+        let rest = s.strip_prefix(RELEASE_URL_PREFIX)?;
+        let clean = !rest.is_empty()
+            && !rest.contains("..")
+            && rest
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._~/+-".contains(&b));
+        clean.then(|| ReleaseUrl(s.to_string()))
     }
 
     pub fn as_str(&self) -> &str {
@@ -47,16 +56,68 @@ impl ReleaseUrl {
     }
 }
 
+/// One dot-separated part of a pre-release; numbers sort before names (semver 2.0.0).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum PreId {
+    Num(u64),
+    Name(String),
+}
+
 /// A semantic version (`major.minor.patch` with an optional pre-release; build metadata is
 /// ignored).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Version {
     major: u64,
+    minor: u64,
+    patch: u64,
+    pre: Vec<PreId>,
+}
+
+/// A number without a leading zero, as semver requires.
+fn plain_number(s: &str) -> Option<u64> {
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) || (s.len() > 1 && s.starts_with('0'))
+    {
+        return None;
+    }
+    s.parse().ok()
+}
+
+fn pre_id(id: &str) -> Option<PreId> {
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        None
+    } else if id.bytes().all(|b| b.is_ascii_digit()) {
+        plain_number(id).map(PreId::Num)
+    } else {
+        Some(PreId::Name(id.to_string()))
+    }
 }
 
 impl Version {
-    pub fn parse(_s: &str) -> Option<Version> {
-        unimplemented!()
+    /// `1.2.3`, `v1.2.3`, `1.2.3-rc.1`, `1.2.3+build`. Anything else is `None`.
+    pub fn parse(s: &str) -> Option<Version> {
+        let s = s.strip_prefix('v').unwrap_or(s);
+        let s = s.split_once('+').map_or(s, |(core, _)| core);
+        let (core, pre) = match s.split_once('-') {
+            Some((core, pre)) => (core, Some(pre)),
+            None => (s, None),
+        };
+        let mut nums = core.split('.');
+        let major = plain_number(nums.next()?)?;
+        let minor = plain_number(nums.next()?)?;
+        let patch = plain_number(nums.next()?)?;
+        if nums.next().is_some() {
+            return None;
+        }
+        let pre = match pre {
+            None => Vec::new(),
+            Some(p) => p.split('.').map(pre_id).collect::<Option<Vec<_>>>()?,
+        };
+        Some(Version {
+            major,
+            minor,
+            patch,
+            pre,
+        })
     }
 }
 
@@ -67,8 +128,21 @@ impl PartialOrd for Version {
 }
 
 impl Ord for Version {
-    fn cmp(&self, _other: &Self) -> std::cmp::Ordering {
-        unimplemented!()
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        let mine = (self.major, self.minor, self.patch);
+        let theirs = (other.major, other.minor, other.patch);
+        let core = mine.cmp(&theirs);
+        if core != Equal {
+            return core;
+        }
+        // A pre-release is older than the release it leads to.
+        match (self.pre.is_empty(), other.pre.is_empty()) {
+            (true, true) => Equal,
+            (true, false) => Greater,
+            (false, true) => Less,
+            (false, false) => self.pre.cmp(&other.pre),
+        }
     }
 }
 
@@ -76,13 +150,30 @@ impl Ord for Version {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Release {
     pub version: Version,
-    /// The tag as shown to the user (`X.Y.Z`, no `v`).
+    /// The tag as shown to the user (`X.Y.Z`, no `v`); it passed `Version::parse`, so it only
+    /// holds letters, digits and `. + -`.
     pub shown: String,
     pub url: ReleaseUrl,
 }
 
-pub fn parse_response(_body: &[u8]) -> Result<Release, UpdateError> {
-    unimplemented!()
+/// Reads `tag_name` and `html_url` from the response and nothing else. The errors name the
+/// kind of problem only, never the text.
+pub fn parse_response(body: &[u8]) -> Result<Release, UpdateError> {
+    if body.len() > MAX_BODY_BYTES {
+        return Err(UpdateError::TooLarge);
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(body).map_err(|_| UpdateError::Malformed)?;
+    let field = |name: &str| value.get(name).and_then(|v| v.as_str());
+    let tag = field("tag_name").ok_or(UpdateError::Malformed)?;
+    let url = field("html_url").ok_or(UpdateError::Malformed)?;
+    let version = Version::parse(tag).ok_or(UpdateError::Malformed)?;
+    let url = ReleaseUrl::parse(url).ok_or(UpdateError::BadUrl)?;
+    Ok(Release {
+        version,
+        shown: tag.strip_prefix('v').unwrap_or(tag).to_string(),
+        url,
+    })
 }
 
 /// The result shown in About.
@@ -100,24 +191,98 @@ pub trait Fetch {
 }
 
 /// Always asks (the user pressed the button).
-pub fn check_now(_fetch: &dyn Fetch, _current: &str) -> Outcome {
-    unimplemented!()
+pub fn check_now(fetch: &dyn Fetch, current: &str) -> Outcome {
+    let Some(current) = Version::parse(current) else {
+        return Outcome::Failed;
+    };
+    let release = fetch.get_latest().and_then(|body| parse_response(&body));
+    match release {
+        Ok(r) if r.version > current => Outcome::Available {
+            shown: r.shown,
+            url: r.url,
+        },
+        Ok(_) => Outcome::UpToDate,
+        Err(_) => Outcome::Failed,
+    }
 }
 
-/// Whether the weekly check is due: the toggle is on and the last check is a week old or
-/// missing.
-pub fn auto_due(_u: &UpdateSettings, _now: Timestamp) -> bool {
-    unimplemented!()
+/// Whether the weekly check is due: the toggle is on and the last check is a week old, missing
+/// or in the future (the clock moved back).
+pub fn auto_due(u: &UpdateSettings, now: Timestamp) -> bool {
+    if !u.auto_check {
+        return false;
+    }
+    match u.last_check_ms {
+        None => true,
+        Some(last) => last > now.0 || now.0.saturating_sub(last) >= AUTO_INTERVAL_MS,
+    }
 }
 
 /// The weekly check: asks only when [`auto_due`]; otherwise makes no request.
 pub fn check_if_due(
-    _u: &UpdateSettings,
-    _now: Timestamp,
-    _fetch: &dyn Fetch,
-    _current: &str,
+    u: &UpdateSettings,
+    now: Timestamp,
+    fetch: &dyn Fetch,
+    current: &str,
 ) -> Option<Outcome> {
-    unimplemented!()
+    auto_due(u, now).then(|| check_now(fetch, current))
+}
+
+/// The real request: HTTPS only, no redirects, no cookies, a 10 s limit for the whole call,
+/// the body capped, and a fixed `User-Agent`. It sends nothing else of ours.
+pub struct UreqFetch;
+
+impl Fetch for UreqFetch {
+    fn get_latest(&self) -> Result<Vec<u8>, UpdateError> {
+        let config = ureq::Agent::config_builder()
+            .timeout_global(Some(TIMEOUT))
+            .https_only(true)
+            .max_redirects(0)
+            .user_agent(format!("DarkClipboard/{}", env!("CARGO_PKG_VERSION")))
+            .build();
+        let agent = ureq::Agent::new_with_config(config);
+        let mut response = agent
+            .get(LATEST_URL)
+            .header("Accept", "application/vnd.github+json")
+            .call()
+            .map_err(|_| UpdateError::Network)?;
+        let limit = u64::try_from(MAX_BODY_BYTES).unwrap_or(u64::MAX);
+        response
+            .body_mut()
+            .with_config()
+            .limit(limit)
+            .read_to_vec()
+            .map_err(|e| match e {
+                ureq::Error::BodyExceedsLimit(_) => UpdateError::TooLarge,
+                _ => UpdateError::Network,
+            })
+    }
+}
+
+/// Opens a release page in the browser. Only a validated [`ReleaseUrl`] is accepted. True when
+/// the opener was started. Nothing is downloaded or run by this app.
+pub fn open_release(url: &ReleaseUrl) -> bool {
+    // The system opener by absolute path where there is one (no search path on Windows).
+    #[cfg(windows)]
+    let Some(program) = crate::winsys::windows_directory().map(|d| d.join("explorer.exe")) else {
+        return false;
+    };
+    #[cfg(target_os = "macos")]
+    let program = std::path::PathBuf::from("/usr/bin/open");
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let program = std::path::PathBuf::from("xdg-open");
+    std::process::Command::new(program)
+        .arg(url.as_str())
+        .spawn()
+        .map(|mut child| {
+            // Reap it off the UI thread so it never lingers.
+            let _ = std::thread::Builder::new()
+                .name("darkclip-open-release".into())
+                .spawn(move || {
+                    let _ = child.wait();
+                });
+        })
+        .is_ok()
 }
 
 #[cfg(test)]

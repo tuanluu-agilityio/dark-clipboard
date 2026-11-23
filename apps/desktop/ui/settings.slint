@@ -109,6 +109,12 @@ export global SText {
     in property <string> restore-do;
     in property <string> import-do;
     in property <string> restore-yes;
+    // Updates (Task 412)
+    in property <string> updates-heading;
+    in property <string> update-check;
+    in property <string> update-auto;
+    in property <string> update-note;
+    in property <string> update-open;
 }
 
 // A caption above a control.
@@ -230,6 +236,12 @@ export component SettingsWindow inherits Window {
     in property <string> skip-text;
     in property <string> caps-text;
     in property <string> version-text;
+    // Opt-in update check (Task 412): the text is the result; the open button shows only when
+    // a newer release was found.
+    in property <string> update-status;
+    in property <bool> update-busy;
+    in property <bool> update-found;
+    in-out property <bool> auto-update;
     in property <string> data-path;
 
     callback save();
@@ -262,6 +274,9 @@ export component SettingsWindow inherits Window {
     callback restore-cancel();
     callback open-folder();
     callback show-welcome();
+    callback check-updates();
+    callback auto-update-toggled(bool);
+    callback open-release();
     callback escape();
 
     init => {
@@ -797,6 +812,42 @@ export component SettingsWindow inherits Window {
                                 text: root.status;
                                 color: root.status-error ? Theme.danger : Theme.success;
                                 wrap: word-wrap;
+                            }
+                            Caption {
+                                text: SText.updates-heading;
+                                font-weight: 700;
+                            }
+                            Caption {
+                                text: SText.update-note;
+                            }
+                            HorizontalLayout {
+                                alignment: start;
+                                spacing: 10px;
+                                Button {
+                                    text: SText.update-check;
+                                    enabled: !root.update-busy;
+                                    clicked => {
+                                        root.check-updates();
+                                    }
+                                }
+                                if root.update-found: Button {
+                                    text: SText.update-open;
+                                    clicked => {
+                                        root.open-release();
+                                    }
+                                }
+                            }
+                            if root.update-status != "": Text {
+                                text: root.update-status;
+                                color: Theme.text;
+                                wrap: word-wrap;
+                            }
+                            CheckBox {
+                                text: SText.update-auto;
+                                checked <=> root.auto-update;
+                                toggled => {
+                                    root.auto-update-toggled(root.auto-update);
+                                }
                             }
                             Caption {
                                 text: SText.licences-label;

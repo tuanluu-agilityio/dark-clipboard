@@ -554,6 +554,8 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
     history_host::install(worker.poster(), args_lang);
     // The settings window too (tray "Settings...", the popup gear and `ShowSettings`).
     settings_host::install(worker.poster(), data_dir.clone());
+    // The opt-in weekly update check (Task 412): no request unless the user turned it on.
+    settings_host::start_auto_check(worker.poster());
     // The first-run welcome (Task 208): shown by the first status refresh while unanswered.
     welcome_host::install(worker.poster(), data_dir);
     popup_host::watch_window_events(&window);
