@@ -58,10 +58,11 @@ struct BlobEntry {
 }
 
 /// An export file opened for import: the parsed document and lazy, verified blob reads.
-pub struct ExportArchive {
+/// `R` is the file in the product; the fuzz entry points (Task 406) read from memory.
+pub struct ExportArchive<R = std::fs::File> {
     collection: Collection,
     clips: Vec<Clip>,
-    zip: CheckedZip,
+    zip: CheckedZip<R>,
     /// Blob hash -> (zip index, size).
     blobs: HashMap<[u8; 32], (usize, u64)>,
     /// Blobs read at least once.
@@ -69,7 +70,7 @@ pub struct ExportArchive {
 }
 
 /// Counts only (GC-06): names, notes and content are never printed.
-impl std::fmt::Debug for ExportArchive {
+impl<R> std::fmt::Debug for ExportArchive<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExportArchive")
             .field("clips", &self.clips.len())
@@ -86,7 +87,17 @@ impl ExportArchive {
     /// Opens and validates an export file: names, counts, sizes, the JSON document and its
     /// blob list against the archive's entries. Blob contents are checked when read.
     pub fn open(path: &Path, limits: ArchiveLimits) -> Result<Self, StorageError> {
-        let mut zip = CheckedZip::open(path, limits, &[EntryKind::ExportJson])?;
+        let zip = CheckedZip::open(path, limits, &[EntryKind::ExportJson])?;
+        Self::from_zip(zip, limits)
+    }
+}
+
+impl<R: std::io::Read + std::io::Seek> ExportArchive<R> {
+    /// [`ExportArchive::open`] after the zip checks, over any reader.
+    pub(crate) fn from_zip(
+        mut zip: CheckedZip<R>,
+        limits: ArchiveLimits,
+    ) -> Result<Self, StorageError> {
         if zip.index_of(EntryKind::ExportJson).is_none() {
             return Err(ArchiveError::NotAnArchive.into());
         }
@@ -161,6 +172,14 @@ impl ExportArchive {
         let (idx, size) = self.blobs.get(sha).copied().ok_or(StorageError::NotFound)?;
         let first = self.read.insert(*sha);
         self.zip.read_verified(idx, size, sha, first)
+    }
+
+    /// The SHA-256 of every blob the file lists (fuzz entry points only, Task 406).
+    #[cfg(any(test, feature = "fuzzing"))]
+    pub(crate) fn blob_shas(&self) -> Vec<[u8; 32]> {
+        let mut v: Vec<[u8; 32]> = self.blobs.keys().copied().collect();
+        v.sort_unstable();
+        v
     }
 }
 

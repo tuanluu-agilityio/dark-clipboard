@@ -77,7 +77,7 @@ pub(crate) const STAGING_PREFIXES: [&str; 2] = ["backup-staging-", "restore-stag
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Manifest {
+pub(crate) struct Manifest {
     format: u32,
     schema_version: u32,
     app_version: String,
@@ -150,7 +150,7 @@ fn pre_restore_path(dir: &Path, now: Timestamp) -> PathBuf {
 
 /// Parses the manifest; a newer `format` or `schema_version` is reported as such before
 /// the strict parse (so a newer file gets a clear message, not "malformed").
-fn parse_manifest(raw: &[u8], supported_schema: u32) -> Result<Manifest, StorageError> {
+pub(crate) fn parse_manifest(raw: &[u8], supported_schema: u32) -> Result<Manifest, StorageError> {
     let v: serde_json::Value =
         serde_json::from_slice(raw).map_err(|_| ArchiveError::BadManifest)?;
     let number = |key: &str| v.get(key).and_then(serde_json::Value::as_u64);
@@ -172,9 +172,9 @@ fn parse_manifest(raw: &[u8], supported_schema: u32) -> Result<Manifest, Storage
 
 /// The manifest's files by entry kind, checked against the archive's entries: the same set,
 /// a database, blob names that match their hashes, sizes within the limits.
-fn expected_files(
+pub(crate) fn expected_files<R>(
     m: &Manifest,
-    z: &CheckedZip,
+    z: &CheckedZip<R>,
 ) -> Result<HashMap<EntryKind, (u64, [u8; 32])>, StorageError> {
     let mut out = HashMap::new();
     for f in &m.files {

@@ -1,0 +1,9 @@
+Version:0.9
+StartHTML:0000000105
+EndHTML:0000000272
+StartFragment:0000000139
+EndFragment:0000000236
+<html><body>
+<!--StartFragment--><b>bold</b>แบแบ<table><tr><td>1</td></tr></table>แบ&amp;&lt;&#x1F600;ÿþ<br>ÿþ<script>x()</script><!--EndFragment-->
+</body>
+</html>

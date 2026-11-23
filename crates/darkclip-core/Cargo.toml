@@ -16,4 +16,10 @@ unicode-normalization = "0.1.26"
 uuid = { version = "1.29.3", features = ["v7", "serde"] }
 
 [dev-dependencies]
+darkclip-fuzzgen = { path = "../darkclip-fuzzgen" }
 serde_json = "1.0.154"
+
+[features]
+# Exposes `fuzz_entry` to the cargo-fuzz targets in `fuzz/` (Task 406). Never enabled by
+# a workspace crate.
+fuzzing = []

@@ -17,6 +17,10 @@ mod autostart;
 // everywhere.
 mod dib;
 mod formats;
+// Fuzz entry points (Task 406): tests and the `fuzzing` feature only.
+#[cfg(any(test, feature = "fuzzing"))]
+#[doc(hidden)]
+pub mod fuzz_entry;
 #[cfg(windows)]
 mod monitor;
 // Pure focus/paste decisions; compiled everywhere so the fake-seam tests run on every OS.

@@ -15,7 +15,7 @@
 
 #![cfg_attr(not(windows), allow(dead_code))]
 
-use darkclip_core::limits::{within_decode_caps, MAX_RGBA_BYTES, MAX_SIDE};
+use darkclip_core::limits::{png_palette_ok, within_decode_caps, MAX_RGBA_BYTES, MAX_SIDE};
 use std::io::Write;
 use zeroize::Zeroizing;
 
@@ -352,6 +352,10 @@ const LCS_GM_IMAGES: u32 = 4;
 /// on a malformed PNG (GC-10); errors carry no pixel data (GC-06).
 pub(crate) fn png_to_dibs(png_bytes: &[u8]) -> Result<DibPair, DibError> {
     const CORRUPT: DibError = DibError::Malformed("not a decodable PNG");
+    // `png` 0.18.1 panics on a palette of a bad length (Task 406 fuzz finding).
+    if !png_palette_ok(png_bytes) {
+        return Err(DibError::Malformed("malformed palette"));
+    }
     let mut decoder = png::Decoder::new_with_limits(
         std::io::Cursor::new(png_bytes),
         png::Limits {
@@ -861,5 +865,30 @@ mod tests {
         let mut cut = png_rgba(2, 2, &[7; 16]);
         cut.truncate(cut.len() - 20);
         assert!(png_to_dibs(&cut).is_err());
+    }
+
+    /// Fuzz finding (Task 406, `png_to_dibs`): a PLTE chunk whose length is not a multiple
+    /// of 3 made `png` 0.18.1 panic while expanding the palette (an abort in release). Such a
+    /// PNG is refused as malformed. Lengths over 768 (more than 256 entries) were already
+    /// refused by `png` (`ChunkLengthWrong`); kept here as refusal cases.
+    #[test]
+    fn png_with_malformed_palette_is_refused_not_a_panic() {
+        use darkclip_fuzzgen::png::indexed_1x1;
+        // Control: a well-formed palette converts.
+        assert!(png_to_dibs(&indexed_1x1(&[10, 20, 30])).is_ok());
+        for plte in [
+            vec![1u8; 4],
+            vec![1u8; 2],
+            vec![1u8; 1],
+            vec![1u8; 769],
+            vec![1u8; 771],
+        ] {
+            let r = png_to_dibs(&indexed_1x1(&plte));
+            assert!(
+                matches!(r, Err(DibError::Malformed(_))),
+                "len {}",
+                plte.len()
+            );
+        }
     }
 }

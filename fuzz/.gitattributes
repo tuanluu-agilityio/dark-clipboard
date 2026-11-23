@@ -1,0 +1,2 @@
+# Seed inputs are exact bytes: never convert line endings.
+corpus/** binary

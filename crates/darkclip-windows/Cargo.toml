@@ -15,5 +15,13 @@ png = "0.18"
 sha2 = "0.11.1"
 zeroize = "1.9.2"
 
+[dev-dependencies]
+darkclip-fuzzgen = { path = "../darkclip-fuzzgen" }
+
+[features]
+# Exposes `fuzz_entry` to the cargo-fuzz targets in `fuzz/` (Task 406). Never enabled by
+# a workspace crate.
+fuzzing = []
+
 [target."cfg(windows)".dependencies]
 windows = { version = "0.62", default-features = false, features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_DataExchange", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_System_Memory", "Win32_System_Threading", "Win32_Security", "Win32_Graphics_Dwm", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Registry"] }

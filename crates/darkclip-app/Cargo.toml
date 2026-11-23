@@ -18,7 +18,13 @@ serde_json = "1.0.154"
 zeroize = "1.9.2"
 
 [dev-dependencies]
+darkclip-fuzzgen = { path = "../darkclip-fuzzgen" }
 darkclip-platform = { path = "../darkclip-platform", features = ["fake"] }
 flate2 = "1.1.11"
 tempfile = "3.27.0"
 zip = { version = "~9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[features]
+# Exposes `fuzz_entry` to the cargo-fuzz targets in `fuzz/` (Task 406). Never enabled by
+# a workspace crate.
+fuzzing = []

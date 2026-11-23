@@ -47,6 +47,10 @@ pub fn decode_png(
     max_pixels: u64,
     max_rgba_bytes: u64,
 ) -> Result<DecodedImage, ImageError> {
+    // `png` 0.18.1 panics on a palette of a bad length (Task 406 fuzz finding).
+    if !darkclip_core::limits::png_palette_ok(bytes) {
+        return Err(ImageError::Corrupt);
+    }
     let mut decoder = Decoder::new_with_limits(
         Cursor::new(bytes),
         Limits {
@@ -359,6 +363,27 @@ pub(crate) mod tests {
         let ok = encode(8, 8, ColorType::Rgba, BitDepth::Eight, &[1; 256], None);
         let cut = &ok[..ok.len() / 2];
         assert!(decode_png(cut, MAX_PIXELS, MAX_RGBA_BYTES).is_err());
+    }
+
+    /// Fuzz finding (Task 406, `png_to_dibs`, same decoder settings): a PLTE chunk whose
+    /// length is not a multiple of 3 made `png` 0.18.1 panic while expanding the palette (an
+    /// abort in release). Such a PNG is `Corrupt`. Lengths over 768 (more than 256 entries)
+    /// were already refused by `png` (`ChunkLengthWrong`); kept here as refusal cases.
+    #[test]
+    fn png_with_malformed_palette_is_corrupt_not_a_panic() {
+        use darkclip_fuzzgen::png::indexed_1x1;
+        let ok = decode_png(&indexed_1x1(&[10, 20, 30]), MAX_PIXELS, MAX_RGBA_BYTES).unwrap();
+        assert_eq!(ok.rgba, vec![10, 20, 30, 255]);
+        for plte in [
+            vec![1u8; 4],
+            vec![1u8; 2],
+            vec![1u8; 1],
+            vec![1u8; 769],
+            vec![1u8; 771],
+        ] {
+            let r = decode_png(&indexed_1x1(&plte), MAX_PIXELS, MAX_RGBA_BYTES);
+            assert_eq!(r.unwrap_err(), ImageError::Corrupt, "len {}", plte.len());
+        }
     }
 
     fn solid(w: u32, h: u32) -> DecodedImage {

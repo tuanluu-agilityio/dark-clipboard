@@ -1,0 +1,118 @@
+# cargo-fuzz targets (Task 406). Not a workspace member (see the root `exclude`), so the
+# quality gate and `cargo deny` never build it; it needs a nightly toolchain and
+# `cargo install cargo-fuzz`. Each target calls the same `fuzz_entry` function as the stable
+# `#[ignore]` harness in the crate. Commands: docs/testing/fuzzing.md.
+[package]
+name = "darkclip-fuzz"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+darkclip-core = { path = "../crates/darkclip-core", features = ["fuzzing"] }
+darkclip-app = { path = "../crates/darkclip-app", features = ["fuzzing"] }
+darkclip-storage = { path = "../crates/darkclip-storage", features = ["fuzzing"] }
+darkclip-windows = { path = "../crates/darkclip-windows", features = ["fuzzing"] }
+
+# Its own workspace: never part of the product workspace.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "sensitive"
+path = "fuzz_targets/sensitive.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transforms"
+path = "fuzz_targets/transforms.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tag_name"
+path = "fuzz_targets/tag_name.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "png_decode"
+path = "fuzz_targets/png_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dib_to_png"
+path = "fuzz_targets/dib_to_png.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "png_to_dibs"
+path = "fuzz_targets/png_to_dibs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dropfiles"
+path = "fuzz_targets/dropfiles.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "uri_list"
+path = "fuzz_targets/uri_list.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cf_html"
+path = "fuzz_targets/cf_html.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "archive_names"
+path = "fuzz_targets/archive_names.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "backup_manifest"
+path = "fuzz_targets/backup_manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "backup_archive"
+path = "fuzz_targets/backup_archive.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "export_archive"
+path = "fuzz_targets/export_archive.rs"
+test = false
+doc = false
+bench = false

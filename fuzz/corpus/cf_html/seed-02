@@ -1,0 +1,11 @@
+ÇVersion:0.9
+StartHTML:0000000105
+EndHTML:0000000309
+StartFragment:0000000139
+EndFragment:0000000273
+<html><body>
+<!--StartFragment--><br>&amp;&lt;&#x1F600;<!-- c --><script>x()</script><!-- c --><table><tr><td>1</td></tr></table>
+<table><tr><td>1</td></tr></table>
+<!--EndFragment-->
+</body>
+</html>

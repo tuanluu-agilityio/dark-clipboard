@@ -7,6 +7,9 @@
 
 pub mod classify;
 pub mod error;
+#[cfg(any(test, feature = "fuzzing"))]
+#[doc(hidden)]
+pub mod fuzz_entry;
 pub mod hash;
 pub mod i18n;
 pub mod ids;

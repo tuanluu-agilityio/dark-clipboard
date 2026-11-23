@@ -18,6 +18,7 @@ Updated: 2026-11-22
 | Schema validation only | `node tools/schema-check/validate.mjs` |
 | Regenerate schemas | `python scripts/gen_schemas.py` (then re-run validation) |
 | Add a dependency | `cargo add -p <crate> <dep>` |
+| Stable fuzz harness (Task 406) | see `docs/testing/fuzzing.md` (`cargo test --release ... -- --ignored`, env profile overrides) |
 | Supply-chain check | `cargo deny check` (cargo-deny 0.22.0 installed locally; also runs in CI) |
 
 ## Planned dependencies (decided in ADRs; versions are pinned by Cargo.lock when added)
@@ -40,6 +41,8 @@ Updated: 2026-11-22
 | `rusqlite` feature `backup` | storage (Task 405) | online backup API for the restore swap |
 | `boon` 0.6 (dev only) | storage tests (Task 405) | validates `export.json` against `export.schema.json` (JSON Schema 2020-12; no network) |
 | `windows` features `Win32_System_Com`, `Win32_UI_Shell`, `Win32_UI_Shell_Common` | apps/desktop (Task 405) | the shell's save and open file dialogs |
+| `darkclip-fuzzgen` (workspace crate, dev-dependency only; depends on `png` already in the tree) | dev-dependency of core, app, storage, windows (Task 406) | seeded generator, mutator, heap-tracking allocator and runner of the stable `#[ignore]` fuzz harness; no product crate depends on it in a normal build |
+| `libfuzzer-sys` 0.4 (only in `fuzz/`, its own workspace, excluded from the product workspace and from `cargo deny`) | `fuzz/` cargo-fuzz targets (Task 406) | libFuzzer entry points; needs nightly + `cargo install cargo-fuzz`, not installed on this machine |
 
 ## Constraints
 - Release profile: `opt-level="z"`, `lto=true`, `codegen-units=1`, `panic="abort"`, `strip=true` (Darkshot).
