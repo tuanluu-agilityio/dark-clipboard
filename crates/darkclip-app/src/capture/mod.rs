@@ -282,6 +282,7 @@ impl CaptureHandle {
             carried: None,
             excluded_recent: None,
             next_retention: Instant::now(),
+            fts_merge_due: None,
             next_expiry: None,
             retention_retry_at: None,
             retention_backoff: None,

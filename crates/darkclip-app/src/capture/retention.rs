@@ -109,3 +109,44 @@ impl Actor {
         self.next_retention = now.checked_add(every).unwrap_or(now);
     }
 }
+
+/// Longest a word of an automatically evicted clip (or of an edited note or tag) stays in the
+/// search index after it became pending.
+const FTS_MERGE_WITHIN: Duration = Duration::from_secs(10 * 60);
+
+impl Actor {
+    /// Real-time estimate of the merge deadline (the clock may be a test clock: the loop also
+    /// re-checks after every message).
+    pub(super) fn fts_wake(&self) -> Instant {
+        let Some(due) = self.fts_merge_due else {
+            return self.next_retention;
+        };
+        let ms = u64::try_from(due.0.saturating_sub(self.clock.now().0)).unwrap_or(0);
+        let now = Instant::now();
+        now.checked_add(Duration::from_millis(ms))
+            .unwrap_or(self.next_retention)
+    }
+
+    /// Arms the deadline when changes became pending, clears it when none are, merges when it
+    /// is due. Called on every loop iteration; later evictions and retention runs never move
+    /// the deadline, so steady captures cannot postpone the merge.
+    pub(super) fn fts_housekeeping(&mut self) {
+        let now = self.clock.now();
+        self.sync_fts_deadline(now);
+        if self.fts_merge_due.is_some_and(|due| due <= now) {
+            self.storage.optimize_fts_if_dirty();
+            self.sync_fts_deadline(now);
+        }
+    }
+
+    fn sync_fts_deadline(&mut self, now: darkclip_core::Timestamp) {
+        let ms = i64::try_from(FTS_MERGE_WITHIN.as_millis()).unwrap_or(i64::MAX);
+        match (self.storage.fts_pending() > 0, self.fts_merge_due) {
+            (true, None) => {
+                self.fts_merge_due = Some(darkclip_core::Timestamp(now.0.saturating_add(ms)));
+            }
+            (false, Some(_)) => self.fts_merge_due = None,
+            _ => {}
+        }
+    }
+}
