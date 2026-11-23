@@ -45,6 +45,9 @@ pub struct Storage {
     clock: Arc<dyn Clock>,
     /// Note and tag changes not yet merged into the FTS index (F-20).
     fts_dirty: u32,
+    /// Test hook: how many times the FTS index was merged.
+    #[cfg(test)]
+    optimize_runs: u32,
     /// Test hook: fail `upsert_clip` after blobs are written, before commit.
     #[cfg(test)]
     fail_before_commit: bool,

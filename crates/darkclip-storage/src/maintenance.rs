@@ -32,6 +32,20 @@ fn file_len(path: &std::path::Path) -> u64 {
 }
 
 impl Storage {
+    /// Merges the FTS index (counted in tests).
+    pub(crate) fn fts_merge(&mut self) {
+        #[cfg(test)]
+        {
+            self.optimize_runs += 1;
+        }
+        fts_optimize(&self.conn);
+    }
+
+    /// Note, tag and automatic-eviction changes waiting for a merge.
+    pub fn fts_pending(&self) -> u32 {
+        self.fts_dirty
+    }
+
     /// A note or the tags of a clip changed: the old words stay in the index until a merge.
     /// Merges after `FTS_BATCH` changes; the actor merges the rest when idle and at shutdown.
     pub(crate) fn fts_changed(&mut self) {
@@ -46,7 +60,7 @@ impl Storage {
         if self.fts_dirty == 0 || self.ensure_writable().is_err() {
             return;
         }
-        fts_optimize(&self.conn);
+        self.fts_merge();
         checkpoint(&self.conn);
         self.fts_dirty = 0;
     }
@@ -81,7 +95,7 @@ impl Storage {
         if free_bytes < bytes_before {
             return Err(StorageError::InsufficientSpace);
         }
-        fts_optimize(&self.conn);
+        self.fts_merge();
         self.fts_dirty = 0;
         checkpoint(&self.conn);
         self.conn.execute_batch("VACUUM")?;
@@ -293,8 +307,12 @@ mod tests {
         let size = std::fs::metadata(tmp.path().join("history.db"))
             .unwrap()
             .len();
-        assert_eq!(s.compact(size - 1), Err(StorageError::InsufficientSpace));
-        assert!(s.compact(size).is_ok());
+        // VACUUM writes a full copy next to the database: twice its size must be free.
+        assert_eq!(
+            s.compact(2 * size - 1),
+            Err(StorageError::InsufficientSpace)
+        );
+        assert!(s.compact(2 * size).is_ok());
         let mut ro = Storage::open(tmp.path(), OpenMode::ReadOnly, clock()).unwrap();
         assert_eq!(ro.compact(u64::MAX), Err(StorageError::ReadOnly));
         assert_eq!(ro.delete_older_than(1), Err(StorageError::ReadOnly));
@@ -352,6 +370,91 @@ mod tests {
         s.set_note(&id, Some(&format!("note {TOKEN}"))).unwrap();
         s.set_note(&id, None).unwrap();
         s.compact(u64::MAX).unwrap();
+        assert!(!contains(&db_bytes_on_disk(tmp.path()), TOKEN));
+    }
+
+    fn evictable_store(dir: &Path) -> (Storage, darkclip_core::RetentionPolicy) {
+        let mut s = open(dir, clock());
+        ins(&mut s, text_clip(&format!("oldest {TOKEN}")));
+        ins(&mut s, text_clip("middle"));
+        ins(&mut s, text_clip("newest"));
+        let p = darkclip_core::RetentionPolicy {
+            max_items: 2,
+            max_age_days: 0,
+            max_storage_mb: 0,
+            ..darkclip_core::RetentionPolicy::default()
+        };
+        (s, p)
+    }
+
+    #[test]
+    fn b1_automatic_eviction_defers_the_merge_and_the_tick_runs_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut s, p) = evictable_store(tmp.path());
+        let runs = s.optimize_runs;
+        let r = s.apply_retention(&p).unwrap();
+        assert_eq!(r.evicted_count, 1);
+        assert_eq!(s.optimize_runs, runs, "no merge in the retention path");
+        assert_eq!(s.fts_pending(), 1);
+        // The 10-minute tick (also startup and shutdown) merges and truncates the WAL.
+        s.optimize_fts_if_dirty();
+        assert_eq!(s.optimize_runs, runs + 1);
+        assert_eq!(s.fts_pending(), 0);
+        assert!(!contains(&db_bytes_on_disk(tmp.path()), TOKEN));
+        // Nothing pending: the tick does nothing.
+        s.optimize_fts_if_dirty();
+        assert_eq!(s.optimize_runs, runs + 1);
+    }
+
+    #[test]
+    fn b1_one_hundred_pending_changes_trigger_the_merge() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path(), clock());
+        for i in 0..101 {
+            ins(&mut s, text_clip(&format!("clip {i}")));
+        }
+        let p = darkclip_core::RetentionPolicy {
+            max_items: 1,
+            max_age_days: 0,
+            max_storage_mb: 0,
+            ..darkclip_core::RetentionPolicy::default()
+        };
+        let runs = s.optimize_runs;
+        assert_eq!(s.apply_retention(&p).unwrap().evicted_count, 100);
+        assert_eq!(s.optimize_runs, runs + 1);
+        assert_eq!(s.fts_pending(), 0);
+    }
+
+    #[test]
+    fn b1_user_deletions_still_merge_at_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path(), clock());
+        let a = ins(&mut s, text_clip("a"));
+        ins(&mut s, text_clip("b"));
+        ins(&mut s, text_clip("c"));
+        let runs = s.optimize_runs;
+        s.delete_clip(&a).unwrap();
+        assert_eq!(s.optimize_runs, runs + 1);
+        s.clear_history(false).unwrap();
+        assert_eq!(s.optimize_runs, runs + 2);
+    }
+
+    #[test]
+    fn s2_recapture_as_masked_removes_the_former_plain_tokens_at_once() {
+        use darkclip_core::{SensitiveCategory, Sensitivity, SensitivityLevel, Timestamp};
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path(), clock());
+        let text = format!("plain body {TOKEN}");
+        let id = ins(&mut s, text_clip(&text));
+        assert!(contains(&db_bytes_on_disk(tmp.path()), TOKEN));
+        let mut m = text_clip(&text);
+        m.classified.preview = "masked preview".into();
+        m.sensitivity = Sensitivity {
+            level: SensitivityLevel::Masked,
+            categories: vec![SensitiveCategory::ApiKey],
+        };
+        m.expires_at = Some(Timestamp(T0 + 3_600_000));
+        assert_eq!(s.upsert_clip(&m).unwrap(), crate::UpsertOutcome::Bumped(id));
         assert!(!contains(&db_bytes_on_disk(tmp.path()), TOKEN));
     }
 }

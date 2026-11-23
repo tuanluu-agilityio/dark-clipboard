@@ -176,7 +176,7 @@ impl Storage {
         // neither `secure_delete` nor `VACUUM` removes them (F-20): merge, then truncate the
         // WAL so the old pages are gone from both files.
         if d.count > 0 {
-            crate::maintenance::fts_optimize(&self.conn);
+            self.fts_merge();
         }
         if force_checkpoint || d.count > 0 {
             checkpoint(&self.conn);
