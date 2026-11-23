@@ -291,3 +291,39 @@ New content-free event `perf what=search_done ms=<n>`: from the moment the 60 ms
 3. The real-shortcut NFR-01 row (Task 204 section) and the IME and Narrator rows (Task 209 section) still apply, now with the software renderer.
 
 Method notes: `--quit` does not stop a `--headless` process (headless has no instance pipe, so there is nothing to receive the command); stop it with Ctrl+C or end the process. A measurement script that starts `--headless` must kill it itself.
+
+# Search bench re-run, 5 times (Task 407, F-21)
+
+Date: 2026-11-24. Same machine (Windows 11 Home Single Language 10.0.26300, Intel Core Ultra 7 155H, 22 logical CPUs, 32 GB). Commit 9e60487 (`main` at bda38a5 plus a docs commit), rustc 1.100.0. Synthetic data only; the clipboard is not involved.
+
+**The machine was not idle.** Before the runs `Win32_Processor.LoadPercentage` was 26 % (a camera client, a Python process, several editor/agent processes); right after them five samples 1.5 s apart read 0, 1, 1, 71, 67 %. Run 1 took 80 s against 42 to 62 s for the others. Treat these numbers as an upper bound under load, not as the idle figure F-21 asks for.
+
+Command, five times in a row, nothing else started meanwhile (the test binary was built first with `cargo test -p darkclip-storage --release --lib --no-run`):
+
+    cargo test -p darkclip-storage --release --lib -- --ignored --test-threads=1 --nocapture bench_search
+
+This runs both `bench_search` (worst case: 30-word vocabulary, almost every clip matches) and `bench_search_realistic` (2,000-word Zipf vocabulary). 10,000 clips of 50 to 2,000 bytes, 200 queries each. Budget NFR-02: p95 <= 30 ms (the test asserts it).
+
+| Run | `bench_search` p50 | `bench_search` p95 | `bench_search_realistic` p50 | `bench_search_realistic` p95 |
+|---|---|---|---|---|
+| 1 | 20.76 ms | **31.70 ms** (over) | 4.86 ms | 22.21 ms |
+| 2 | 21.70 ms | 29.12 ms | 6.30 ms | 29.58 ms |
+| 3 | 23.41 ms | **32.04 ms** (over) | 7.05 ms | 28.78 ms |
+| 4 | 22.12 ms | 29.55 ms | 8.21 ms | **30.35 ms** (over) |
+| 5 | 23.27 ms | **30.19 ms** (over) | 7.03 ms | 29.22 ms |
+| Median | 22.12 ms | 30.19 ms | 7.03 ms | 29.22 ms |
+
+Exact output lines (other test-harness lines omitted):
+
+    run 1: bench_search: p50=20.7567ms p95=31.7028ms                 (FAILED, p95 31.7028ms)
+           bench_search_realistic: p50=4.8571ms p95=22.2077ms (avg clip 1029 bytes, 0 of 200 queries empty)
+    run 2: bench_search: p50=21.7002ms p95=29.1169ms
+           bench_search_realistic: p50=6.2986ms p95=29.5826ms (avg clip 1029 bytes, 0 of 200 queries empty)
+    run 3: bench_search: p50=23.4073ms p95=32.0391ms                 (FAILED, p95 32.0391ms)
+           bench_search_realistic: p50=7.0451ms p95=28.7776ms (avg clip 1029 bytes, 0 of 200 queries empty)
+    run 4: bench_search: p50=22.1166ms p95=29.5549ms
+           bench_search_realistic: p50=8.2077ms p95=30.3514ms (avg clip 1029 bytes, 0 of 200 queries empty)   (FAILED, p95 30.3514ms)
+    run 5: bench_search: p50=23.2674ms p95=30.1926ms                 (FAILED, p95 30.1926ms)
+           bench_search_realistic: p50=7.0268ms p95=29.2234ms (avg clip 1029 bytes, 0 of 200 queries empty)
+
+Reading: under this load the worst-case corpus sits right at the budget (p95 29.1 to 32.0 ms, 3 of 5 over) and the realistic corpus just under it (22.2 to 30.4 ms, 1 of 5 over). The Task 209 run on the same machine gave 19.8 / 19.1 ms and Task 013 gave 24 to 25 ms worst case, so the spread is mostly machine load. F-21 stays open: an idle-machine run (owner, or a CI runner) and the UI number `perf what=search_done` (owner manual row 2 above) decide NFR-02. Not a security finding.

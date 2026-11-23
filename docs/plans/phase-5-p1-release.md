@@ -27,6 +27,7 @@
 | 409 | Licence decision implemented (Q-01): `LICENSE`, Slint attribution if the royalty-free licence is chosen, third-party notices | owner decision | scaffolder / sonnet | reviewer / sonnet | Low | `cargo deny licenses` passes |
 | 411 | Data management: storage usage, cleanup tools (clear keeping pinned+favorites, older than N days, orphan sweep on demand, compact) (owner prompt phase3 §7, D-057) | 401 | builder / sonnet | security-reviewer / opus | Medium | Deletion respects pin/favorite |
 | 412 | Opt-in update check (D-037): manual button + weekly toggle off by default, GitHub Releases metadata only, never downloads; network code only in `apps/desktop` (GC-08 amended, D-057) | — | builder / sonnet | security-reviewer / opus | Medium | No request when off (test) |
+| 413 | Release blockers from Task 407: WER exclusion (high), data-folder DACL, damaged-DB message and move-aside, T-12 doc and pipe message, backup sync warning, KeePass 2 exclusion, forbid(unsafe) (D-067) | 407 | specialist / opus | security-reviewer / opus | High | F407-01 fixed |
 | 410 | README, CHANGELOG `[0.1.0]`, website section in the Darkshot site (if the owner wants it there; otherwise a docs page), release notes | all | scaffolder / sonnet | reviewer / sonnet | Low | Every claim matches the platform matrix |
 
 ## Execution (D-057, 2026-11-23)
