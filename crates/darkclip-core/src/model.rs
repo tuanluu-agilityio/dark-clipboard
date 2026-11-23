@@ -392,6 +392,24 @@ impl Tag {
     }
 }
 
+/// Folds Vietnamese `đ`/`Đ` (U+0111/U+0110) to `d`/`D`; `None` when `s` has neither.
+/// SQLite's `remove_diacritics` does not fold them (they are separate letters, not a
+/// base letter plus a mark), so search indexes and queries use this copy as well.
+pub fn fold_d_stroke(s: &str) -> Option<String> {
+    if !s.contains(['\u{0111}', '\u{0110}']) {
+        return None;
+    }
+    Some(
+        s.chars()
+            .map(|c| match c {
+                '\u{0111}' => 'd',
+                '\u{0110}' => 'D',
+                c => c,
+            })
+            .collect(),
+    )
+}
+
 /// Longest collection name, in characters (`collection.schema.json`).
 pub const COLLECTION_NAME_MAX_CHARS: usize = 80;
 /// Most tags on one clip (Task 401).
@@ -802,6 +820,12 @@ mod tests {
             let orig: serde_json::Value = serde_json::from_str(src).unwrap();
             assert_eq!(serde_json::to_value(&a).unwrap(), orig);
         }
+    }
+
+    #[test]
+    fn d_stroke_folding() {
+        assert_eq!(fold_d_stroke("Đà Nẵng đi"), Some("Dà Nẵng di".into()));
+        assert_eq!(fold_d_stroke("tiếng việt"), None);
     }
 
     #[test]

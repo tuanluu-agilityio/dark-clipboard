@@ -10,7 +10,8 @@
 //! - `classified.plain_text` is not stored separately: it is the text/plain rep.
 //!
 //! On a `content_hash` conflict the existing row keeps its id, `created_at`, use
-//! counters, pin state, note, tags and collections; it gets `last_copied_at = now`, `copy_count + 1`,
+//! counters, pin state, note, tags and collections (a masked capture clears the note and
+//! tags); it gets `last_copied_at = now`, `copy_count + 1`,
 //! the new source, and everything derived from the new capture (representations,
 //! preview, size, metadata/thumbnail, sensitivity, `expires_at`).
 
@@ -156,7 +157,11 @@ impl Storage {
             pin_order: existing.as_ref().and_then(|e| e.pin_order),
             source: new.source.clone(),
             sensitivity: new.sensitivity.clone(),
-            note: existing.as_ref().and_then(|e| e.note.clone()),
+            // A masked clip carries no note (or tags): they are cleared below on a bump.
+            note: existing
+                .as_ref()
+                .and_then(|e| e.note.clone())
+                .filter(|_| new.sensitivity.level != SensitivityLevel::Masked),
             tags: Vec::new(),
             collections: Vec::new(),
             expires_at: new.expires_at,
@@ -203,6 +208,12 @@ impl Storage {
         if let Some(e) = &existing {
             stale.extend(e.old_blobs.iter().copied());
             tx.execute("DELETE FROM representations WHERE clip_id = ?1", [&id_s])?;
+            if clip.sensitivity.level == SensitivityLevel::Masked {
+                // Re-captured as masked: drop its note and tags (memberships stay).
+                tx.execute("UPDATE clips SET note = NULL WHERE id = ?1", [&id_s])?;
+                tx.execute("DELETE FROM clip_tags WHERE clip_id = ?1", [&id_s])?;
+                crate::organize::delete_unused_tags(&tx)?;
+            }
             tx.execute(
                 "UPDATE clips SET preview = ?2, size_bytes = ?3, last_copied_at = ?4, \
                  copy_count = copy_count + 1, source_app_id = ?5, source_app_name = ?6, \

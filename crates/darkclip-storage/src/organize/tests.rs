@@ -603,3 +603,121 @@ fn note_and_tags_on_masked_clip_refused() {
     assert_eq!(fts_hits(&s2, "synthetic0000000000000000"), 0);
     assert_eq!(count(&s2, "SELECT count(*) FROM clips_fts"), 1);
 }
+
+#[test]
+fn recapture_as_masked_clears_note_and_tags() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut s = open(tmp.path(), clock());
+    let secret = concat!("sk-", "synthetic1111111111111111");
+    let id = ins(&mut s, text_clip(secret));
+    let col = s
+        .create_collection("Keys", CollectionSort::Recent, None)
+        .unwrap()
+        .id;
+    s.add_to_collection(&col, &id).unwrap();
+    s.set_note(&id, Some("echidna note")).unwrap();
+    s.set_clip_tags(&id, &["echidna", "shared"]).unwrap();
+    let other = ins(&mut s, text_clip("another clip"));
+    s.set_clip_tags(&other, &["shared"]).unwrap();
+
+    assert_eq!(
+        s.upsert_clip(&masked(secret)).unwrap(),
+        crate::UpsertOutcome::Bumped(id)
+    );
+    let c = s.get_clip(&id).unwrap().unwrap();
+    assert_eq!(c.note, None, "note cleared");
+    assert!(c.tags.is_empty(), "tags cleared");
+    assert_eq!(c.collections.len(), 1, "memberships stay");
+    assert_eq!(
+        tag_names(&s),
+        vec![("shared".into(), 1)],
+        "unused tag deleted"
+    );
+    let q = crate::SearchQuery {
+        text: None,
+        kinds: vec![],
+        pinned_only: false,
+        since: None,
+        include_masked: true,
+        limit: 50,
+        cursor: None,
+        collection: None,
+        tag: Some("echidna".into()),
+    };
+    assert!(s.search(&q).unwrap().0.is_empty(), "tag filter misses it");
+    assert_eq!(fts_hits(&s, "echidna"), 0);
+}
+
+#[test]
+fn set_clip_tags_stops_at_the_limit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut s = open(tmp.path(), clock());
+    let a = ins(&mut s, text_clip("alpha clip"));
+    // 21 distinct names, then a huge tail that ends in an invalid name: the call must
+    // stop at the 21st distinct name instead of walking (and validating) the whole list.
+    let mut huge: Vec<String> = (0..21).map(|i| format!("t{i}")).collect();
+    huge.extend(std::iter::repeat_n("t0".to_owned(), 200_000));
+    huge.push("not a tag".into());
+    assert!(matches!(
+        s.set_clip_tags(&a, &huge),
+        Err(StorageError::InvalidArgument(_))
+    ));
+    // Many duplicates of few names are fine.
+    let dups: Vec<&str> = std::iter::repeat_n("dup", 100_000).collect();
+    let set = s.set_clip_tags(&a, &dups).unwrap();
+    assert_eq!(set.len(), 1);
+    assert_eq!(tag_names(&s), vec![("dup".into(), 1)]);
+}
+
+#[test]
+fn vietnamese_d_stroke_folds_in_tags_and_notes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut s = open(tmp.path(), clock());
+    let id = ins(&mut s, text_clip("travel plans"));
+    ins(&mut s, text_clip("unrelated words"));
+    let tags = s.set_clip_tags(&id, &["Đà-Nẵng"]).unwrap();
+    assert_eq!(tags[0].name, "đà-nẵng", "stored as written");
+    let note_id = ins(&mut s, text_clip("hotel list"));
+    s.set_note(&note_id, Some("Khách sạn Đông Hà")).unwrap();
+    let find = |s: &Storage, text: &str| -> Vec<ClipId> {
+        let q = crate::SearchQuery {
+            text: Some(text.into()),
+            kinds: vec![],
+            pinned_only: false,
+            since: None,
+            include_masked: true,
+            limit: 50,
+            cursor: None,
+            collection: None,
+            tag: None,
+        };
+        s.search(&q).unwrap().0.iter().map(|c| c.id).collect()
+    };
+    for text in ["da-nang", "da nang", "đà", "Đà Nẵng", "nang"] {
+        assert_eq!(find(&s, text), vec![id], "{text}");
+    }
+    assert_eq!(
+        find(&s, "dan"),
+        Vec::<ClipId>::new(),
+        "prefix of a folded word only"
+    );
+    for text in ["dong ha", "đông", "Dong"] {
+        assert_eq!(find(&s, text), vec![note_id], "{text}");
+    }
+    // The tag filter accepts the name as written (any case).
+    let mut q = crate::SearchQuery {
+        text: None,
+        kinds: vec![],
+        pinned_only: false,
+        since: None,
+        include_masked: true,
+        limit: 50,
+        cursor: None,
+        collection: None,
+        tag: Some("ĐÀ-NẴNG".into()),
+    };
+    let ids: Vec<_> = s.search(&q).unwrap().0.iter().map(|c| c.id).collect();
+    assert_eq!(ids, vec![id]);
+    q.tag = Some("other".into());
+    assert!(s.search(&q).unwrap().0.is_empty());
+}

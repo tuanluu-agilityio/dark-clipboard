@@ -455,15 +455,16 @@ impl Storage {
         names: &[S],
     ) -> Result<Vec<TagRef>, StorageError> {
         self.ensure_writable()?;
-        let mut normal: Vec<String> = Vec::with_capacity(names.len());
+        // Stop at the first name past the limit: the input length is not bounded.
+        let mut normal: Vec<String> = Vec::with_capacity(TAGS_PER_CLIP_MAX);
         for n in names {
             let name = Tag::validate_name(n.as_ref())?;
             if !normal.contains(&name) {
+                if normal.len() == TAGS_PER_CLIP_MAX {
+                    return Err(TOO_MANY_TAGS);
+                }
                 normal.push(name);
             }
-        }
-        if normal.len() > TAGS_PER_CLIP_MAX {
-            return Err(TOO_MANY_TAGS);
         }
         let now = self.clock.now();
         let clip_s = clip.to_string();

@@ -177,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn open_creates_schema_v1() {
+    fn open_creates_schema_v2() {
         let tmp = tempfile::tempdir().unwrap();
         let s = open(tmp.path());
         // Migration 2 (Task 401) runs on every new store: the current version is 2.

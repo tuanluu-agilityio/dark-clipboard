@@ -31,15 +31,21 @@
 //!
 //! Queries shorter than 3 characters, or without any letter or digit, cannot use the
 //! prefix index usefully; they fall back to a case-insensitive substring match on the
-//! `preview` of the most recent [`FALLBACK_WINDOW`] clips.
+//! `preview` of the most recent [`FALLBACK_WINDOW`] clips, plus (when the query has a
+//! letter or digit) a token-prefix match on the `note` and `tags` FTS columns of those
+//! clips, since notes and tags are not part of the preview.
+//!
+//! Vietnamese `đ`/`Đ`: `remove_diacritics` does not fold them, so notes and tags that
+//! contain one also index a copy folded to `d`, and each query token with one matches
+//! either form. Preview and body are not folded (that would need every existing row
+//! re-indexed): "da" does not find a body that only says "đà".
 
+use crate::clips::{enum_name, enum_parse};
 use crate::{Storage, StorageError};
 use darkclip_core::{
-    ClipId, ClipMetadata, ClipType, CollectionId, SensitivityLevel, Tag, Timestamp,
+    fold_d_stroke, ClipId, ClipMetadata, ClipType, CollectionId, SensitivityLevel, Tag, Timestamp,
 };
 use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 
 /// Bytes of plain text indexed per clip.
 pub(crate) const BODY_MAX_BYTES: usize = 32 * 1024;
@@ -53,7 +59,7 @@ const FTS_CANDIDATES: usize = 500;
 const RANK_FN: &str = "bm25(4.0, 1.0, 1.0, 1.0)";
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SearchQuery {
     pub text: Option<String>,
     pub kinds: Vec<ClipType>,
@@ -66,6 +72,23 @@ pub struct SearchQuery {
     pub collection: Option<CollectionId>,
     /// Only clips with this tag (normalised like a tag name; an invalid name matches nothing).
     pub tag: Option<String>,
+}
+
+/// Never prints the query text or the tag name (GC-06: a query can itself be sensitive).
+impl std::fmt::Debug for SearchQuery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SearchQuery")
+            .field("text", &self.text.as_ref().map(|_| "<redacted>"))
+            .field("kinds", &self.kinds)
+            .field("pinned_only", &self.pinned_only)
+            .field("since", &self.since)
+            .field("include_masked", &self.include_masked)
+            .field("limit", &self.limit)
+            .field("cursor", &self.cursor)
+            .field("collection", &self.collection)
+            .field("tag", &self.tag.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// Position of the last row of a page. Opaque outside this crate: use `encode`/`decode`.
@@ -177,18 +200,6 @@ fn id_from_bytes(b: &[u8]) -> Option<ClipId> {
     ClipId::parse(&s).ok()
 }
 
-fn enum_name<T: Serialize>(v: &T) -> Result<String, StorageError> {
-    match serde_json::to_value(v) {
-        Ok(serde_json::Value::String(s)) => Ok(s),
-        _ => Err(StorageError::Sqlite("ColumnEncode".into())),
-    }
-}
-
-fn enum_parse<T: DeserializeOwned>(s: String) -> Result<T, StorageError> {
-    serde_json::from_value(serde_json::Value::String(s))
-        .map_err(|_| StorageError::Sqlite("ColumnDecode".into()))
-}
-
 /// The first [`BODY_MAX_BYTES`] bytes of `text`, cut at a char boundary.
 pub(crate) fn truncate_body(text: &str) -> &str {
     if text.len() <= BODY_MAX_BYTES {
@@ -217,22 +228,39 @@ pub(crate) fn index_clip(
         [clip_id],
         |r| r.get(0),
     )?;
+    // Notes and tags carrying a Vietnamese d-stroke also index a folded copy, so "da nang"
+    // finds them; preview and body are not folded (that would need every row re-indexed).
+    let with_folded = |s: &str| match fold_d_stroke(s) {
+        Some(f) => format!("{s} {f}"),
+        None => s.to_owned(),
+    };
     conn.execute("DELETE FROM clips_fts WHERE rowid = ?1", [rowid])?;
     conn.execute(
         "INSERT INTO clips_fts (rowid, preview, body, note, tags) VALUES (?1, ?2, ?3, ?4, ?5)",
-        rusqlite::params![rowid, preview, body, note, tags],
+        rusqlite::params![rowid, preview, body, with_folded(note), with_folded(tags)],
     )?;
     Ok(())
 }
 
-/// `"tok"* "tok2"*` from user text; `None` when no token has a letter or digit.
+/// `"tok"* "tok2"*` from user text; `None` when no token has a letter or digit. A token
+/// with a d-stroke also matches its folded form: `("đà"* OR "dà"*)`.
 fn match_expr(text: &str) -> Option<String> {
+    let quote = |t: &str| format!("\"{}\"*", t.replace('"', "\"\""));
     let toks: Vec<String> = text
         .split_whitespace()
         .filter(|t| t.chars().any(char::is_alphanumeric))
-        .map(|t| format!("\"{}\"*", t.replace('"', "\"\"")))
+        .map(|t| match fold_d_stroke(t) {
+            Some(f) => format!("({} OR {})", quote(t), quote(&f)),
+            None => quote(t),
+        })
         .collect();
-    (!toks.is_empty()).then(|| toks.join(" "))
+    // FTS5 has no implicit AND next to a parenthesised group, so spell it out then.
+    let sep = if toks.iter().any(|t| t.starts_with('(')) {
+        " AND "
+    } else {
+        " "
+    };
+    (!toks.is_empty()).then(|| toks.join(sep))
 }
 
 fn like_escape(s: &str) -> String {
@@ -335,20 +363,33 @@ impl Storage {
             }
             return self.recent(&filt, args, limit, q);
         };
-        let fts = match_expr(text).filter(|_| text.chars().count() >= 3);
-        let rows = if let Some(expr) = fts {
-            self.ranked(&expr, &filt, &args, limit, q)?
-        } else {
-            // The window subquery has no placeholders, so filter values stay in order.
-            args.push(Value::Text(format!("%{}%", like_escape(text))));
-            let sql = format!(
-                "SELECT {COLS} FROM (SELECT * FROM clips \
-                 ORDER BY last_copied_at DESC, id DESC LIMIT {FALLBACK_WINDOW}) c \
-                 WHERE 1 = 1 {filt} AND c.preview LIKE ? ESCAPE '\\' \
-                 ORDER BY c.pinned DESC, c.pin_order ASC, c.last_copied_at DESC, c.id DESC \
-                 LIMIT {limit}"
-            );
-            self.collect(&sql, args)?
+        let expr = match_expr(text);
+        let rows = match expr {
+            Some(expr) if text.chars().count() >= 3 => {
+                self.ranked(&expr, &filt, &args, limit, q)?
+            }
+            short => {
+                // The window subquery has no placeholders, so filter values stay in order.
+                args.push(Value::Text(format!("%{}%", like_escape(text))));
+                // Notes and tags are not in `preview`: a short query also matches them by
+                // token prefix (folded d-stroke included), restricted to those columns.
+                let tags_notes = match short {
+                    Some(expr) => {
+                        args.push(Value::Text(format!("{{note tags}} : ({expr})")));
+                        " OR c.id IN (SELECT r.clip_id FROM clip_rowid r WHERE r.rowid IN \
+                         (SELECT rowid FROM clips_fts WHERE clips_fts MATCH ?))"
+                    }
+                    None => "",
+                };
+                let sql = format!(
+                    "SELECT {COLS} FROM (SELECT * FROM clips \
+                     ORDER BY last_copied_at DESC, id DESC LIMIT {FALLBACK_WINDOW}) c \
+                     WHERE 1 = 1 {filt} AND (c.preview LIKE ? ESCAPE '\\'{tags_notes}) \
+                     ORDER BY c.pinned DESC, c.pin_order ASC, c.last_copied_at DESC, c.id DESC \
+                     LIMIT {limit}"
+                );
+                self.collect(&sql, args)?
+            }
         };
         Ok((rows, None))
     }
@@ -1217,6 +1258,27 @@ mod tests {
         let (p2, next) = s.search(&page).unwrap();
         assert_eq!(p2.iter().map(|r| r.id).collect::<Vec<_>>(), vec![a]);
         assert!(next.is_none());
+    }
+
+    #[test]
+    fn search_query_debug_redacts_text_and_tag() {
+        let secret = concat!("hunter", "2-query-text");
+        let mut query = q(secret);
+        query.tag = Some(concat!("secret", "-tag-name").into());
+        for out in [format!("{query:?}"), format!("{query:#?}")] {
+            assert!(!out.contains(secret), "{out}");
+            assert!(!out.contains("secret-tag-name"), "{out}");
+            assert!(out.contains("SearchQuery"), "{out}");
+        }
+    }
+
+    #[test]
+    fn d_stroke_query_matches_original_and_folded_tokens() {
+        assert_eq!(match_expr("kube").as_deref(), Some("\"kube\"*"));
+        assert_eq!(
+            match_expr("Đà x").as_deref(),
+            Some("(\"Đà\"* OR \"Dà\"*) AND \"x\"*")
+        );
     }
 
     #[test]
