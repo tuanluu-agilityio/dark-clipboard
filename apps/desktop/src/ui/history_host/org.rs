@@ -234,6 +234,7 @@ impl Host {
     /// Drops everything the organisation part holds (the window closed).
     pub(super) fn org_leave(&mut self) {
         self.org = OrgState::default();
+        self.win.set_dlg(OrgDialogState::default());
         self.win.set_dlg_open(false);
         self.win.set_dlg_text(SharedString::new());
     }
@@ -296,7 +297,11 @@ impl Host {
     pub(super) fn close_dialog(&mut self) {
         self.org.dlg = None;
         self.win.set_dlg_text(SharedString::new());
+        // Chips, names and the counter do not stay in the hidden dialog's property (D-052).
+        self.win.set_dlg(OrgDialogState::default());
         self.render_dialog();
+        // The dialog's text box had the focus; give it back to the window.
+        self.win.invoke_focus_search();
     }
 
     fn render_dialog(&self) {
@@ -689,6 +694,7 @@ impl Host {
     pub(super) fn run_plan(&mut self, plan: BulkPlan) {
         let skipped = plan.skipped_text(self.lang);
         let n = plan.count();
+        let exact = plan.count_is_exact();
         let ui = self.win.as_weak();
         // Not quiet: the status refresh afterwards re-runs the search and reloads the lists.
         self.poster.post(move |app| {
@@ -714,14 +720,17 @@ impl Host {
                 })
                 .count();
             let _ = ui.upgrade_in_event_loop(move |_| {
-                with_host(|h| h.on_plan_done(n, failed, skipped));
+                with_host(|h| h.on_plan_done(n, exact, failed, skipped));
             });
         });
     }
 
-    fn on_plan_done(&mut self, n: usize, failed: usize, skipped: Option<String>) {
+    fn on_plan_done(&mut self, n: usize, exact: bool, failed: usize, skipped: Option<String>) {
         let mut msg = if failed > 0 {
             t(self.lang, Msg::UiActionFailed).to_string()
+        } else if !exact {
+            // Marked clips that were not in the collection are unchanged: no number.
+            t(self.lang, Msg::OrgDoneInexact).to_string()
         } else if n == 1 {
             t(self.lang, Msg::OrgSaved).to_string()
         } else {
@@ -820,9 +829,12 @@ impl Host {
         if self.modal_open() || self.confirming() {
             return;
         }
-        let Some(item) = self.subject().filter(|i| !i.masked) else {
+        let Some(item) = self.subject() else {
             return;
         };
+        if item.masked {
+            return self.nothing_to_do();
+        }
         // The strip may have loaded it already.
         if let Some((id, note)) = self.org.note.clone().filter(|(id, _)| *id == item.id) {
             let mut d = Dlg::new(DialogKind::Note(id));

@@ -591,6 +591,8 @@ impl Host {
         self.win.set_edit_open(false);
         self.win.set_edit_text(SharedString::new());
         self.win.set_edit_note(SharedString::new());
+        // The editor's text box had the focus; give it back to the window.
+        self.win.invoke_focus_search();
     }
 
     fn copy(&mut self, plain: bool) {

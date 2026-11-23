@@ -784,23 +784,34 @@ export component HistoryWindow inherits Window {
     }
 
     // The organisation dialog (Task 403): covers the window and takes every click.
-    if root.dlg-open: OrgDialog {
-        state: root.dlg;
-        text <=> root.dlg-text;
-        edited(s) => {
-            root.dlg-edited(s);
+    // The text box inside has the focus, so the keys are forwarded from this scope (a
+    // `capture-key-pressed` only sees keys of the focused item's ancestors).
+    if root.dlg-open: FocusScope {
+        focus-on-click: false;
+        capture-key-pressed(e) => {
+            if (root.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, false)) {
+                return accept;
+            }
+            reject
         }
-        submit => {
-            root.dlg-submit();
-        }
-        cancel => {
-            root.dlg-cancel();
-        }
-        choose(i) => {
-            root.dlg-choose(i);
-        }
-        remove-chip(i) => {
-            root.dlg-remove-chip(i);
+        OrgDialog {
+            state: root.dlg;
+            text <=> root.dlg-text;
+            edited(s) => {
+                root.dlg-edited(s);
+            }
+            submit => {
+                root.dlg-submit();
+            }
+            cancel => {
+                root.dlg-cancel();
+            }
+            choose(i) => {
+                root.dlg-choose(i);
+            }
+            remove-chip(i) => {
+                root.dlg-remove-chip(i);
+            }
         }
     }
 
@@ -823,14 +834,24 @@ export component HistoryWindow inherits Window {
         }
     }
 
-    if root.edit-open: EditPanel {
-        text <=> root.edit-text;
-        note: root.edit-note;
-        save => {
-            root.edit-save();
+    // Same reason as the organisation dialog: the editor's text box has the focus.
+    if root.edit-open: FocusScope {
+        focus-on-click: false;
+        capture-key-pressed(e) => {
+            if (root.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, false)) {
+                return accept;
+            }
+            reject
         }
-        cancel => {
-            root.edit-cancel();
+        EditPanel {
+            text <=> root.edit-text;
+            note: root.edit-note;
+            save => {
+                root.edit-save();
+            }
+            cancel => {
+                root.edit-cancel();
+            }
         }
     }
 }

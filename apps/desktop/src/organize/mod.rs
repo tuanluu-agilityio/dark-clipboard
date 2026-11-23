@@ -16,9 +16,10 @@ pub mod tags;
 
 /// `template` with `{name}` and `{n}` replaced.
 pub fn fill_name(template: &str, name: &str, n: u64) -> String {
+    // `{n}` first: a name that contains "{n}" is inserted afterwards and stays literal.
     template
-        .replace("{name}", name)
         .replace("{n}", &n.to_string())
+        .replace("{name}", name)
 }
 
 #[cfg(test)]

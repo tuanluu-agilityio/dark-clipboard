@@ -274,6 +274,10 @@ All rows **untested** until the owner runs them (agents never click, type, take 
 | Popup: select a row, `Ctrl+D` | The star appears (or disappears) within a moment; the key hint line mentions Ctrl+D | **untested** |
 | Popup: masked row, `Ctrl+D` | A toast says masked clips cannot be favorited; no star | **untested** |
 | Close and reopen the history window and the popup | Collection and tag names, notes and dialogs from before are not visible until the lists reload | **untested** |
+| Keyboard in each text dialog (new collection, note, tags, bulk tag, and the Ctrl+E editor of Task 404): type, then Enter / Esc; in the note and the editor Ctrl+Enter, and Backspace in the empty tag box | Enter submits (a newline in the note and the editor), Esc cancels, Ctrl+Enter saves the note or the editor, Backspace in the empty tag box removes the last chip; the keys act with the cursor in the text box, no mouse | **untested** |
+| Close any dialog or the editor | The search box has the keyboard focus again (type to search at once, arrows move the list) | **untested** |
+| Remove marked clips from a collection when some are not in it | The confirmation says "Remove the N marked clips ... Clips not in it are unchanged."; the toast says "Done" without a number | **untested** |
+| Close the history window with a dialog open, reopen | No chip, name or note from the dialog is visible | **untested** |
 | Vietnamese interface: repeat the dialogs | Every label, hint, error and confirmation is Vietnamese | **untested** |
 | Screen reader (Narrator): the dialog, the pane strip, a favorite row | The dialog title is announced; the row description ends with "Favorite" ("Yêu thích") | **untested** |
 

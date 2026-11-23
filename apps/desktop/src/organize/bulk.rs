@@ -111,14 +111,12 @@ pub fn favorite_target(targets: &[Target]) -> Option<bool> {
     if targets.is_empty() {
         return None;
     }
-    if targets.iter().all(|t| t.favorite) {
-        return Some(false);
+    // Something can be added: favorite. Otherwise unfavorite the favorites, if any.
+    if targets.iter().any(|t| !t.masked && !t.favorite) {
+        Some(true)
+    } else {
+        targets.iter().any(|t| t.favorite).then_some(false)
     }
-    // Favoriting: something must be left that can be added.
-    targets
-        .iter()
-        .any(|t| !t.masked && !t.favorite)
-        .then_some(true)
 }
 
 impl BulkPlan {
@@ -184,7 +182,7 @@ impl BulkPlan {
     /// False for "remove from collection": the marked clips that are not in it are counted
     /// but unchanged, so the result must not claim a number.
     pub fn count_is_exact(&self) -> bool {
-        true
+        !matches!(self.op, BulkOp::RemoveFromCollection { .. })
     }
 
     pub fn skipped_masked(&self) -> usize {
@@ -356,7 +354,9 @@ mod tests {
         let rm = BulkPlan::new(BulkOp::RemoveFromCollection { id, name }, &ts).unwrap();
         assert!(!rm.count_is_exact());
         assert!(BulkPlan::new(add_col(), &ts).unwrap().count_is_exact());
-        assert!(BulkPlan::new(BulkOp::Favorite(true), &ts).unwrap().count_is_exact());
+        assert!(BulkPlan::new(BulkOp::Favorite(true), &ts)
+            .unwrap()
+            .count_is_exact());
     }
 
     #[test]

@@ -699,8 +699,8 @@ messages! {
         "Thêm {n} mục vào \"{name}\"?"
     ),
     OrgConfirmRemoveFromCollection => (
-        "Remove {n} clips from \"{name}\"? The clips stay in your history.",
-        "Bỏ {n} mục khỏi \"{name}\"? Các mục vẫn còn trong lịch sử."
+        "Remove the {n} marked clips from \"{name}\"? Clips not in it are unchanged.",
+        "Bỏ {n} mục đã chọn khỏi \"{name}\"? Mục không thuộc đó sẽ không đổi."
     ),
     OrgConfirmAddTag => (
         "Add the tag \"{name}\" to {n} clips?",
@@ -715,18 +715,19 @@ messages! {
         "Bỏ {n} mục khỏi Yêu thích?"
     ),
     OrgSkippedMasked => (
-        "{n} masked clips were skipped.",
-        "Đã bỏ qua {n} mục bị che."
+        "Masked clips skipped: {n}",
+        "Mục bị che đã bỏ qua: {n}"
     ),
     OrgSkippedFull => (
-        "{n} clips already have 20 tags.",
-        "{n} mục đã đủ 20 thẻ."
+        "Clips already at 20 tags, skipped: {n}",
+        "Mục đã đủ 20 thẻ, đã bỏ qua: {n}"
     ),
     OrgNothingToDo => (
         "Nothing to change. Masked clips cannot be favorited, tagged or added to a collection.",
         "Không có gì để đổi. Mục bị che không thể yêu thích, gắn thẻ hay thêm vào bộ sưu tập."
     ),
     OrgDone => ("{n} clips updated", "Đã cập nhật {n} mục"),
+    OrgDoneInexact => ("Done", "Xong"),
     OrgKeyHintsConfirm => ("Enter apply · Esc cancel", "Enter áp dụng · Esc hủy"),
     OrgKeyHintsHistory => (
         "Ctrl+D favorite · Ctrl+N note · Ctrl+G tags · Ctrl+L add to collection · Ctrl+Shift+L remove · Ctrl+Shift+N new collection",
