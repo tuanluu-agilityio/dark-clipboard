@@ -77,7 +77,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 411 Data management | task/411-data-management | builder | sonnet | done | 216,339 | 148,700 (security-reviewer opus ×3: CR (blocking: FTS optimize on every eviction, +140 ms per capture at 10k) → CR (blocking: 10-minute claim false under steady captures) → APPROVED) | 57,085 (2 rounds) | 422,124 |
 | 403 Organization UI | task/403-organization-ui | builder | sonnet | done | 319,456 | 143,609 (reviewer opus ×2: CR (blocking: dialog keys never reached the host, also Task 404 edit panel; D-052 dialog state) → APPROVED) | 16,574 | 479,639 |
 | 405 Backup / export / import | task/405-backup-export | specialist | opus | done | 455,716 | 249,327 (security-reviewer opus ×3: CR (blocking: UTF-16 backup broke the store; NoCloud clips exported) → CR (blocking: hidden `sqlite_*` trigger survived the schema check; pending copy read after a queued Private) → APPROVED) | 150,115 (2 rounds) | 855,158 |
-| 406 Fuzzing | task/406-fuzzing | specialist | opus | pending | | | | |
+| 406 Fuzzing | task/406-fuzzing | specialist | opus | in progress | | | | |
 | 412 Update check | task/412-update-check | builder | sonnet | pending | | | | |
 | 407 Security re-review | task/407-security-review | security-reviewer | opus | pending | | | | |
 | 409 Licence | — | — | — | done in Task 201 (D-045) | | | | |
