@@ -105,6 +105,18 @@ pub struct StartupSettings {
     pub launch_at_login: bool,
 }
 
+/// The opt-in update check (Task 412, D-057). Off by default; the app makes no network request
+/// unless this is on or the user presses "Check for updates".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct UpdateSettings {
+    /// "Automatically check weekly".
+    #[serde(default)]
+    pub auto_check: bool,
+    /// When the last weekly check ran (Unix ms); `None` = never.
+    #[serde(default)]
+    pub last_check_ms: Option<i64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     pub settings_version: u32,
@@ -123,6 +135,9 @@ pub struct Settings {
     /// welcome and keeps the capture state in the file. Only `first_run` writes `false`.
     #[serde(default = "default_true")]
     pub onboarding_done: bool,
+    /// The opt-in update check (Task 412, D-057); missing in older files, which means off.
+    #[serde(default)]
+    pub updates: UpdateSettings,
 }
 
 impl Default for Settings {
@@ -135,6 +150,7 @@ impl Default for Settings {
             ui: UiSettings::default(),
             startup: StartupSettings::default(),
             onboarding_done: true,
+            updates: UpdateSettings::default(),
         }
     }
 }
@@ -702,5 +718,39 @@ mod tests {
         let (loaded, outcome) = Settings::load(&p);
         assert_eq!(outcome, LoadOutcome::Loaded);
         assert_eq!(loaded.privacy.mode, s.privacy.mode);
+    }
+
+    #[test]
+    fn the_update_check_is_off_by_default_and_never_checked() {
+        for s in [Settings::default(), Settings::first_run()] {
+            assert!(!s.updates.auto_check);
+            assert_eq!(s.updates.last_check_ms, None);
+        }
+    }
+
+    #[test]
+    fn a_file_without_the_updates_section_loads_with_the_check_off() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("settings.json");
+        let mut v = serde_json::to_value(Settings::default()).unwrap();
+        v.as_object_mut().unwrap().remove("updates");
+        std::fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        let (s, o) = Settings::load(&path);
+        assert_eq!(o, LoadOutcome::Loaded);
+        assert!(!s.updates.auto_check);
+        assert_eq!(s.updates.last_check_ms, None);
+    }
+
+    #[test]
+    fn the_update_choice_and_last_check_time_survive_a_save() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("settings.json");
+        let mut s = Settings::default();
+        s.updates.auto_check = true;
+        s.updates.last_check_ms = Some(1_700_000_000_000);
+        s.save(&path).unwrap();
+        let (back, o) = Settings::load(&path);
+        assert_eq!(o, LoadOutcome::Loaded);
+        assert_eq!(back.updates, s.updates);
     }
 }

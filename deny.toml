@@ -76,6 +76,11 @@ crate = "i-slint-renderer-skia"
 allow = ["GPL-3.0-only"]
 crate = "i-slint-renderer-software"
 
+# Mozilla's CA root list used by the opt-in update check (Task 412, D-057). Permissive data licence.
+[[licenses.exceptions]]
+allow = ["CDLA-Permissive-2.0"]
+crate = "webpki-roots"
+
 [licenses.private]
 ignore = true
 

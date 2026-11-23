@@ -310,6 +310,23 @@ All rows **untested** until the owner runs them (agents never click, type, take 
 | Vietnamese interface: repeat the dialogs | Every label, hint, error and confirmation is Vietnamese | **untested** |
 | Screen reader (Narrator): the dialog, the pane strip, a favorite row | The dialog title is announced; the row description ends with "Favorite" ("Yêu thích") | **untested** |
 
+## Windows: opt-in update check (Task 412)
+
+All rows **untested** until the owner runs them (agents never launch the UI or make a network request, GC-19). Use a scratch folder: `dark-clipboard.exe --data-dir <empty folder>`. Rows that talk to GitHub need a published release newer than the running build; before one exists the expected result is "You are up to date" or "Could not check" (no release yet answers 404).
+
+| Row | Expected | Result |
+|---|---|---|
+| Settings > About, fresh scratch folder | A "Updates" heading, a note about what is sent, a "Check for updates" button and an unchecked "Automatically check weekly" box; no result line | **untested** |
+| Leave the app running 1 minute with the toggle off and no button press (watch the network, for example with the firewall prompt or a resource monitor for `dark-clipboard.exe`) | No connection is made | **untested** |
+| Press "Check for updates" | The button greys out, "Checking..." shows, then one result line; the window stays usable meanwhile | **untested** |
+| Press it with the network off (Wi-Fi off) | "Could not check" within about 10 seconds; no other text, no crash | **untested** |
+| A newer release exists | "New version available: X.Y.Z" and an "Open the release page" button; the button opens that release page in the default browser and nothing is downloaded | **untested** |
+| Same version or older | "You are up to date" and no open button | **untested** |
+| Turn the weekly toggle on, close and reopen the window and the app | The box is still checked; `settings.json` has `updates.auto_check: true` and a `last_check_ms` after the first check | **untested** |
+| Weekly on, restart the app within a week | No second request (the time in `last_check_ms` does not change) | **untested** |
+| Turn the toggle off, restart | No request; the box stays unchecked | **untested** |
+| Vietnamese interface | Every label, the note and every result are Vietnamese | **untested** |
+
 ## macOS
 
 All rows **untested** (no hardware, Q-04).

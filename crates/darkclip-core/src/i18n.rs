@@ -500,6 +500,23 @@ messages! {
     SettingsDataFolder => ("Data folder", "Thư mục dữ liệu"),
     SettingsOpenFolder => ("Open folder", "Mở thư mục"),
     SettingsOpenFolderFailed => ("The folder could not be opened", "Không mở được thư mục"),
+    // Opt-in update check (Task 412, D-057)
+    SettingsUpdatesHeading => ("Updates", "Cập nhật"),
+    SettingsUpdateCheck => ("Check for updates", "Kiểm tra cập nhật"),
+    SettingsUpdateAuto => ("Automatically check weekly", "Tự động kiểm tra hằng tuần"),
+    SettingsUpdateNote => (
+        "Off by default. A check sends one request to GitHub with only the app name and version; no clips, settings or identifiers. Nothing is downloaded or installed.",
+        "Mặc định tắt. Mỗi lần kiểm tra gửi một yêu cầu đến GitHub, chỉ kèm tên và phiên bản ứng dụng; không gửi mục đã chép, cài đặt hay mã định danh. Không có gì được tải về hay cài đặt."
+    ),
+    SettingsUpdateChecking => ("Checking...", "Đang kiểm tra..."),
+    SettingsUpdateUpToDate => ("You are up to date", "Bạn đang dùng bản mới nhất"),
+    SettingsUpdateAvailable => ("New version available:", "Có phiên bản mới:"),
+    SettingsUpdateFailed => ("Could not check", "Không kiểm tra được"),
+    SettingsUpdateOpen => ("Open the release page", "Mở trang phát hành"),
+    SettingsUpdateOpenFailed => (
+        "The release page could not be opened",
+        "Không mở được trang phát hành"
+    ),
     SettingsStartAtLoginCustomProfile => (
         "Not available with a custom data folder: the login entry would start the default profile.",
         "Không dùng được với thư mục dữ liệu tùy chọn: mục khởi động sẽ chạy hồ sơ mặc định."

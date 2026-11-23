@@ -31,10 +31,17 @@ pub const THIRD_PARTY: &[(&str, &str, &str)] = &[
     ),
     ("thiserror", "2.0.21", "MIT OR Apache-2.0"),
     ("tray-icon", "0.26.1", "MIT OR Apache-2.0"),
+    ("ureq", "3.5.2", "MIT OR Apache-2.0"),
+    ("rustls", "0.23.46", "Apache-2.0 OR ISC OR MIT"),
+    ("ring", "0.17.14", "Apache-2.0 AND ISC"),
+    ("webpki-roots", "1.0.12", "CDLA-Permissive-2.0"),
     ("uuid", "1.29.3", "Apache-2.0 OR MIT"),
     ("windows", "0.62.2", "MIT OR Apache-2.0"),
     ("zeroize", "1.9.2", "Apache-2.0 OR MIT"),
 ];
+
+/// Notice for the root certificates the update check trusts (Task 412).
+pub const ROOTS_NOTICE: &str = "Root certificates: Mozilla CA data from webpki-roots, CDLA-Permissive-2.0, https://cdla.dev/permissive-2-0/";
 
 /// The app's own licence.
 pub const OWN_LICENCE: &str = "GPL-3.0-only";
@@ -55,6 +62,8 @@ pub fn third_party_text() -> String {
         .map(|(n, v, l)| format!("{n} {v}  -  {l}"))
         .collect::<Vec<_>>()
         .join("\n")
+        + "\n"
+        + ROOTS_NOTICE
 }
 
 /// A value in the capability list: a translated message, or the adapter's own short name.
@@ -147,6 +156,16 @@ mod tests {
         let slint = THIRD_PARTY.iter().find(|d| d.0 == "slint").unwrap();
         assert!(slint.2.contains("GPL-3.0-only"));
         assert!(third_party_text().contains("rusqlite 0.43.0"));
+        let text = third_party_text();
+        for needle in [
+            "webpki-roots 1.0.12",
+            "CDLA-Permissive-2.0",
+            "https://cdla.dev/permissive-2-0/",
+            "rustls 0.23.46",
+            "ring 0.17.14",
+        ] {
+            assert!(text.contains(needle), "{needle} missing from the notices");
+        }
         assert!(!version().is_empty());
     }
 

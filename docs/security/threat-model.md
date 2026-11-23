@@ -53,6 +53,12 @@ Assumption: the attacker does **not** run code as the same OS user. A same-user 
 | T-17 | B1 | I | Source-app attribution stores window titles (document names) | Model has no window-title field (schema rejects it) | — |
 | T-18 | B2 | D | Clipboard locked indefinitely by a buggy app | Bounded retries; drop the change; never block the UI thread | Missed capture (logged by code) |
 
+> **Changed by D-057 (2026-11-24, Task 412):** T-20 is added for the opt-in update check, the only network code before 0.1.0.
+>
+> | ID | Boundary | STRIDE | Threat | Mitigation | Residual |
+> |---|---|---|---|---|---|
+> | T-20 | B7 (new boundary, D-057: `apps/desktop` `update.rs` ↔ `api.github.com` over HTTPS) | S, T, D, I | (a) A spoofed or tampered answer points the user at a malicious page, injects text into the UI, or is huge. (b) Opening the URL runs or downloads something. (c) The request leaks clip data, settings or identifiers, or happens without consent. | TLS (rustls) with bundled Mozilla roots, https only, no redirects; 10 s timeout and a 256 KiB cap; only `tag_name` and `html_url` read; the shown version is rebuilt from the parsed tag (no answer text reaches the UI, tags over 64 bytes refused); the page opens only if it starts with `https://github.com/tuanluu-agilityio/dark-clipboard/releases/tag/` and has a restricted character set (never a download); nothing is downloaded or installed; off by default, only on the button or the toggle, one check at a time, once a week at most; the request carries only a fixed User-Agent and Accept; the gate keeps HTTP clients out of `crates/` and network APIs out of every file but `update.rs`; errors are content-free | The network address is visible to GitHub (and to a configured proxy); a compromised GitHub account or TLS root could show a false "new version" page; the user still downloads and verifies manually (T-14) |
+
 ## 4. Security requirements derived (traceable to tasks)
 
 SR-01 mandatory markers (T-01, T-02) · SR-02 content-free logging, enforced by check (T-03) · SR-03 size caps before allocation (T-06) · SR-04 no HTML rendering, no execution of clip content (T-07) · SR-05 secure delete (T-05) · SR-06 file permissions (T-04) · SR-07 MCP scopes and audit (T-09, T-10, T-11) · SR-08 IPC peer checks (T-12) · SR-09 no implicit AI upload (T-13) · SR-10 `cargo deny` in CI (T-14) · SR-11 no window titles (T-17) · SR-12 PRIMARY off by default (T-16).

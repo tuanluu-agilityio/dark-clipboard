@@ -26,6 +26,7 @@ mod single_instance;
 mod theme;
 mod tray;
 mod ui;
+mod update;
 #[cfg(windows)]
 mod winsys;
 
