@@ -184,6 +184,8 @@ impl H {
                 include_masked: true,
                 limit: 200,
                 cursor: None,
+                collection: None,
+                tag: None,
             })
             .unwrap();
         rows.into_iter().map(|r| r.preview).collect()

@@ -24,6 +24,10 @@ pub enum StorageError {
     /// The clip violates a schema constraint (`Clip::validate`). Field name only.
     /// Added to the Task 007 interface: `upsert_clip` must call `Clip::validate`.
     Invalid(CoreError),
+    /// The request is not allowed for this target (a note or tags on a masked clip,
+    /// renaming or deleting a system collection, reordering a non-manual collection,
+    /// too many tags). A fixed description only, never user input.
+    InvalidArgument(&'static str),
 }
 
 impl std::fmt::Display for StorageError {
@@ -39,6 +43,7 @@ impl std::fmt::Display for StorageError {
             Self::NotFound => f.write_str("not found"),
             Self::ReadOnly => f.write_str("storage is read-only"),
             Self::Invalid(e) => write!(f, "invalid clip: {e}"),
+            Self::InvalidArgument(what) => write!(f, "invalid argument: {what}"),
         }
     }
 }

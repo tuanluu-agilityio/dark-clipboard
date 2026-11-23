@@ -22,13 +22,22 @@
 //! cursor cannot resume, so they return a single page (at most `limit` rows, never a
 //! cursor) and ignore `cursor`. `limit` is clamped to 200.
 //!
+//! Collection and tag filters (schema v2) combine with the others as `IN` subqueries. The
+//! tag filter is normalised like a tag name (an invalid name matches nothing). They count
+//! as narrowing filters for the uncapped re-run. Listing (empty text) a `manual`
+//! collection orders by the stored `ord` instead (pinned rows get no precedence there),
+//! with a keyset on the cursor clip's position; text queries in any collection keep the
+//! ranking above.
+//!
 //! Queries shorter than 3 characters, or without any letter or digit, cannot use the
 //! prefix index usefully; they fall back to a case-insensitive substring match on the
 //! `preview` of the most recent [`FALLBACK_WINDOW`] clips.
 
 use crate::{Storage, StorageError};
-use darkclip_core::{ClipId, ClipMetadata, ClipType, SensitivityLevel, Timestamp};
-use rusqlite::{params_from_iter, types::Value, Connection};
+use darkclip_core::{
+    ClipId, ClipMetadata, ClipType, CollectionId, SensitivityLevel, Tag, Timestamp,
+};
+use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -53,6 +62,10 @@ pub struct SearchQuery {
     pub include_masked: bool,
     pub limit: u16,
     pub cursor: Option<Cursor>,
+    /// Only members of this collection. A `manual` collection lists in its stored order.
+    pub collection: Option<CollectionId>,
+    /// Only clips with this tag (normalised like a tag name; an invalid name matches nothing).
+    pub tag: Option<String>,
 }
 
 /// Position of the last row of a page. Opaque outside this crate: use `encode`/`decode`.
@@ -188,14 +201,16 @@ pub(crate) fn truncate_body(text: &str) -> &str {
     &text[..end]
 }
 
-/// Inserts the FTS row of a clip, replacing any previous one (delete, then insert).
-/// Masked clips pass an empty `body`/`note`: only the masked preview is indexed.
+/// Inserts the FTS row of a clip, replacing any previous one (delete, then insert every
+/// column: the table is contentless). Masked clips pass an empty `body`/`note`/`tags`:
+/// only the masked preview is indexed.
 pub(crate) fn index_clip(
     conn: &Connection,
     clip_id: &str,
     preview: &str,
     body: &str,
     note: &str,
+    tags: &str,
 ) -> Result<(), StorageError> {
     let rowid: i64 = conn.query_row(
         "SELECT rowid FROM clip_rowid WHERE clip_id = ?1",
@@ -204,8 +219,8 @@ pub(crate) fn index_clip(
     )?;
     conn.execute("DELETE FROM clips_fts WHERE rowid = ?1", [rowid])?;
     conn.execute(
-        "INSERT INTO clips_fts (rowid, preview, body, note, tags) VALUES (?1, ?2, ?3, ?4, '')",
-        rusqlite::params![rowid, preview, body, note],
+        "INSERT INTO clips_fts (rowid, preview, body, note, tags) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![rowid, preview, body, note, tags],
     )?;
     Ok(())
 }
@@ -292,10 +307,32 @@ impl Storage {
         if !q.include_masked {
             filt.push_str(" AND c.sensitivity_level <> 'masked'");
         }
+        if let Some(col) = q.collection {
+            args.push(Value::Text(col.to_string()));
+            filt.push_str(
+                " AND c.id IN (SELECT m.clip_id FROM collection_clips m WHERE m.collection_id = ?)",
+            );
+        }
+        if let Some(tag) = &q.tag {
+            // A name that cannot be a tag matches nothing.
+            let Ok(name) = Tag::validate_name(tag) else {
+                return Ok((Vec::new(), None));
+            };
+            args.push(Value::Text(name));
+            filt.push_str(
+                " AND c.id IN (SELECT ct.clip_id FROM clip_tags ct \
+                 JOIN tags t ON t.id = ct.tag_id WHERE t.name = ?)",
+            );
+        }
         args.push(Value::Integer(self.clock.now().0));
         filt.push_str(" AND (c.expires_at IS NULL OR c.expires_at > ?)");
 
         let Some(text) = text else {
+            if let Some(col) = q.collection {
+                if self.is_manual(&col)? {
+                    return self.manual(&col, &filt, args, limit, q);
+                }
+            }
             return self.recent(&filt, args, limit, q);
         };
         let fts = match_expr(text).filter(|_| text.chars().count() >= 3);
@@ -350,7 +387,8 @@ impl Storage {
         }
         let want = limit - out.len();
         let mut rest = self.unpinned(expr, filt, filt_args, want, true)?;
-        let narrowing = !q.kinds.is_empty() || q.since.is_some();
+        let narrowing =
+            !q.kinds.is_empty() || q.since.is_some() || q.collection.is_some() || q.tag.is_some();
         if rest.len() < want && narrowing && self.candidates_capped(expr)? {
             rest = self.unpinned(expr, filt, filt_args, want, false)?;
         }
@@ -412,6 +450,69 @@ impl Storage {
             out.push(row_to_summary(r)?);
         }
         Ok(out)
+    }
+
+    fn is_manual(&self, col: &CollectionId) -> Result<bool, StorageError> {
+        let sort: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT sort FROM collections WHERE id = ?1",
+                [col.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(sort.as_deref() == Some("manual"))
+    }
+
+    /// Members of a `manual` collection in stored order (`ord`, then id), with a keyset on
+    /// the cursor clip's position. A cursor clip that left the collection ends the list.
+    fn manual(
+        &self,
+        col: &CollectionId,
+        filt: &str,
+        args: Vec<Value>,
+        limit: usize,
+        q: &SearchQuery,
+    ) -> Result<(Vec<ClipSummary>, Option<Cursor>), StorageError> {
+        let col_s = col.to_string();
+        let mut a = Vec::with_capacity(args.len() + 4);
+        a.push(Value::Text(col_s.clone()));
+        a.extend(args);
+        let mut keyset = "";
+        if let Some(c) = q.cursor {
+            let ord: Option<i64> = self
+                .conn
+                .query_row(
+                    "SELECT ord FROM collection_clips WHERE collection_id = ?1 AND clip_id = ?2",
+                    [col_s, c.id.to_string()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let Some(ord) = ord else {
+                return Ok((Vec::new(), None));
+            };
+            a.push(Value::Integer(ord));
+            a.push(Value::Integer(ord));
+            a.push(Value::Text(c.id.to_string()));
+            keyset = " AND (m.ord > ? OR (m.ord = ? AND c.id > ?))";
+        }
+        let sql = format!(
+            "SELECT {COLS} FROM clips c JOIN collection_clips m \
+             ON m.clip_id = c.id AND m.collection_id = ? \
+             WHERE 1 = 1 {filt} {keyset} ORDER BY m.ord ASC, c.id ASC LIMIT {}",
+            limit + 1
+        );
+        let mut out = self.collect(&sql, a)?;
+        let next = if out.len() > limit {
+            out.truncate(limit);
+            out.last().map(|s| Cursor {
+                last_copied_at: s.last_copied_at,
+                id: s.id,
+            })
+        } else {
+            None
+        };
+        Ok((out, next))
     }
 
     /// Recent list ordered pinned (by `pin_order`) first, then unpinned by recency, with
@@ -570,6 +671,8 @@ mod tests {
             include_masked: true,
             limit: 50,
             cursor: None,
+            collection: None,
+            tag: None,
         }
     }
 
@@ -1027,6 +1130,93 @@ mod tests {
                 vec!["kubectl lasting row"]
             );
         }
+    }
+
+    #[test]
+    fn search_filters_by_collection_and_tag() {
+        use darkclip_core::CollectionSort;
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path());
+        let a = id_of(s.upsert_clip(&text_clip("kubectl alpha")).unwrap());
+        let b = id_of(s.upsert_clip(&text_clip("kubectl bravo")).unwrap());
+        let c = id_of(s.upsert_clip(&text_clip("kubectl charlie")).unwrap());
+        let other = id_of(s.upsert_clip(&text_clip("kubectl outsider")).unwrap());
+        let col = s
+            .create_collection("Ops", CollectionSort::Recent, None)
+            .unwrap()
+            .id;
+        s.add_to_collection(&col, &a).unwrap();
+        s.add_to_collection(&col, &b).unwrap();
+        s.set_clip_tags(&b, &["deploy"]).unwrap();
+        s.set_clip_tags(&c, &["deploy", "prod"]).unwrap();
+        s.set_clip_tags(&other, &["prod"]).unwrap();
+        let ids = |s: &Storage, q: &SearchQuery| -> Vec<ClipId> {
+            s.search(q).unwrap().0.iter().map(|r| r.id).collect()
+        };
+        let mut list = q("");
+        list.text = None;
+        let with = |base: &SearchQuery, col: Option<CollectionId>, tag: Option<&str>| {
+            let mut x = base.clone();
+            x.collection = col;
+            x.tag = tag.map(str::to_owned);
+            x
+        };
+        // Text queries rank by bm25 (tags lengthen a row), so compare those as sets;
+        // the listing keeps the existing order (recency here).
+        let set = |mut v: Vec<ClipId>| {
+            v.sort_unstable();
+            v
+        };
+        assert_eq!(ids(&s, &with(&list, Some(col), None)), vec![b, a]);
+        assert_eq!(ids(&s, &with(&list, None, Some("deploy"))), vec![c, b]);
+        for base in [list.clone(), q("kubectl"), q("ku")] {
+            let got = |col, tag| set(ids(&s, &with(&base, col, tag)));
+            assert_eq!(got(Some(col), None), set(vec![a, b]), "{base:?}");
+            assert_eq!(got(None, Some("deploy")), set(vec![b, c]));
+            // The tag filter is normalised like a tag name.
+            assert_eq!(got(None, Some(" DEPLOY ")), set(vec![b, c]));
+            assert_eq!(got(Some(col), Some("deploy")), vec![b]);
+            assert!(got(Some(col), Some("prod")).is_empty());
+            assert!(got(None, Some("no such")).is_empty());
+            assert!(got(None, Some("unknown")).is_empty());
+            let missing = CollectionId::new_v7(Timestamp(1));
+            assert!(got(Some(missing), None).is_empty());
+        }
+        // Combined with the existing filters.
+        let mut kinds = with(&list, Some(col), None);
+        kinds.kinds = vec![ClipType::Url];
+        assert!(ids(&s, &kinds).is_empty());
+        s.set_pinned(&a, true).unwrap();
+        let mut pinned = with(&list, Some(col), None);
+        pinned.pinned_only = true;
+        assert_eq!(ids(&s, &pinned), vec![a]);
+        assert_eq!(
+            ids(&s, &with(&list, Some(col), None)),
+            vec![a, b],
+            "pinned first"
+        );
+
+        // A manual collection lists in its stored order, and pages through it.
+        let m = s
+            .create_collection("Snippets", CollectionSort::Manual, None)
+            .unwrap()
+            .id;
+        for id in [&c, &a, &other] {
+            s.add_to_collection(&m, id).unwrap();
+        }
+        assert_eq!(ids(&s, &with(&list, Some(m), None)), vec![c, a, other]);
+        s.move_in_collection(&m, &other, 0).unwrap();
+        assert_eq!(ids(&s, &with(&list, Some(m), None)), vec![other, c, a]);
+        assert_eq!(ids(&s, &with(&list, Some(m), Some("prod"))), vec![other, c]);
+        let mut page = with(&list, Some(m), None);
+        page.limit = 2;
+        let (p1, next) = s.search(&page).unwrap();
+        assert_eq!(p1.iter().map(|r| r.id).collect::<Vec<_>>(), vec![other, c]);
+        page.cursor = next;
+        assert!(page.cursor.is_some());
+        let (p2, next) = s.search(&page).unwrap();
+        assert_eq!(p2.iter().map(|r| r.id).collect::<Vec<_>>(), vec![a]);
+        assert!(next.is_none());
     }
 
     #[test]

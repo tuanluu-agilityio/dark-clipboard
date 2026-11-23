@@ -93,6 +93,8 @@ fn resume_does_not_backfill() {
             include_masked: true,
             limit: 10,
             cursor: None,
+            collection: None,
+            tag: None,
         })
         .unwrap();
     assert_eq!(rows.len(), 1);

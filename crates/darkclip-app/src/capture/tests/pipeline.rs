@@ -64,6 +64,8 @@ fn sensitive_store_masked_sets_expiry_and_masked_preview() {
             include_masked: true,
             limit: 10,
             cursor: None,
+            collection: None,
+            tag: None,
         })
         .unwrap();
     assert!(rows.is_empty());
@@ -211,6 +213,8 @@ fn seq_change_during_read_drops_bytes() {
             include_masked: true,
             limit: 10,
             cursor: None,
+            collection: None,
+            tag: None,
         })
         .unwrap();
     assert!(rows.is_empty());

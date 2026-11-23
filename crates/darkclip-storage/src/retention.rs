@@ -10,13 +10,16 @@
 //!   truncated so deleted content does not linger in it.
 //! - Retention order: expired -> age -> count -> size. Pinned clips are never
 //!   evicted by age, count or size (`keep_pinned` is therefore not consulted).
-//!   Expired clips (`expires_at <= now`) are deleted even when pinned: the sensitive
-//!   TTL is a privacy promise. Favorites do not exist yet (P1) and count as none.
+//!   Favorites (members of the system collection `favorites`) are exempt the same way
+//!   while `keep_favorites` is true. Expired clips (`expires_at <= now`) are deleted even
+//!   when pinned or favorite: the sensitive TTL is a privacy promise (D-025).
 //!   A limit of 0 (`max_items`, `max_age_days`, `max_storage_mb`) means no limit.
 //! - Size = `Storage::db_bytes` + `Storage::blob_bytes` (see `stats.rs`). Victims are
 //!   the oldest unpinned clips by `last_copied_at`; the amount freed is estimated
 //!   from `size_bytes`, then re-measured, and the loop repeats until under the limit
-//!   or only pinned clips remain.
+//!   or only pinned (and kept favorite) clips remain.
+//! - Deleting a clip cascades its collection memberships and tags; tags no clip uses any
+//!   more are deleted in the same transaction.
 //! - `bytes_freed` is the sum of the deleted clips' `size_bytes` (logical bytes; a
 //!   blob shared with a surviving clip is counted though its file stays).
 
@@ -101,9 +104,22 @@ fn delete_ids(tx: &Transaction<'_>, ids: &[String]) -> Result<Deleted, StorageEr
             out.bytes = out.bytes.saturating_add(to_u64(size));
         }
     }
+    if out.count > 0 {
+        crate::organize::delete_unused_tags(tx)?;
+    }
     out.shas.sort_unstable();
     out.shas.dedup();
     Ok(out)
+}
+
+/// The extra `WHERE` clause that keeps favorites out of age, count and size eviction.
+fn favorites_exempt(p: &RetentionPolicy) -> &'static str {
+    if p.keep_favorites {
+        " AND id NOT IN (SELECT m.clip_id FROM collection_clips m \
+         JOIN collections k ON k.id = m.collection_id WHERE k.system_key = 'favorites')"
+    } else {
+        ""
+    }
 }
 
 fn select_ids(
@@ -194,22 +210,28 @@ impl Storage {
             let cutoff = now.saturating_sub(i64::from(p.max_age_days).saturating_mul(MS_PER_DAY));
             let ids = select_ids(
                 &tx,
-                "SELECT id FROM clips WHERE pinned = 0 AND last_copied_at < ?1",
+                &format!(
+                    "SELECT id FROM clips WHERE pinned = 0 AND last_copied_at < ?1{}",
+                    favorites_exempt(p)
+                ),
                 [cutoff],
             )?;
             let d = delete_ids(&tx, &ids)?;
             report.evicted_age = d.count;
             all.add(d);
         }
-        // 3. count (pinned count toward the total but are never evicted)
+        // 3. count (pinned and kept favorites count toward the total but are never evicted)
         if p.max_items > 0 {
             let total: i64 = tx.query_row("SELECT count(*) FROM clips", [], |r| r.get(0))?;
             let excess = to_u64(total).saturating_sub(u64::from(p.max_items));
             if excess > 0 {
                 let ids = select_ids(
                     &tx,
-                    "SELECT id FROM clips WHERE pinned = 0 \
-                     ORDER BY last_copied_at ASC, created_at ASC, id ASC LIMIT ?1",
+                    &format!(
+                        "SELECT id FROM clips WHERE pinned = 0{} \
+                         ORDER BY last_copied_at ASC, created_at ASC, id ASC LIMIT ?1",
+                        favorites_exempt(p)
+                    ),
                     [i64::try_from(excess).unwrap_or(i64::MAX)],
                 )?;
                 let d = delete_ids(&tx, &ids)?;
@@ -237,10 +259,11 @@ impl Storage {
                 let mut ids = Vec::new();
                 let mut est = 0u64;
                 {
-                    let mut st = tx.prepare(
-                        "SELECT id, size_bytes FROM clips WHERE pinned = 0 \
+                    let mut st = tx.prepare(&format!(
+                        "SELECT id, size_bytes FROM clips WHERE pinned = 0{} \
                          ORDER BY last_copied_at ASC, created_at ASC, id ASC",
-                    )?;
+                        favorites_exempt(p)
+                    ))?;
                     let rows =
                         st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
                     for row in rows {
@@ -253,7 +276,7 @@ impl Storage {
                     }
                 }
                 if ids.is_empty() {
-                    break; // only pinned clips remain
+                    break; // only pinned (and kept favorite) clips remain
                 }
                 let d = delete_ids(&tx, &ids)?;
                 tx.commit()?;
@@ -631,6 +654,88 @@ mod tests {
         let r = s.apply_retention(&no_limits()).unwrap();
         assert_eq!(r.expired, 1);
         assert!(s.get_clip(&id).unwrap().is_none());
+    }
+
+    #[test]
+    fn retention_keeps_favorites() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = clock();
+        let mut s = open(tmp.path(), c.clone());
+        let fav = s.favorites_id().unwrap();
+        let mut ids = Vec::new();
+        for i in 0..6i64 {
+            set(&c, T0 + i * 1000);
+            ids.push(ins(&mut s, text_clip(&format!("clip number {i}"))));
+        }
+        // The two oldest are favorites: count eviction skips them.
+        s.add_to_collection(&fav, &ids[0]).unwrap();
+        s.add_to_collection(&fav, &ids[1]).unwrap();
+        // A user collection gives no protection.
+        let col = s
+            .create_collection("Work", darkclip_core::CollectionSort::Recent, None)
+            .unwrap()
+            .id;
+        s.add_to_collection(&col, &ids[2]).unwrap();
+        let p = RetentionPolicy {
+            max_items: 4,
+            ..no_limits()
+        };
+        let r = s.apply_retention(&p).unwrap();
+        assert_eq!(r.evicted_count, 2);
+        for (i, kept) in [true, true, false, false, true, true].iter().enumerate() {
+            assert_eq!(s.get_clip(&ids[i]).unwrap().is_some(), *kept, "{i}");
+        }
+        // Age: an old favorite stays, an old non-favorite goes.
+        set(&c, T0 + 40 * DAY);
+        let p = RetentionPolicy {
+            max_age_days: 30,
+            ..no_limits()
+        };
+        let r = s.apply_retention(&p).unwrap();
+        assert_eq!(r.evicted_age, 2);
+        assert!(s.get_clip(&ids[0]).unwrap().is_some());
+        assert!(s.get_clip(&ids[1]).unwrap().is_some());
+        assert!(s.get_clip(&ids[4]).unwrap().is_none());
+        // Size: favorites are never the victims.
+        let large = vec![3u8; 1100 * 1024];
+        let big_id = ins(&mut s, new_clip(vec![raw(Mime::TextPlain, &large)]));
+        s.add_to_collection(&fav, &big_id).unwrap();
+        let p = RetentionPolicy {
+            max_storage_mb: 1,
+            ..no_limits()
+        };
+        let r = s.apply_retention(&p).unwrap();
+        assert_eq!(r.evicted_size, 0);
+        assert!(s.get_clip(&big_id).unwrap().is_some());
+        // keep_favorites = false: favorites are evicted like any other clip.
+        let p = RetentionPolicy {
+            max_items: 1,
+            keep_favorites: false,
+            ..no_limits()
+        };
+        let r = s.apply_retention(&p).unwrap();
+        assert_eq!(r.evicted_count, 2);
+        assert_eq!(count(&s, "SELECT count(*) FROM clips"), 1);
+    }
+
+    #[test]
+    fn expiry_beats_favorite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let c = clock();
+        let mut s = open(tmp.path(), c.clone());
+        let fav = s.favorites_id().unwrap();
+        let mut n = text_clip("favorite but expiring");
+        n.expires_at = Some(Timestamp(T0 + 1000));
+        let id = ins(&mut s, n);
+        s.add_to_collection(&fav, &id).unwrap();
+        s.set_pinned(&id, true).unwrap();
+        set(&c, T0 + 1000);
+        let r = s.apply_retention(&RetentionPolicy::default()).unwrap();
+        assert_eq!(r.expired, 1);
+        assert!(s.get_clip(&id).unwrap().is_none());
+        assert_eq!(count(&s, "SELECT count(*) FROM collection_clips"), 0);
+        let favs = s.list_collections().unwrap();
+        assert!(favs.iter().any(|c| c.id == fav && c.clip_count == 0));
     }
 
     #[test]
