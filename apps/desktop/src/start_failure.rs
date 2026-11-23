@@ -40,21 +40,47 @@ impl StartProblem {
 
     /// The text shown in the message window.
     pub fn msg(self) -> Msg {
-        let _ = self;
-        Msg::StartDbFailed
+        match self {
+            StartProblem::TooNew => Msg::StartDbTooNew,
+            StartProblem::Damaged => Msg::StartDbDamaged,
+            StartProblem::Other => Msg::StartDbFailed,
+        }
+    }
+
+    /// The text printed by `--headless`, which has no window and never moves anything.
+    pub fn headless_msg(self) -> Msg {
+        match self {
+            StartProblem::Damaged => Msg::CliDbDamaged,
+            other => other.msg(),
+        }
     }
 
     /// Only a damaged history may be moved aside.
     pub fn offers_move_aside(self) -> bool {
-        false
+        self == StartProblem::Damaged
     }
 }
 
 /// Classifies a failed `App::start`. `probe` is the error of a second, read-only
 /// `Storage::open` of the same folder (the API error alone does not say "damaged").
 pub fn classify(start: &ApiError, probe: Option<&StorageError>) -> StartProblem {
-    let _ = (start, probe);
-    StartProblem::Other
+    match (start, probe) {
+        (ApiError::SchemaTooNew, _)
+        | (ApiError::Storage, Some(StorageError::SchemaTooNew { .. })) => StartProblem::TooNew,
+        (ApiError::Storage, Some(StorageError::Corrupt)) => StartProblem::Damaged,
+        _ => StartProblem::Other,
+    }
+}
+
+/// Opens the history read-only once more to learn why `App::start` failed; `None` when it
+/// opens. Runs only after a failed start, on the worker thread or in headless mode.
+pub fn probe(data_dir: &Path) -> Option<StorageError> {
+    darkclip_storage::Storage::open(
+        data_dir,
+        darkclip_storage::OpenMode::ReadOnly,
+        std::sync::Arc::new(crate::SystemClock),
+    )
+    .err()
 }
 
 /// What to do after the message window.
@@ -67,14 +93,32 @@ pub enum Step {
 
 /// `chose_move` is the user's "Yes"; `already_moved` stops a second move in one run.
 pub fn next_step(problem: StartProblem, chose_move: bool, already_moved: bool) -> Step {
-    let _ = (problem, chose_move, already_moved);
-    Step::MoveAsideAndRetry
+    if problem.offers_move_aside() && chose_move && !already_moved {
+        Step::MoveAsideAndRetry
+    } else {
+        Step::Quit
+    }
 }
 
 /// `msg` in `lang` with `{path}` replaced by the data folder.
 pub fn text(lang: Lang, msg: Msg, data_dir: &Path) -> String {
-    let _ = (lang, data_dir);
-    t(lang, msg).to_string()
+    t(lang, msg).replace("{path}", &data_dir.display().to_string())
+}
+
+/// Shows `msg` in a message window (Windows; elsewhere on standard error). With `ask`, the
+/// window has Yes/No and the answer is returned; otherwise it only informs and returns false.
+pub fn show(lang: Lang, msg: Msg, data_dir: &Path, ask: bool) -> bool {
+    let body = text(lang, msg, data_dir);
+    #[cfg(windows)]
+    {
+        crate::winsys::message_box(t(lang, Msg::UiAppName), &body, ask)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = ask;
+        eprintln!("{body}");
+        false
+    }
 }
 
 #[cfg(test)]
@@ -140,6 +184,10 @@ mod tests {
         assert!(!StartProblem::TooNew.offers_move_aside());
         assert!(!StartProblem::Other.offers_move_aside());
         assert_eq!(StartProblem::Damaged.name(), "damaged");
+        // Headless has no Yes/No: its damaged text does not ask.
+        assert_eq!(StartProblem::Damaged.headless_msg(), Msg::CliDbDamaged);
+        assert_eq!(StartProblem::TooNew.headless_msg(), Msg::StartDbTooNew);
+        assert_eq!(StartProblem::Other.headless_msg(), Msg::StartDbFailed);
     }
 
     #[test]
@@ -163,6 +211,7 @@ mod tests {
                 Msg::StartDbDamaged,
                 Msg::StartDbTooNew,
                 Msg::StartDbFailed,
+                Msg::CliDbDamaged,
                 Msg::StartMoveAsideFailed,
             ] {
                 let s = text(lang, m, &dir);

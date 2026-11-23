@@ -4,13 +4,15 @@
 //!
 //! Permissions: on Unix the data directory and `blobs/` subdirectories are 0700 and
 //! every file this crate creates (database, blobs, backups) is 0600. SQLite creates its
-//! `-wal`/`-shm` files with the main database file's mode. On Windows no ACL is set:
-//! the data directory lives in the per-user profile (`%LOCALAPPDATA%`), whose default
-//! ACL already restricts access to the user, SYSTEM and administrators.
+//! `-wal`/`-shm` files with the main database file's mode. On Windows this crate sets no
+//! ACL (GC-01: no OS crates); the desktop app gives the data folder a protected DACL for
+//! the current user and SYSTEM at start-up, inherited by everything below it (Task 413).
 //!
 //! Must not depend on: OS crates, `tauri`.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+// No unsafe code in this crate (F407-11).
+#![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod archive;

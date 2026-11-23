@@ -3,6 +3,9 @@
 //! Must not depend on: any OS crate, `rusqlite`, `tauri`, any async runtime, the network.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+// The only unsafe code is the volatile zeroing in `sensitive/wipe.rs`, which opts in
+// explicitly (F407-11); `forbid` would not allow that module's `allow`.
+#![deny(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod classify;

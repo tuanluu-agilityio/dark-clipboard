@@ -3,6 +3,9 @@
 //! Volatile writes keep the compiler from removing the zeroing as a dead store.
 //! Copies made earlier (for example by reallocation) are out of reach.
 
+// The crate denies unsafe code; the volatile writes below are the one exception (F407-11).
+#![allow(unsafe_code)]
+
 use std::sync::atomic::{compiler_fence, Ordering};
 
 /// Zeroes every byte of `s` (including spare capacity) and leaves it empty.

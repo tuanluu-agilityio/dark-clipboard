@@ -272,7 +272,80 @@ fn platform() -> Result<darkclip_platform::PlatformBundle, darkclip_platform::Pl
     ))
 }
 
+/// Debug builds only: the black-box tests (`tests/cli.rs`) set this variable so that running
+/// the gate never writes the real per-user WER exclusion list (Task 413). Release builds ignore
+/// it: the shipped app always excludes itself.
+const TEST_SKIP_WER_ENV: &str = "DARKCLIP_TEST_SKIP_WER";
+
+fn wer_skipped_for_tests() -> bool {
+    cfg!(debug_assertions) && std::env::var_os(TEST_SKIP_WER_ENV).is_some()
+}
+
+/// Keeps crash reports of this process out of Windows Error Reporting (Task 413, F407-01):
+/// first thing at start-up, in every run mode, before any clip can be in memory. `None` when
+/// skipped (the debug-build test seam above).
+#[cfg(windows)]
+fn exclude_from_error_reporting() -> Option<hardening::WerOutcome> {
+    if wer_skipped_for_tests() {
+        return None;
+    }
+    let exe = std::env::current_exe().ok();
+    Some(hardening::exclude_from_wer(
+        &hardening::SystemWer,
+        exe.as_deref(),
+    ))
+}
+
+#[cfg(not(windows))]
+fn exclude_from_error_reporting() -> Option<hardening::WerOutcome> {
+    let _ = wer_skipped_for_tests();
+    None
+}
+
+/// Logs the WER set-up (static names only); a failure is a warning and start-up goes on.
+fn log_wer(log: &Log, wer: Option<hardening::WerOutcome>) {
+    match wer {
+        Some(w) => {
+            let event = if w.ok() { "wer" } else { "wer_failed" };
+            log.event(event, &w.log_fields());
+        }
+        None => log.event("wer_skipped", &[]),
+    }
+}
+
+/// Whether the data folder exists yet and already is a Dark Clipboard folder, taken before it
+/// is created (Task 413, F407-02: only our own folder gets the private DACL).
+#[cfg_attr(not(windows), allow(dead_code))]
+struct DirOrigin {
+    created_now: bool,
+    is_data_folder: bool,
+}
+
+fn dir_origin(data_dir: &std::path::Path) -> DirOrigin {
+    DirOrigin {
+        created_now: !data_dir.exists(),
+        is_data_folder: hardening::is_data_folder(data_dir, default_data_dir().as_deref()),
+    }
+}
+
+/// Gives the data folder its private DACL (Windows) and logs the outcome by name. A failure
+/// is a warning; start-up goes on.
+#[cfg(windows)]
+fn restrict_data_dir(log: &Log, data_dir: &std::path::Path, origin: &DirOrigin) {
+    let r = hardening::restrict_data_dir(data_dir, origin.created_now, origin.is_data_folder);
+    let event = if r.is_warning() {
+        "data_dir_acl_failed"
+    } else {
+        "data_dir_acl"
+    };
+    log.event(event, &[("result", Val::Name(r.name()))]);
+}
+
+#[cfg(not(windows))]
+fn restrict_data_dir(_log: &Log, _data_dir: &std::path::Path, _origin: &DirOrigin) {}
+
 fn main() -> ExitCode {
+    let wer = exclude_from_error_reporting();
     #[cfg(windows)]
     winsys::attach_parent_console();
     // Before any window exists (the popup must be crisp on every monitor, Task 204).
@@ -301,25 +374,26 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
     match cli.mode {
-        Mode::Headless => run_headless(&cli, lang),
-        _ => run_app(&cli, lang),
+        Mode::Headless => run_headless(&cli, lang, wer),
+        _ => run_app(&cli, lang, wer),
     }
 }
 
 #[cfg(not(windows))]
-fn run_app(_cli: &Cli, _lang: Lang) -> ExitCode {
+fn run_app(_cli: &Cli, _lang: Lang, _wer: Option<hardening::WerOutcome>) -> ExitCode {
     ExitCode::from(2)
 }
 
 /// Default start, `--toggle` and `--quit`: take the instance lock or forward a command.
 #[cfg(windows)]
-fn run_app(cli: &Cli, lang: Lang) -> ExitCode {
+fn run_app(cli: &Cli, lang: Lang, wer: Option<hardening::WerOutcome>) -> ExitCode {
     use single_instance::{start_or_forward, Command, Start, WinTransport};
 
     let Some(data_dir) = cli.data_dir.clone().or_else(default_data_dir) else {
         eprintln!("{}", t(lang, Msg::CliStartFailed));
         return ExitCode::from(1);
     };
+    let origin = dir_origin(&data_dir);
     if std::fs::create_dir_all(&data_dir).is_err() {
         eprintln!("{}", t(lang, Msg::CliStartFailed));
         return ExitCode::from(1);
@@ -353,6 +427,9 @@ fn run_app(cli: &Cli, lang: Lang) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    // Only the primary instance owns the data folder: WER result and folder DACL go to its log.
+    log_wer(&log, wer);
+    restrict_data_dir(&log, &data_dir, &origin);
     // Only the primary instance shows windows; the choice is made before the first one exists.
     let renderer = renderer::select();
     if renderer.fell_back {
@@ -427,11 +504,12 @@ fn run_seed(cli: &Cli, lang: Lang) -> ExitCode {
     }
 }
 
-fn run_headless(cli: &Cli, lang: Lang) -> ExitCode {
+fn run_headless(cli: &Cli, lang: Lang, wer: Option<hardening::WerOutcome>) -> ExitCode {
     let Some(data_dir) = cli.data_dir.clone().or_else(default_data_dir) else {
         eprintln!("{}", t(lang, Msg::CliStartFailed));
         return ExitCode::from(1);
     };
+    let origin = dir_origin(&data_dir);
     if std::fs::create_dir_all(&data_dir).is_err() {
         eprintln!("{}", t(lang, Msg::CliStartFailed));
         return ExitCode::from(1);
@@ -441,6 +519,8 @@ fn run_headless(cli: &Cli, lang: Lang) -> ExitCode {
         "start",
         &[("version", Val::Name(env!("CARGO_PKG_VERSION")))],
     );
+    log_wer(&log, wer);
+    restrict_data_dir(&log, &data_dir, &origin);
 
     let bundle = match platform() {
         Ok(b) => b,
@@ -478,8 +558,19 @@ fn run_headless(cli: &Cli, lang: Lang) -> ExitCode {
     let app = match started {
         Ok((app, _)) => app,
         Err(e) => {
-            log.event("start_failed", &[("code", Val::Name(e.code()))]);
-            eprintln!("{}", t(lang, Msg::CliStartFailed));
+            // Headless never moves anything: it explains, with the folder, and stops.
+            let problem = start_failure::classify(&e, start_failure::probe(&data_dir).as_ref());
+            log.event(
+                "start_failed",
+                &[
+                    ("code", Val::Name(e.code())),
+                    ("problem", Val::Name(problem.name())),
+                ],
+            );
+            eprintln!(
+                "{}",
+                start_failure::text(lang, problem.headless_msg(), &data_dir)
+            );
             return ExitCode::from(1);
         }
     };

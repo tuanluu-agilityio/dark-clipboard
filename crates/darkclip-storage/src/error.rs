@@ -85,6 +85,14 @@ impl From<rusqlite::Error> for StorageError {
             E::SqliteFailure(err, _) if err.code == rusqlite::ErrorCode::DiskFull => {
                 return Self::StorageFull;
             }
+            E::SqliteFailure(err, _)
+                if matches!(
+                    err.code,
+                    rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+                ) =>
+            {
+                return Self::Corrupt;
+            }
             E::SqliteFailure(err, _message_dropped) => {
                 format!("{:?}/{}", err.code, err.extended_code)
             }

@@ -840,6 +840,10 @@ messages! {
         "Dark Clipboard could not open its history. Check that the folder exists and that you can write to it.\n\nFolder: {path}",
         "Dark Clipboard không mở được lịch sử. Hãy kiểm tra thư mục còn tồn tại và bạn có quyền ghi vào đó.\n\nThư mục: {path}"
     ),
+    CliDbDamaged => (
+        "Dark Clipboard could not open its history: the database file is damaged. Start the app without --headless to move it aside and start empty. Nothing was changed.\n\nFolder: {path}",
+        "Dark Clipboard không mở được lịch sử: tệp cơ sở dữ liệu bị hỏng. Hãy mở ứng dụng không có --headless để chuyển nó sang một bên và bắt đầu với lịch sử trống. Không có gì thay đổi.\n\nThư mục: {path}"
+    ),
     StartMoveAsideFailed => (
         "The damaged history could not be moved aside. Nothing was deleted. Close any program that uses the folder and start Dark Clipboard again.\n\nFolder: {path}",
         "Không chuyển được lịch sử bị hỏng sang một bên. Không có gì bị xóa. Hãy đóng các chương trình đang dùng thư mục rồi mở lại Dark Clipboard.\n\nThư mục: {path}"

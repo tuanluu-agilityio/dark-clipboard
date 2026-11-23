@@ -174,8 +174,12 @@ impl ListenError {
 /// `FILE_FLAG_FIRST_PIPE_INSTANCE`, an existing instance of the name fails with
 /// `ERROR_ACCESS_DENIED` (5).
 pub fn listen_error_from_win32(code: u32) -> ListenError {
-    let _ = code;
-    ListenError::Other
+    const ERROR_ACCESS_DENIED: u32 = 5;
+    if code == ERROR_ACCESS_DENIED {
+        ListenError::Squatted
+    } else {
+        ListenError::Other
+    }
 }
 
 #[cfg(windows)]

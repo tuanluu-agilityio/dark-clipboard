@@ -355,19 +355,161 @@ fn show_file_dialog(
     }
 }
 
-/// `WerAddExcludedApplication(exe_name, FALSE)` (Task 413). Stub.
+/// `WerAddExcludedApplication(exe_name, bAllUsers = FALSE)` (Task 413, F407-01): adds the
+/// executable's file name to the current user's WER exclusion list (HKCU, no admin needed,
+/// permanent until `WerRemoveExcludedApplication`). `true` on `S_OK`.
 pub fn wer_add_excluded_application(exe_name: &std::ffi::OsStr) -> bool {
-    let _ = exe_name;
-    false
+    use windows::core::HSTRING;
+    use windows::Win32::System::ErrorReporting::WerAddExcludedApplication;
+    let name = HSTRING::from(exe_name);
+    // SAFETY: `name` is a NUL-terminated wide string that outlives the call; the function
+    // copies it into the registry and keeps no pointer.
+    unsafe { WerAddExcludedApplication(&name, false) }.is_ok()
 }
 
-/// `WerSetFlags(WER_FAULT_REPORTING_FLAG_NOHEAP)` (Task 413). Stub.
+/// `WerSetFlags(WER_FAULT_REPORTING_FLAG_NOHEAP)` (Task 413, F407-01): no heap memory in any
+/// WER report of this process. `true` on `S_OK`.
 pub fn wer_set_no_heap() -> bool {
-    false
+    use windows::Win32::System::ErrorReporting::{WerSetFlags, WER_FAULT_REPORTING_FLAG_NOHEAP};
+    // SAFETY: takes a constant flag value, no pointers; affects only this process.
+    unsafe { WerSetFlags(WER_FAULT_REPORTING_FLAG_NOHEAP) }.is_ok()
 }
 
-/// The owner and DACL of `path` as SDDL text (Task 413). Stub.
+fn wide_path(path: &std::path::Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    path.as_os_str().encode_wide().chain(Some(0)).collect()
+}
+
+/// The owner and DACL of the file or folder `path` as SDDL text (`O:<sid>D:<flags>(...)`),
+/// from `GetNamedSecurityInfoW` and `ConvertSecurityDescriptorToStringSecurityDescriptorW`.
+/// `None` when either call fails. Security data only; nothing of the folder's content.
 pub fn security_sddl(path: &std::path::Path) -> Option<String> {
-    let _ = path;
-    None
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::Foundation::{LocalFree, ERROR_SUCCESS, HLOCAL};
+    use windows::Win32::Security::Authorization::{
+        ConvertSecurityDescriptorToStringSecurityDescriptorW, GetNamedSecurityInfoW,
+        SDDL_REVISION_1, SE_FILE_OBJECT,
+    };
+    use windows::Win32::Security::{
+        DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+    };
+    let wide = wide_path(path);
+    let info = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+    let mut sd = PSECURITY_DESCRIPTOR::default();
+    // SAFETY: `wide` is NUL-terminated and outlives the call; the owner and DACL out-pointers
+    // are not requested (they would point into `sd`); `sd` receives a descriptor allocated by
+    // the system, released below with `LocalFree` on every path.
+    let got = unsafe {
+        GetNamedSecurityInfoW(
+            PCWSTR(wide.as_ptr()),
+            SE_FILE_OBJECT,
+            info,
+            None,
+            None,
+            None,
+            None,
+            &mut sd,
+        )
+    };
+    if got != ERROR_SUCCESS || sd.0.is_null() {
+        return None;
+    }
+    let mut text = PWSTR::null();
+    // SAFETY: `sd` is the valid descriptor from above; `text` receives a string allocated by
+    // the system, copied and then released with `LocalFree`; `sd` is released afterwards.
+    unsafe {
+        let converted = ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            sd,
+            SDDL_REVISION_1,
+            info,
+            &mut text,
+            None,
+        );
+        let out = if converted.is_ok() && !text.is_null() {
+            text.to_string().ok()
+        } else {
+            None
+        };
+        if !text.is_null() {
+            let _ = LocalFree(Some(HLOCAL(text.0.cast())));
+        }
+        let _ = LocalFree(Some(HLOCAL(sd.0)));
+        out
+    }
+}
+
+/// Replaces the DACL of the folder `path` with the one in `sddl` and marks it protected (no
+/// entries inherited from the parent), with `SetNamedSecurityInfoW(DACL |
+/// PROTECTED_DACL)`. The system propagates the new inheritable entries to existing children.
+/// Needs `WRITE_DAC` or ownership. `true` on success.
+pub fn set_protected_dacl(path: &std::path::Path, sddl: &str) -> bool {
+    use windows::core::{BOOL, PCWSTR};
+    use windows::Win32::Foundation::{LocalFree, ERROR_SUCCESS, HLOCAL};
+    use windows::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SetNamedSecurityInfoW,
+        SDDL_REVISION_1, SE_FILE_OBJECT,
+    };
+    use windows::Win32::Security::{
+        GetSecurityDescriptorDacl, ACL, DACL_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+    };
+    let wide = wide_path(path);
+    let sddl_w: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
+    let mut sd = PSECURITY_DESCRIPTOR::default();
+    // SAFETY: `sddl_w` is NUL-terminated and outlives the call; `sd` receives a descriptor
+    // allocated by the system and released with `LocalFree` below on every path.
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            PCWSTR(sddl_w.as_ptr()),
+            SDDL_REVISION_1,
+            &mut sd,
+            None,
+        )
+    }
+    .is_err()
+    {
+        return false;
+    }
+    let (mut present, mut defaulted) = (BOOL::default(), BOOL::default());
+    let mut dacl: *mut ACL = std::ptr::null_mut();
+    // SAFETY: `sd` is the valid descriptor from above; the out-pointers are live locals; the
+    // DACL pointer points into `sd` and is used only before `sd` is released.
+    unsafe {
+        let got = GetSecurityDescriptorDacl(sd, &mut present, &mut dacl, &mut defaulted);
+        let set = if got.is_ok() && present.as_bool() && !dacl.is_null() {
+            SetNamedSecurityInfoW(
+                PCWSTR(wide.as_ptr()),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                Some(dacl.cast_const()),
+                None,
+            ) == ERROR_SUCCESS
+        } else {
+            false
+        };
+        let _ = LocalFree(Some(HLOCAL(sd.0)));
+        set
+    }
+}
+
+/// A modal message window with no owner (start-up problems, Task 413). With `yes_no` it has
+/// Yes and No buttons (No is the default) and returns true for Yes; otherwise an OK button
+/// and it returns false. Blocks the calling thread until it is closed.
+pub fn message_box(title: &str, text: &str, yes_no: bool) -> bool {
+    use windows::core::HSTRING;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND,
+        MB_YESNO,
+    };
+    let (title, text) = (HSTRING::from(title), HSTRING::from(text));
+    let style = if yes_no {
+        MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2
+    } else {
+        MB_OK | MB_ICONERROR
+    } | MB_SETFOREGROUND;
+    // SAFETY: both strings are NUL-terminated `HSTRING`s that outlive the call; no owner
+    // window; the call only returns the button pressed.
+    unsafe { MessageBoxW(None, &text, &title, style) == IDYES }
 }

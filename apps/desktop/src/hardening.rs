@@ -16,8 +16,8 @@ pub const FALLBACK_EXE_NAME: &str = "dark-clipboard.exe";
 /// The file name (with extension) of the running executable, as `WerAddExcludedApplication`
 /// wants it; [`FALLBACK_EXE_NAME`] when there is none.
 pub fn exe_file_name(exe: Option<&Path>) -> OsString {
-    let _ = exe;
-    OsString::new()
+    exe.and_then(Path::file_name)
+        .map_or_else(|| OsString::from(FALLBACK_EXE_NAME), OsStr::to_os_string)
 }
 
 /// The two WER calls. `true` means the call returned `S_OK`.
@@ -37,23 +37,22 @@ pub struct WerOutcome {
 
 impl WerOutcome {
     pub fn ok(&self) -> bool {
-        false
+        self.excluded && self.no_heap
     }
 
     /// Static log fields (`excluded=ok|failed no_heap=ok|failed`).
     pub fn log_fields(&self) -> Vec<(&'static str, Val)> {
-        Vec::new()
+        let v = |ok: bool| Val::Name(if ok { "ok" } else { "failed" });
+        vec![("excluded", v(self.excluded)), ("no_heap", v(self.no_heap))]
     }
 }
 
 /// Excludes this executable from WER for the current user and drops heap memory from any
 /// report of this process. Both calls are always attempted.
 pub fn exclude_from_wer(api: &dyn WerApi, exe: Option<&Path>) -> WerOutcome {
-    let _ = (api, exe);
-    WerOutcome {
-        excluded: false,
-        no_heap: false,
-    }
+    let excluded = api.add_excluded_application(&exe_file_name(exe));
+    let no_heap = api.set_no_heap();
+    WerOutcome { excluded, no_heap }
 }
 
 /// The real WER calls (Windows).
@@ -74,28 +73,92 @@ impl WerApi for SystemWer {
 /// The protected DACL of the data folder: full control for the current user and for SYSTEM,
 /// inherited by files and subfolders; nothing inherited from the parent (`P`).
 pub fn private_dir_sddl(user_sid: &str) -> String {
-    let _ = user_sid;
-    String::new()
+    format!("D:P(A;OICI;FA;;;{user_sid})(A;OICI;FA;;;SY)")
+}
+
+/// The sections of an SDDL text as `(letter, value)`: `O`, `G`, `D`, `S`. Values never contain
+/// a colon, so the character before every colon is a section letter.
+fn sddl_sections(sddl: &str) -> Vec<(char, &str)> {
+    let colons: Vec<usize> = sddl.match_indices(':').map(|(i, _)| i).collect();
+    let mut out = Vec::new();
+    for (n, &c) in colons.iter().enumerate() {
+        let Some(letter) = c.checked_sub(1).and_then(|i| sddl.get(i..c)) else {
+            continue;
+        };
+        let end = colons
+            .get(n + 1)
+            .map_or(sddl.len(), |&next| next.saturating_sub(1));
+        if let (Some(ch), Some(value)) = (letter.chars().next(), sddl.get(c + 1..end)) {
+            out.push((ch, value));
+        }
+    }
+    out
+}
+
+/// True when one ACE text (without parentheses) is "allow, object and container inherit, not
+/// inherited, full file access" for `sid`.
+fn is_full_inheritable_allow(ace: &str, sid: &str) -> bool {
+    let f: Vec<&str> = ace.split(';').collect();
+    let [kind, flags, rights, object, inherit_object, who] = f.as_slice() else {
+        return false;
+    };
+    let mut flag_set: Vec<&str> = (0..flags.len())
+        .step_by(2)
+        .filter_map(|i| flags.get(i..i + 2))
+        .collect();
+    flag_set.sort_unstable();
+    *kind == "A"
+        && flags.len() == 4
+        && flag_set == ["CI", "OI"]
+        && *rights == "FA"
+        && object.is_empty()
+        && inherit_object.is_empty()
+        && *who == sid
 }
 
 /// True when `sddl` (as Windows writes it back, possibly with an owner part and the `AI`
 /// flag) already is exactly the private DACL of [`private_dir_sddl`].
 pub fn dacl_is_private(sddl: &str, user_sid: &str) -> bool {
-    let _ = (sddl, user_sid);
-    false
+    let Some((_, dacl)) = sddl_sections(sddl).into_iter().find(|(l, _)| *l == 'D') else {
+        return false;
+    };
+    let (flags, mut rest) = dacl.split_at(dacl.find('(').unwrap_or(dacl.len()));
+    if !flags.contains('P') {
+        return false;
+    }
+    let mut aces = Vec::new();
+    while !rest.is_empty() {
+        let Some((ace, after)) = rest.strip_prefix('(').and_then(|body| body.split_once(')'))
+        else {
+            return false;
+        };
+        aces.push(ace);
+        rest = after;
+    }
+    aces.len() == 2
+        && aces.iter().any(|a| is_full_inheritable_allow(a, user_sid))
+        && aces.iter().any(|a| is_full_inheritable_allow(a, "SY"))
 }
 
 /// The owner SID string of an SDDL text (`O:<sid>`), if it has one.
 pub fn sddl_owner(sddl: &str) -> Option<&str> {
-    let _ = sddl;
-    None
+    sddl_sections(sddl)
+        .into_iter()
+        .find(|(l, v)| *l == 'O' && !v.is_empty())
+        .map(|(_, v)| v)
 }
 
 /// Only a folder Dark Clipboard created now, or one that already is its data folder (the
 /// default folder or one holding `history.db`), and only when the current user owns it.
 pub fn may_restrict(created_now: bool, is_data_folder: bool, owner_is_user: bool) -> bool {
-    let _ = (created_now, is_data_folder, owner_is_user);
-    true
+    owner_is_user && (created_now || is_data_folder)
+}
+
+/// True when `dir` already is a Dark Clipboard data folder: the default one, or one that holds
+/// a `history.db`. Checked before the folder is created.
+pub fn is_data_folder(dir: &Path, default: Option<&Path>) -> bool {
+    crate::single_instance::scope_for(Some(dir), default).is_none()
+        || dir.join("history.db").is_file()
 }
 
 /// Result of [`restrict_data_dir`], logged by name.
@@ -132,8 +195,27 @@ impl AclOutcome {
 /// Existing children get the inherited entries (`SetNamedSecurityInfoW` propagates them).
 #[cfg(windows)]
 pub fn restrict_data_dir(dir: &Path, created_now: bool, is_data_folder: bool) -> AclOutcome {
-    let _ = (dir, created_now, is_data_folder);
-    AclOutcome::Failed
+    if !(created_now || is_data_folder) {
+        return AclOutcome::NotOurs;
+    }
+    let Some(sid) = crate::single_instance::current_user_sid() else {
+        return AclOutcome::Failed;
+    };
+    let Some(current) = crate::winsys::security_sddl(dir) else {
+        return AclOutcome::Failed;
+    };
+    let owner_is_user = sddl_owner(&current) == Some(sid.as_str());
+    if !may_restrict(created_now, is_data_folder, owner_is_user) {
+        return AclOutcome::NotOwner;
+    }
+    if dacl_is_private(&current, &sid) {
+        return AclOutcome::AlreadyPrivate;
+    }
+    if crate::winsys::set_protected_dacl(dir, &private_dir_sddl(&sid)) {
+        AclOutcome::Applied
+    } else {
+        AclOutcome::Failed
+    }
 }
 
 #[cfg(test)]
@@ -146,12 +228,14 @@ mod tests {
 
     #[test]
     fn the_exe_name_is_the_file_name_of_the_running_executable() {
-        let p = PathBuf::from("C:\\Program Files\\Dark Clipboard\\dark-clipboard.exe");
+        let p = PathBuf::from("Program Files")
+            .join("Dark Clipboard")
+            .join("dark-clipboard.exe");
         assert_eq!(
             exe_file_name(Some(&p)),
             OsString::from("dark-clipboard.exe")
         );
-        let renamed = PathBuf::from("D:\\tools\\DarkClip-0.1.0.exe");
+        let renamed = PathBuf::from("tools").join("DarkClip-0.1.0.exe");
         assert_eq!(
             exe_file_name(Some(&renamed)),
             OsString::from("DarkClip-0.1.0.exe")
@@ -203,7 +287,7 @@ mod tests {
     #[test]
     fn wer_set_up_makes_both_calls_with_the_exe_name() {
         let api = fake(true, true);
-        let exe = PathBuf::from("C:\\x\\dark-clipboard.exe");
+        let exe = PathBuf::from("x").join("dark-clipboard.exe");
         let out = exclude_from_wer(&api, Some(&exe));
         assert_eq!(
             *api.calls.borrow(),

@@ -310,6 +310,72 @@ fn finish_shutdown<E>(shutdown: Result<(), E>, forwarder: Option<JoinHandle<()>>
     }
 }
 
+/// Creates the platform bundle and starts the `App` (on the worker thread). When the history
+/// cannot be opened, a message window says why instead of a silent quit (Task 413, F407-03);
+/// a damaged history may be moved aside once (a rename, never a delete) and the start is
+/// tried again. `None`: the app cannot run and the caller quits.
+fn start_app(args: &StartArgs, log: &Log) -> Option<(App, LoadOutcome, mpsc::Receiver<AppEvent>)> {
+    use crate::start_failure::{self, Step};
+    let mut moved = false;
+    loop {
+        let Ok(mut bundle) = crate::platform() else {
+            log.event("start_failed", &[("stage", Val::Name("platform"))]);
+            return None;
+        };
+        // The paste injector belongs to the UI side (Task 205): focus return and Ctrl+V run
+        // on paste threads, never on the actor or this worker.
+        if let Some(injector) = take_injector(&mut bundle) {
+            let _ = slint::invoke_from_event_loop(move || {
+                popup_host::set_injector(injector);
+            });
+        }
+        let (ev_tx, ev_rx) = mpsc::channel::<AppEvent>();
+        let e = match App::start(
+            bundle,
+            &args.data_dir,
+            &args.settings_path,
+            Arc::new(crate::SystemClock),
+            CaptureConfig::default(),
+            ev_tx,
+        ) {
+            Ok((app, outcome)) => return Some((app, outcome, ev_rx)),
+            Err(e) => e,
+        };
+        let problem = start_failure::classify(&e, start_failure::probe(&args.data_dir).as_ref());
+        log.event(
+            "start_failed",
+            &[
+                ("code", Val::Name(e.code())),
+                ("problem", Val::Name(problem.name())),
+            ],
+        );
+        // The settings are not loaded yet: the OS language decides.
+        let lang = args.os_lang;
+        let ask = problem.offers_move_aside() && !moved;
+        let msg = if ask || !problem.offers_move_aside() {
+            problem.msg()
+        } else {
+            // Damaged again right after a move: nothing more to offer.
+            Msg::StartDbFailed
+        };
+        let yes = start_failure::show(lang, msg, &args.data_dir, ask);
+        match start_failure::next_step(problem, yes, moved) {
+            Step::Quit => return None,
+            Step::MoveAsideAndRetry => {
+                let now = crate::SystemClock.now();
+                if darkclip_storage::move_damaged_aside(&args.data_dir, now).is_err() {
+                    log.event("move_aside_failed", &[]);
+                    let _ =
+                        start_failure::show(lang, Msg::StartMoveAsideFailed, &args.data_dir, false);
+                    return None;
+                }
+                log.event("moved_aside", &[]);
+                moved = true;
+            }
+        }
+    }
+}
+
 impl Worker {
     pub fn spawn(
         args: StartArgs,
@@ -324,34 +390,9 @@ impl Worker {
         let handle = std::thread::Builder::new()
             .name("darkclip-worker".into())
             .spawn(move || {
-                let Ok(mut bundle) = crate::platform() else {
-                    log.event("start_failed", &[("stage", Val::Name("platform"))]);
+                let Some((app, outcome, ev_rx)) = start_app(&args, &log) else {
                     worker_failed.store(true, Ordering::SeqCst);
                     return quit_soon();
-                };
-                // The paste injector belongs to the UI side (Task 205): focus return and
-                // Ctrl+V run on paste threads, never on the actor or this worker.
-                if let Some(injector) = take_injector(&mut bundle) {
-                    let _ = slint::invoke_from_event_loop(move || {
-                        popup_host::set_injector(injector);
-                    });
-                }
-                let (ev_tx, ev_rx) = mpsc::channel::<AppEvent>();
-                let started = App::start(
-                    bundle,
-                    &args.data_dir,
-                    &args.settings_path,
-                    Arc::new(crate::SystemClock),
-                    CaptureConfig::default(),
-                    ev_tx,
-                );
-                let (app, outcome) = match started {
-                    Ok(v) => v,
-                    Err(e) => {
-                        log.event("start_failed", &[("code", Val::Name(e.code()))]);
-                        worker_failed.store(true, Ordering::SeqCst);
-                        return quit_soon();
-                    }
                 };
                 crate::log_capabilities(&log, &app.capabilities());
                 // First run: follow the OS language once and remember it.
@@ -521,8 +562,20 @@ pub fn run(
         ipc_log.event("ipc_command", &[("cmd", Val::Name(cmd.name()))]);
         let _ = weak.upgrade_in_event_loop(move |w| apply_command(&w, cmd, asked, Trigger::Ipc));
     });
-    if listen(handler).is_err() {
-        log.event("start_failed", &[("stage", Val::Name("ipc"))]);
+    if let Err(e) = listen(handler) {
+        log.event(
+            "start_failed",
+            &[("stage", Val::Name("ipc")), ("reason", Val::Name(e.name()))],
+        );
+        // Someone else holds our pipe name (F407-04): say so instead of quitting silently.
+        if e == crate::single_instance::ListenError::Squatted {
+            let _ = crate::start_failure::show(
+                args_lang,
+                Msg::StartPipeInUse,
+                &args.start.data_dir,
+                false,
+            );
+        }
         return false;
     }
 

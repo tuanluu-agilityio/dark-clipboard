@@ -3,8 +3,12 @@
 
 use std::process::Command;
 
+/// Every run of the binary from a test skips the WER registration (debug builds honour
+/// `DARKCLIP_TEST_SKIP_WER`), so the gate never writes the real per-user WER list (Task 413).
 fn bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_dark-clipboard"))
+    let mut c = Command::new(env!("CARGO_BIN_EXE_dark-clipboard"));
+    c.env("DARKCLIP_TEST_SKIP_WER", "1");
+    c
 }
 
 #[test]
@@ -46,6 +50,12 @@ const KNOWN_EVENTS: &[&str] = &[
     "tray_failed",
     "tray_quit",
     "capture_off",
+    // Task 413: WER set-up (skipped in tests) and the data-folder DACL.
+    "wer",
+    "wer_failed",
+    "wer_skipped",
+    "data_dir_acl",
+    "data_dir_acl_failed",
 ];
 
 #[cfg(windows)]
@@ -78,6 +88,21 @@ fn headless_with_data_dir_starts_and_stops() {
     }
     assert!(lines.iter().any(|l| l.contains(" start")));
     assert!(lines.iter().any(|l| l.contains(" stop")));
+    // Task 413: the test never registers with WER. The temp folder existed (empty) before the
+    // run and is not a Dark Clipboard folder, so its ACL is left alone.
+    assert!(lines.iter().any(|l| l.ends_with(" wer_skipped")), "{text}");
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.contains(" wer ") || l.contains(" wer_failed")),
+        "{text}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.ends_with(" data_dir_acl result=not_ours")),
+        "{text}"
+    );
     // A fresh data folder: capture is off until Start is pressed in the app (Task 208). The
     // run says so, in the log (a static event) and on the console.
     assert!(lines.iter().any(|l| l.ends_with(" capture_off")), "{text}");
@@ -229,4 +254,23 @@ fn invalid_shortcut_is_reported_and_the_app_keeps_running() {
 fn no_global_shortcut_flag_registers_nothing() {
     let log = run_with_shortcut("Ctrl+Alt+Shift+F24", &["--no-global-shortcut"]);
     assert!(!log.contains(" shortcut status=registered"), "{log}");
+}
+
+/// Task 413 (F407-02): a data folder the app creates gets the private DACL; the run logs it.
+/// A temporary folder only, never the real data folder.
+#[cfg(windows)]
+#[test]
+fn headless_restricts_a_data_folder_it_creates() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("new-data");
+    let out = bin()
+        .arg("--data-dir")
+        .arg(&dir)
+        .args(["--headless", "--exit-after-ms", "300"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = std::fs::read_to_string(dir.join("logs").join("dark-clipboard.log")).unwrap();
+    assert!(text.contains(" data_dir_acl result=applied"), "{text}");
+    assert!(text.contains(" wer_skipped"), "{text}");
 }

@@ -19,8 +19,48 @@ const PRE_MIGRATION_PREFIX: &str = "history.db.pre-v";
 /// What gets moved, as `(from, to)` pairs in rename order. The `-wal` and `-shm` files go
 /// before the database, so a failure can never leave a stale WAL next to a new database.
 fn plan(data_dir: &Path, now: Timestamp) -> Result<Vec<(PathBuf, PathBuf)>, StorageError> {
-    let _ = (data_dir, now);
-    Err(StorageError::NotFound)
+    let db = data_dir.join(DB_FILE);
+    if !db.is_file() {
+        return Err(StorageError::NotFound);
+    }
+    let mark = format!("{DB_FILE}.damaged-{}", now.0);
+    let mut out = Vec::new();
+    for side in ["-wal", "-shm"] {
+        let from = data_dir.join(format!("{DB_FILE}{side}"));
+        if exists(&from) {
+            out.push((from, data_dir.join(format!("{mark}{side}"))));
+        }
+    }
+    out.push((db, data_dir.join(&mark)));
+    // Copies the next successful open would remove (pre-migration, pre-restore).
+    let mut copies: Vec<String> = std::fs::read_dir(data_dir)?
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter_map(|e| e.file_name().to_str().map(str::to_owned))
+        .filter(|n| n.starts_with(PRE_MIGRATION_PREFIX) || n.starts_with(PRE_RESTORE_PREFIX))
+        .collect();
+    copies.sort();
+    for name in copies {
+        // `history.db.pre-...` -> `history.db.damaged-<ms>.pre-...`
+        let rest = name.get(DB_FILE.len()..).unwrap_or_default();
+        out.push((data_dir.join(&name), data_dir.join(format!("{mark}{rest}"))));
+    }
+    let blobs = data_dir.join(BLOBS_DIR);
+    if exists(&blobs) {
+        out.push((
+            blobs,
+            data_dir.join(format!("{BLOBS_DIR}.damaged-{}", now.0)),
+        ));
+    }
+    if out.iter().any(|(_, to)| exists(to)) {
+        return Err(StorageError::Io(std::io::ErrorKind::AlreadyExists));
+    }
+    Ok(out)
+}
+
+/// True when something (file, folder or link) has this name.
+fn exists(p: &Path) -> bool {
+    std::fs::symlink_metadata(p).is_ok()
 }
 
 /// Renames the damaged history in `data_dir` aside with the mark `damaged-<now ms>`:
@@ -32,7 +72,16 @@ fn plan(data_dir: &Path, now: Timestamp) -> Result<Vec<(PathBuf, PathBuf)>, Stor
 /// (nothing is moved then). If a rename fails half way, the ones already done are undone
 /// (best-effort) and the error is returned. Must be called while no connection is open.
 pub fn move_damaged_aside(data_dir: &Path, now: Timestamp) -> Result<(), StorageError> {
-    let _ = plan(data_dir, now)?;
+    let moves = plan(data_dir, now)?;
+    for (i, (from, to)) in moves.iter().enumerate() {
+        if let Err(e) = std::fs::rename(from, to) {
+            // Undo in reverse order so the history is left as it was found.
+            for (back_from, back_to) in moves.iter().take(i).rev() {
+                let _ = std::fs::rename(back_to, back_from);
+            }
+            return Err(e.into());
+        }
+    }
     Ok(())
 }
 

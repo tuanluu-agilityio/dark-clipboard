@@ -651,6 +651,8 @@ impl Default for PrivacyPolicy {
             mode: CaptureMode::Normal,
             excluded_apps: vec![
                 app("keepassxc.exe", Platform::Windows, "KeePassXC"),
+                // KeePass 2 (classic), D-067 (F407-08).
+                app("keepass.exe", Platform::Windows, "KeePass"),
                 app("1password.exe", Platform::Windows, "1Password"),
                 app("bitwarden.exe", Platform::Windows, "Bitwarden"),
                 // Belt and braces: its own markers already exclude it (privacy-design 6).
