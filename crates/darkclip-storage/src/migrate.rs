@@ -10,10 +10,16 @@ pub(crate) struct Migration {
     pub sql: &'static str,
 }
 
-pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("../migrations/0001_init.sql"),
-}];
+pub(crate) const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("../migrations/0001_init.sql"),
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("../migrations/0002_organization.sql"),
+    },
+];
 
 /// The highest version `migrations` brings a database to.
 pub(crate) fn target_version(migrations: &[Migration]) -> u32 {

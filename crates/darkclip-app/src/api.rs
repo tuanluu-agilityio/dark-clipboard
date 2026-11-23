@@ -1066,6 +1066,8 @@ mod tests {
             include_masked: false,
             limit: 50,
             cursor: None,
+            collection: None,
+            tag: None,
         }
     }
 

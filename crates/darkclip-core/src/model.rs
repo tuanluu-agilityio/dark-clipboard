@@ -369,9 +369,12 @@ pub struct Tag {
 }
 
 impl Tag {
-    /// Lowercases `raw` and checks `[\p{L}\p{N}_-]+`, at most 40 characters.
+    /// Normalises a tag name: trims, Unicode-lowercases, composes to NFC, then checks
+    /// `[\p{L}\p{N}_-]+` and at most 40 characters. Diacritics are kept as written
+    /// (search ignores them through the FTS tokenizer). Errors never carry the input.
     pub fn validate_name(raw: &str) -> Result<String, CoreError> {
-        let name = raw.to_lowercase();
+        use unicode_normalization::UnicodeNormalization;
+        let name: String = raw.trim().to_lowercase().nfc().collect();
         if name.chars().count() > TAG_NAME_MAX_CHARS {
             return Err(CoreError::TooLong {
                 field: "tag",
@@ -386,6 +389,103 @@ impl Tag {
             return Err(CoreError::InvalidTag);
         }
         Ok(name)
+    }
+}
+
+/// Folds Vietnamese `đ`/`Đ` (U+0111/U+0110) to `d`/`D`; `None` when `s` has neither.
+/// SQLite's `remove_diacritics` does not fold them (they are separate letters, not a
+/// base letter plus a mark), so search indexes and queries use this copy as well.
+pub fn fold_d_stroke(s: &str) -> Option<String> {
+    if !s.contains(['\u{0111}', '\u{0110}']) {
+        return None;
+    }
+    Some(
+        s.chars()
+            .map(|c| match c {
+                '\u{0111}' => 'd',
+                '\u{0110}' => 'D',
+                c => c,
+            })
+            .collect(),
+    )
+}
+
+/// Longest collection name, in characters (`collection.schema.json`).
+pub const COLLECTION_NAME_MAX_CHARS: usize = 80;
+/// Most tags on one clip (Task 401).
+pub const TAGS_PER_CLIP_MAX: usize = 20;
+/// The fixed id of the system Favorites collection, created by storage migration 2.
+/// Code finds Favorites by `system_key`, never by this id.
+pub const FAVORITES_COLLECTION_ID: &str = "00000000-0000-7000-8000-000000000001";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollectionKind {
+    User,
+    System,
+}
+
+/// The built-in collections. Favorites is the only one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemCollection {
+    Favorites,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollectionSort {
+    /// Members are listed in their stored order (`collection_clips.ord`).
+    Manual,
+    /// Members are listed like the history (pinned first, then by recency).
+    Recent,
+}
+
+/// A user or system collection (`collection.schema.json`). `clip_count` is derived.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Collection {
+    pub schema_version: SchemaVersion,
+    pub id: CollectionId,
+    pub name: String,
+    pub kind: CollectionKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_key: Option<SystemCollection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub clip_count: u64,
+    pub sort: CollectionSort,
+}
+
+impl Collection {
+    /// Trims `raw` and checks 1-80 characters. Errors name the field only.
+    pub fn validate_name(raw: &str) -> Result<String, CoreError> {
+        let name = raw.trim();
+        match name.chars().count() {
+            0 => Err(CoreError::Invalid { field: "name" }),
+            n if n > COLLECTION_NAME_MAX_CHARS => Err(CoreError::TooLong {
+                field: "name",
+                max: COLLECTION_NAME_MAX_CHARS,
+            }),
+            _ => Ok(name.to_owned()),
+        }
+    }
+
+    /// Checks `^#[0-9a-f]{6}$`.
+    pub fn validate_color(raw: &str) -> Result<(), CoreError> {
+        let ok = raw.len() == 7
+            && raw.starts_with('#')
+            && raw
+                .bytes()
+                .skip(1)
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if ok {
+            Ok(())
+        } else {
+            Err(CoreError::Invalid { field: "color" })
+        }
     }
 }
 
@@ -670,6 +770,62 @@ mod tests {
         assert!(!dbg.contains("TOPSECRET-NOTE"));
         let alt = format!("{clip:#?}");
         assert!(!alt.contains("TOPSECRET"));
+    }
+
+    #[test]
+    fn tag_name_normalisation_trims_lowercases_and_composes() {
+        // Decomposed "Tiếng" (e + U+0302 + U+0301) and uppercase, with spaces around.
+        let decomposed = "  Tie\u{0302}\u{0301}ng-VIE\u{0323}\u{0302}T  ";
+        let n = Tag::validate_name(decomposed).unwrap();
+        assert_eq!(n, "ti\u{1ebf}ng-vi\u{1ec7}t");
+        assert_eq!(n, "tiếng-việt");
+        // Already composed input is unchanged, diacritics kept as written.
+        assert_eq!(Tag::validate_name("Tiếng-Việt").unwrap(), "tiếng-việt");
+        // Length counts composed characters: 40 decomposed pairs are 40 characters.
+        assert!(Tag::validate_name(&"e\u{0301}".repeat(40)).is_ok());
+        assert_eq!(Tag::validate_name("   "), Err(CoreError::InvalidTag));
+        assert_eq!(Tag::validate_name("a\tb"), Err(CoreError::InvalidTag));
+        // The error never carries the input.
+        let e = Tag::validate_name("secret value!").unwrap_err();
+        assert!(!e.to_string().contains("secret"));
+        assert!(!format!("{e:?}").contains("secret"));
+    }
+
+    #[test]
+    fn collection_serialises_like_the_schema() {
+        let c = Collection {
+            schema_version: SchemaVersion,
+            id: CollectionId::parse(FAVORITES_COLLECTION_ID).unwrap(),
+            name: "Favorites".into(),
+            kind: CollectionKind::System,
+            system_key: Some(SystemCollection::Favorites),
+            color: None,
+            created_at: Timestamp(1_795_320_000_000),
+            updated_at: Timestamp(1_795_320_000_000),
+            clip_count: 2,
+            sort: CollectionSort::Recent,
+        };
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["kind"], "system");
+        assert_eq!(v["system_key"], "favorites");
+        assert_eq!(v["sort"], "recent");
+        assert!(v.get("color").is_none());
+        let back: Collection = serde_json::from_value(v).unwrap();
+        assert_eq!(back, c);
+        for src in [
+            include_str!("../../../docs/architecture/examples/collection.example.json"),
+            include_str!("../../../docs/architecture/examples/collection.favorites.example.json"),
+        ] {
+            let a: Collection = serde_json::from_str(src).unwrap();
+            let orig: serde_json::Value = serde_json::from_str(src).unwrap();
+            assert_eq!(serde_json::to_value(&a).unwrap(), orig);
+        }
+    }
+
+    #[test]
+    fn d_stroke_folding() {
+        assert_eq!(fold_d_stroke("Đà Nẵng đi"), Some("Dà Nẵng di".into()));
+        assert_eq!(fold_d_stroke("tiếng việt"), None);
     }
 
     #[test]

@@ -147,7 +147,7 @@ CREATE TRIGGER clip_rowid_ad AFTER DELETE ON clip_rowid BEGIN DELETE FROM clips_
 FTS notes:
 - `body` indexes up to the first 32 KiB of the plain text representation. Contentless FTS keeps no copy of text beyond the index, so the index holds only tokens.
 - `remove_diacritics 2` makes Vietnamese search work without accents ("tieng viet" finds "tiếng Việt"). This is a Darkshot-ecosystem requirement, unit-tested.
-- Substring fallback: for queries < 3 chars, or queries with no letter or digit, run `LIKE` on `preview` limited to the 2,000 most recent rows. Trigram tokenizer was considered; it was rejected for P0 because it roughly triples index size.
+- Substring fallback: for queries < 3 chars, or queries with no letter or digit, run `LIKE` on `preview` limited to the 2,000 most recent rows. (Changed by D-059, 2026-11-23: short queries also prefix-match the note and tag columns of those rows; notes and tags are indexed with an extra đ→d folded copy.) Trigram tokenizer was considered; it was rejected for P0 because it roughly triples index size.
 - Sensitive-masked clips index only their masked preview, never the body.
 
 ## 5. Hashing and deduplication

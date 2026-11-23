@@ -22,15 +22,30 @@
 //! cursor cannot resume, so they return a single page (at most `limit` rows, never a
 //! cursor) and ignore `cursor`. `limit` is clamped to 200.
 //!
+//! Collection and tag filters (schema v2) combine with the others as `IN` subqueries. The
+//! tag filter is normalised like a tag name (an invalid name matches nothing). They count
+//! as narrowing filters for the uncapped re-run. Listing (empty text) a `manual`
+//! collection orders by the stored `ord` instead (pinned rows get no precedence there),
+//! with a keyset on the cursor clip's position; text queries in any collection keep the
+//! ranking above.
+//!
 //! Queries shorter than 3 characters, or without any letter or digit, cannot use the
 //! prefix index usefully; they fall back to a case-insensitive substring match on the
-//! `preview` of the most recent [`FALLBACK_WINDOW`] clips.
+//! `preview` of the most recent [`FALLBACK_WINDOW`] clips, plus (when the query has a
+//! letter or digit) a token-prefix match on the `note` and `tags` FTS columns of those
+//! clips, since notes and tags are not part of the preview.
+//!
+//! Vietnamese `đ`/`Đ`: `remove_diacritics` does not fold them, so notes and tags that
+//! contain one also index a copy folded to `d`, and each query token with one matches
+//! either form. Preview and body are not folded (that would need every existing row
+//! re-indexed): "da" does not find a body that only says "đà".
 
+use crate::clips::{enum_name, enum_parse};
 use crate::{Storage, StorageError};
-use darkclip_core::{ClipId, ClipMetadata, ClipType, SensitivityLevel, Timestamp};
-use rusqlite::{params_from_iter, types::Value, Connection};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
+use darkclip_core::{
+    fold_d_stroke, ClipId, ClipMetadata, ClipType, CollectionId, SensitivityLevel, Tag, Timestamp,
+};
+use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
 
 /// Bytes of plain text indexed per clip.
 pub(crate) const BODY_MAX_BYTES: usize = 32 * 1024;
@@ -44,7 +59,7 @@ const FTS_CANDIDATES: usize = 500;
 const RANK_FN: &str = "bm25(4.0, 1.0, 1.0, 1.0)";
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SearchQuery {
     pub text: Option<String>,
     pub kinds: Vec<ClipType>,
@@ -53,6 +68,27 @@ pub struct SearchQuery {
     pub include_masked: bool,
     pub limit: u16,
     pub cursor: Option<Cursor>,
+    /// Only members of this collection. A `manual` collection lists in its stored order.
+    pub collection: Option<CollectionId>,
+    /// Only clips with this tag (normalised like a tag name; an invalid name matches nothing).
+    pub tag: Option<String>,
+}
+
+/// Never prints the query text or the tag name (GC-06: a query can itself be sensitive).
+impl std::fmt::Debug for SearchQuery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SearchQuery")
+            .field("text", &self.text.as_ref().map(|_| "<redacted>"))
+            .field("kinds", &self.kinds)
+            .field("pinned_only", &self.pinned_only)
+            .field("since", &self.since)
+            .field("include_masked", &self.include_masked)
+            .field("limit", &self.limit)
+            .field("cursor", &self.cursor)
+            .field("collection", &self.collection)
+            .field("tag", &self.tag.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 /// Position of the last row of a page. Opaque outside this crate: use `encode`/`decode`.
@@ -164,18 +200,6 @@ fn id_from_bytes(b: &[u8]) -> Option<ClipId> {
     ClipId::parse(&s).ok()
 }
 
-fn enum_name<T: Serialize>(v: &T) -> Result<String, StorageError> {
-    match serde_json::to_value(v) {
-        Ok(serde_json::Value::String(s)) => Ok(s),
-        _ => Err(StorageError::Sqlite("ColumnEncode".into())),
-    }
-}
-
-fn enum_parse<T: DeserializeOwned>(s: String) -> Result<T, StorageError> {
-    serde_json::from_value(serde_json::Value::String(s))
-        .map_err(|_| StorageError::Sqlite("ColumnDecode".into()))
-}
-
 /// The first [`BODY_MAX_BYTES`] bytes of `text`, cut at a char boundary.
 pub(crate) fn truncate_body(text: &str) -> &str {
     if text.len() <= BODY_MAX_BYTES {
@@ -188,36 +212,55 @@ pub(crate) fn truncate_body(text: &str) -> &str {
     &text[..end]
 }
 
-/// Inserts the FTS row of a clip, replacing any previous one (delete, then insert).
-/// Masked clips pass an empty `body`/`note`: only the masked preview is indexed.
+/// Inserts the FTS row of a clip, replacing any previous one (delete, then insert every
+/// column: the table is contentless). Masked clips pass an empty `body`/`note`/`tags`:
+/// only the masked preview is indexed.
 pub(crate) fn index_clip(
     conn: &Connection,
     clip_id: &str,
     preview: &str,
     body: &str,
     note: &str,
+    tags: &str,
 ) -> Result<(), StorageError> {
     let rowid: i64 = conn.query_row(
         "SELECT rowid FROM clip_rowid WHERE clip_id = ?1",
         [clip_id],
         |r| r.get(0),
     )?;
+    // Notes and tags carrying a Vietnamese d-stroke also index a folded copy, so "da nang"
+    // finds them; preview and body are not folded (that would need every row re-indexed).
+    let with_folded = |s: &str| match fold_d_stroke(s) {
+        Some(f) => format!("{s} {f}"),
+        None => s.to_owned(),
+    };
     conn.execute("DELETE FROM clips_fts WHERE rowid = ?1", [rowid])?;
     conn.execute(
-        "INSERT INTO clips_fts (rowid, preview, body, note, tags) VALUES (?1, ?2, ?3, ?4, '')",
-        rusqlite::params![rowid, preview, body, note],
+        "INSERT INTO clips_fts (rowid, preview, body, note, tags) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![rowid, preview, body, with_folded(note), with_folded(tags)],
     )?;
     Ok(())
 }
 
-/// `"tok"* "tok2"*` from user text; `None` when no token has a letter or digit.
+/// `"tok"* "tok2"*` from user text; `None` when no token has a letter or digit. A token
+/// with a d-stroke also matches its folded form: `("đà"* OR "dà"*)`.
 fn match_expr(text: &str) -> Option<String> {
+    let quote = |t: &str| format!("\"{}\"*", t.replace('"', "\"\""));
     let toks: Vec<String> = text
         .split_whitespace()
         .filter(|t| t.chars().any(char::is_alphanumeric))
-        .map(|t| format!("\"{}\"*", t.replace('"', "\"\"")))
+        .map(|t| match fold_d_stroke(t) {
+            Some(f) => format!("({} OR {})", quote(t), quote(&f)),
+            None => quote(t),
+        })
         .collect();
-    (!toks.is_empty()).then(|| toks.join(" "))
+    // FTS5 has no implicit AND next to a parenthesised group, so spell it out then.
+    let sep = if toks.iter().any(|t| t.starts_with('(')) {
+        " AND "
+    } else {
+        " "
+    };
+    (!toks.is_empty()).then(|| toks.join(sep))
 }
 
 fn like_escape(s: &str) -> String {
@@ -292,26 +335,61 @@ impl Storage {
         if !q.include_masked {
             filt.push_str(" AND c.sensitivity_level <> 'masked'");
         }
+        if let Some(col) = q.collection {
+            args.push(Value::Text(col.to_string()));
+            filt.push_str(
+                " AND c.id IN (SELECT m.clip_id FROM collection_clips m WHERE m.collection_id = ?)",
+            );
+        }
+        if let Some(tag) = &q.tag {
+            // A name that cannot be a tag matches nothing.
+            let Ok(name) = Tag::validate_name(tag) else {
+                return Ok((Vec::new(), None));
+            };
+            args.push(Value::Text(name));
+            filt.push_str(
+                " AND c.id IN (SELECT ct.clip_id FROM clip_tags ct \
+                 JOIN tags t ON t.id = ct.tag_id WHERE t.name = ?)",
+            );
+        }
         args.push(Value::Integer(self.clock.now().0));
         filt.push_str(" AND (c.expires_at IS NULL OR c.expires_at > ?)");
 
         let Some(text) = text else {
+            if let Some(col) = q.collection {
+                if self.is_manual(&col)? {
+                    return self.manual(&col, &filt, args, limit, q);
+                }
+            }
             return self.recent(&filt, args, limit, q);
         };
-        let fts = match_expr(text).filter(|_| text.chars().count() >= 3);
-        let rows = if let Some(expr) = fts {
-            self.ranked(&expr, &filt, &args, limit, q)?
-        } else {
-            // The window subquery has no placeholders, so filter values stay in order.
-            args.push(Value::Text(format!("%{}%", like_escape(text))));
-            let sql = format!(
-                "SELECT {COLS} FROM (SELECT * FROM clips \
-                 ORDER BY last_copied_at DESC, id DESC LIMIT {FALLBACK_WINDOW}) c \
-                 WHERE 1 = 1 {filt} AND c.preview LIKE ? ESCAPE '\\' \
-                 ORDER BY c.pinned DESC, c.pin_order ASC, c.last_copied_at DESC, c.id DESC \
-                 LIMIT {limit}"
-            );
-            self.collect(&sql, args)?
+        let expr = match_expr(text);
+        let rows = match expr {
+            Some(expr) if text.chars().count() >= 3 => {
+                self.ranked(&expr, &filt, &args, limit, q)?
+            }
+            short => {
+                // The window subquery has no placeholders, so filter values stay in order.
+                args.push(Value::Text(format!("%{}%", like_escape(text))));
+                // Notes and tags are not in `preview`: a short query also matches them by
+                // token prefix (folded d-stroke included), restricted to those columns.
+                let tags_notes = match short {
+                    Some(expr) => {
+                        args.push(Value::Text(format!("{{note tags}} : ({expr})")));
+                        " OR c.id IN (SELECT r.clip_id FROM clip_rowid r WHERE r.rowid IN \
+                         (SELECT rowid FROM clips_fts WHERE clips_fts MATCH ?))"
+                    }
+                    None => "",
+                };
+                let sql = format!(
+                    "SELECT {COLS} FROM (SELECT * FROM clips \
+                     ORDER BY last_copied_at DESC, id DESC LIMIT {FALLBACK_WINDOW}) c \
+                     WHERE 1 = 1 {filt} AND (c.preview LIKE ? ESCAPE '\\'{tags_notes}) \
+                     ORDER BY c.pinned DESC, c.pin_order ASC, c.last_copied_at DESC, c.id DESC \
+                     LIMIT {limit}"
+                );
+                self.collect(&sql, args)?
+            }
         };
         Ok((rows, None))
     }
@@ -350,7 +428,8 @@ impl Storage {
         }
         let want = limit - out.len();
         let mut rest = self.unpinned(expr, filt, filt_args, want, true)?;
-        let narrowing = !q.kinds.is_empty() || q.since.is_some();
+        let narrowing =
+            !q.kinds.is_empty() || q.since.is_some() || q.collection.is_some() || q.tag.is_some();
         if rest.len() < want && narrowing && self.candidates_capped(expr)? {
             rest = self.unpinned(expr, filt, filt_args, want, false)?;
         }
@@ -412,6 +491,69 @@ impl Storage {
             out.push(row_to_summary(r)?);
         }
         Ok(out)
+    }
+
+    fn is_manual(&self, col: &CollectionId) -> Result<bool, StorageError> {
+        let sort: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT sort FROM collections WHERE id = ?1",
+                [col.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(sort.as_deref() == Some("manual"))
+    }
+
+    /// Members of a `manual` collection in stored order (`ord`, then id), with a keyset on
+    /// the cursor clip's position. A cursor clip that left the collection ends the list.
+    fn manual(
+        &self,
+        col: &CollectionId,
+        filt: &str,
+        args: Vec<Value>,
+        limit: usize,
+        q: &SearchQuery,
+    ) -> Result<(Vec<ClipSummary>, Option<Cursor>), StorageError> {
+        let col_s = col.to_string();
+        let mut a = Vec::with_capacity(args.len() + 4);
+        a.push(Value::Text(col_s.clone()));
+        a.extend(args);
+        let mut keyset = "";
+        if let Some(c) = q.cursor {
+            let ord: Option<i64> = self
+                .conn
+                .query_row(
+                    "SELECT ord FROM collection_clips WHERE collection_id = ?1 AND clip_id = ?2",
+                    [col_s, c.id.to_string()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let Some(ord) = ord else {
+                return Ok((Vec::new(), None));
+            };
+            a.push(Value::Integer(ord));
+            a.push(Value::Integer(ord));
+            a.push(Value::Text(c.id.to_string()));
+            keyset = " AND (m.ord > ? OR (m.ord = ? AND c.id > ?))";
+        }
+        let sql = format!(
+            "SELECT {COLS} FROM clips c JOIN collection_clips m \
+             ON m.clip_id = c.id AND m.collection_id = ? \
+             WHERE 1 = 1 {filt} {keyset} ORDER BY m.ord ASC, c.id ASC LIMIT {}",
+            limit + 1
+        );
+        let mut out = self.collect(&sql, a)?;
+        let next = if out.len() > limit {
+            out.truncate(limit);
+            out.last().map(|s| Cursor {
+                last_copied_at: s.last_copied_at,
+                id: s.id,
+            })
+        } else {
+            None
+        };
+        Ok((out, next))
     }
 
     /// Recent list ordered pinned (by `pin_order`) first, then unpinned by recency, with
@@ -570,6 +712,8 @@ mod tests {
             include_masked: true,
             limit: 50,
             cursor: None,
+            collection: None,
+            tag: None,
         }
     }
 
@@ -1027,6 +1171,114 @@ mod tests {
                 vec!["kubectl lasting row"]
             );
         }
+    }
+
+    #[test]
+    fn search_filters_by_collection_and_tag() {
+        use darkclip_core::CollectionSort;
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = open(tmp.path());
+        let a = id_of(s.upsert_clip(&text_clip("kubectl alpha")).unwrap());
+        let b = id_of(s.upsert_clip(&text_clip("kubectl bravo")).unwrap());
+        let c = id_of(s.upsert_clip(&text_clip("kubectl charlie")).unwrap());
+        let other = id_of(s.upsert_clip(&text_clip("kubectl outsider")).unwrap());
+        let col = s
+            .create_collection("Ops", CollectionSort::Recent, None)
+            .unwrap()
+            .id;
+        s.add_to_collection(&col, &a).unwrap();
+        s.add_to_collection(&col, &b).unwrap();
+        s.set_clip_tags(&b, &["deploy"]).unwrap();
+        s.set_clip_tags(&c, &["deploy", "prod"]).unwrap();
+        s.set_clip_tags(&other, &["prod"]).unwrap();
+        let ids = |s: &Storage, q: &SearchQuery| -> Vec<ClipId> {
+            s.search(q).unwrap().0.iter().map(|r| r.id).collect()
+        };
+        let mut list = q("");
+        list.text = None;
+        let with = |base: &SearchQuery, col: Option<CollectionId>, tag: Option<&str>| {
+            let mut x = base.clone();
+            x.collection = col;
+            x.tag = tag.map(str::to_owned);
+            x
+        };
+        // Text queries rank by bm25 (tags lengthen a row), so compare those as sets;
+        // the listing keeps the existing order (recency here).
+        let set = |mut v: Vec<ClipId>| {
+            v.sort_unstable();
+            v
+        };
+        assert_eq!(ids(&s, &with(&list, Some(col), None)), vec![b, a]);
+        assert_eq!(ids(&s, &with(&list, None, Some("deploy"))), vec![c, b]);
+        for base in [list.clone(), q("kubectl"), q("ku")] {
+            let got = |col, tag| set(ids(&s, &with(&base, col, tag)));
+            assert_eq!(got(Some(col), None), set(vec![a, b]), "{base:?}");
+            assert_eq!(got(None, Some("deploy")), set(vec![b, c]));
+            // The tag filter is normalised like a tag name.
+            assert_eq!(got(None, Some(" DEPLOY ")), set(vec![b, c]));
+            assert_eq!(got(Some(col), Some("deploy")), vec![b]);
+            assert!(got(Some(col), Some("prod")).is_empty());
+            assert!(got(None, Some("no such")).is_empty());
+            assert!(got(None, Some("unknown")).is_empty());
+            let missing = CollectionId::new_v7(Timestamp(1));
+            assert!(got(Some(missing), None).is_empty());
+        }
+        // Combined with the existing filters.
+        let mut kinds = with(&list, Some(col), None);
+        kinds.kinds = vec![ClipType::Url];
+        assert!(ids(&s, &kinds).is_empty());
+        s.set_pinned(&a, true).unwrap();
+        let mut pinned = with(&list, Some(col), None);
+        pinned.pinned_only = true;
+        assert_eq!(ids(&s, &pinned), vec![a]);
+        assert_eq!(
+            ids(&s, &with(&list, Some(col), None)),
+            vec![a, b],
+            "pinned first"
+        );
+
+        // A manual collection lists in its stored order, and pages through it.
+        let m = s
+            .create_collection("Snippets", CollectionSort::Manual, None)
+            .unwrap()
+            .id;
+        for id in [&c, &a, &other] {
+            s.add_to_collection(&m, id).unwrap();
+        }
+        assert_eq!(ids(&s, &with(&list, Some(m), None)), vec![c, a, other]);
+        s.move_in_collection(&m, &other, 0).unwrap();
+        assert_eq!(ids(&s, &with(&list, Some(m), None)), vec![other, c, a]);
+        assert_eq!(ids(&s, &with(&list, Some(m), Some("prod"))), vec![other, c]);
+        let mut page = with(&list, Some(m), None);
+        page.limit = 2;
+        let (p1, next) = s.search(&page).unwrap();
+        assert_eq!(p1.iter().map(|r| r.id).collect::<Vec<_>>(), vec![other, c]);
+        page.cursor = next;
+        assert!(page.cursor.is_some());
+        let (p2, next) = s.search(&page).unwrap();
+        assert_eq!(p2.iter().map(|r| r.id).collect::<Vec<_>>(), vec![a]);
+        assert!(next.is_none());
+    }
+
+    #[test]
+    fn search_query_debug_redacts_text_and_tag() {
+        let secret = concat!("hunter", "2-query-text");
+        let mut query = q(secret);
+        query.tag = Some(concat!("secret", "-tag-name").into());
+        for out in [format!("{query:?}"), format!("{query:#?}")] {
+            assert!(!out.contains(secret), "{out}");
+            assert!(!out.contains("secret-tag-name"), "{out}");
+            assert!(out.contains("SearchQuery"), "{out}");
+        }
+    }
+
+    #[test]
+    fn d_stroke_query_matches_original_and_folded_tokens() {
+        assert_eq!(match_expr("kube").as_deref(), Some("\"kube\"*"));
+        assert_eq!(
+            match_expr("Đà x").as_deref(),
+            Some("(\"Đà\"* OR \"Dà\"*) AND \"x\"*")
+        );
     }
 
     #[test]

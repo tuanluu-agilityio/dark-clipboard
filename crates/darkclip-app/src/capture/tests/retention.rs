@@ -193,6 +193,8 @@ fn masked_clip_from_earlier_session_removed_at_expiry() {
             include_masked: true,
             limit: 10,
             cursor: None,
+            collection: None,
+            tag: None,
         })
         .unwrap();
     assert!(rows.iter().all(|r| r.sensitivity == SensitivityLevel::None));

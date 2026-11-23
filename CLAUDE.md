@@ -22,7 +22,7 @@ Do not re-read whole plans or specs unless the task needs them.
 - **Approved documents are not rewritten.** ADRs change only through a new ADR that supersedes them. Phase 0 documents in `docs/` are the baseline; later changes are recorded in `decisions.md`, and the document gets a dated "Changed by D-NNN" note.
 - **Privacy is not negotiable** (`docs/plans/global-constraints.md` GC-03, GC-06, GC-07): never read content before the policy decision; never log content; never make OS or Darkshot exclusion markers configurable. Never build anything that bypasses Darkshot's clipboard exclusions.
 - **Honest platform claims.** Do not claim support on a platform or compositor unless `docs/architecture/platform-compatibility.md` marks it **T** (tested). Never invent test results; report the exact command and output.
-- **No network** in any crate in P0/P1. No telemetry. Do not send project data to external services.
+- **No network** in any crate in P0/P1, except the opt-in update check in `apps/desktop` (Task 412, D-057). No telemetry. Do not send project data to external services.
 - **User-visible strings** come from `darkclip_core::i18n` (English and Vietnamese).
 - **Releases** only when the owner asks: bump versions, `CHANGELOG.md` (Added / Fixed / Known issues, newest first), README download section, tag `vX.Y.Z`, GitHub release from the CHANGELOG.
 - **Language.** Code, commits and docs in English. Talk to the owner in the language of their message (Darkshot sessions use Vietnamese).

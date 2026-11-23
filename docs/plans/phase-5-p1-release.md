@@ -25,4 +25,24 @@
 | 407 | Threat model re-review against the built system; `cargo deny`; dependency audit | 401–406 | security-reviewer / opus | — | High | Report in `docs/security/review-0.1.0.md` |
 | 408 | Signing and release: Windows (Authenticode or unsigned + SHA-256, as Darkshot did), macOS (Developer ID + notarization if available, else unsigned preview), Linux (checksums); GitHub release workflow from tags | 331 | builder / sonnet | reviewer / opus | Medium | Release dry-run on a test tag |
 | 409 | Licence decision implemented (Q-01): `LICENSE`, Slint attribution if the royalty-free licence is chosen, third-party notices | owner decision | scaffolder / sonnet | reviewer / sonnet | Low | `cargo deny licenses` passes |
+| 411 | Data management: storage usage, cleanup tools (clear keeping pinned+favorites, older than N days, orphan sweep on demand, compact) (owner prompt phase3 §7, D-057) | 401 | builder / sonnet | security-reviewer / opus | Medium | Deletion respects pin/favorite |
+| 412 | Opt-in update check (D-037): manual button + weekly toggle off by default, GitHub Releases metadata only, never downloads; network code only in `apps/desktop` (GC-08 amended, D-057) | — | builder / sonnet | security-reviewer / opus | Medium | No request when off (test) |
 | 410 | README, CHANGELOG `[0.1.0]`, website section in the Darkshot site (if the owner wants it there; otherwise a docs page), release notes | all | scaffolder / sonnet | reviewer / sonnet | Low | Every claim matches the platform matrix |
+
+## Execution (D-057, 2026-11-23)
+
+Phase 5 starts before Phase 4 because Phase 4 cannot be verified without hardware (Q-04). Owner prompt phase3 (organization, editing, transforms, import/export, data management) and the release parts of prompt phase5 are folded in (D-036). Order and models:
+
+| Order | Task | Agent / model | Reviewer | Why this model |
+|---|---|---|---|---|
+| 1 | 401 Migration 2 | specialist / opus | security-reviewer / opus | Storage integrity, migration with backup |
+| 2 | 402 Organization API | builder / sonnet | reviewer / opus | Mechanical over 401; reviewer raised to opus (data integrity) |
+| 3 | 404 Transforms + edit copy | builder / sonnet | security-reviewer / opus | Pure functions; the new clip path is privacy-relevant |
+| 4 | 411 Data management | builder / sonnet | security-reviewer / opus | Deletion |
+| 5 | 403 Organization UI | builder / sonnet | reviewer / opus | UI over 402 |
+| 6 | 405 Backup / export / import | specialist / opus | security-reviewer / opus | Untrusted input, data swap |
+| 7 | 406 Fuzzing | specialist / opus | security-reviewer / opus | Parsers |
+| 8 | 412 Update check | builder / sonnet | security-reviewer / opus | First network code |
+| 9 | 407 Security re-review (Windows scope) | security-reviewer / opus | orchestrator | Phase gate |
+
+Not run without the owner: 408 (release workflow; a test tag is a public action), 410 (0.1.0 docs/website), and the 0.1.0 release itself (releases only when the owner asks; macOS/Linux preview needs Phase 4). 409 is done (GPLv3 applied in Task 201, D-045). Paste Stack is planned for 0.2 (D-037); Snippets = a user collection plus pinned clips (403 docs). Markdown conversion is not in 404 (no reliable deterministic converter without a large dependency). Item "rename" is not added (clips have no name field; the note covers it).

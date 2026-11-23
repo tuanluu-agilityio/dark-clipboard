@@ -18,6 +18,7 @@ mod clips;
 mod db;
 mod error;
 mod migrate;
+mod organize;
 mod retention;
 mod search;
 mod stats;
@@ -29,6 +30,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub use error::StorageError;
+pub use organize::TagCount;
 pub use retention::RetentionReport;
 pub use search::{ClipSummary, Cursor, SearchQuery};
 pub use stats::StorageStats;
@@ -175,15 +177,16 @@ mod tests {
     }
 
     #[test]
-    fn open_creates_schema_v1() {
+    fn open_creates_schema_v2() {
         let tmp = tempfile::tempdir().unwrap();
         let s = open(tmp.path());
-        assert_eq!(s.schema_version().unwrap(), 1);
+        // Migration 2 (Task 401) runs on every new store: the current version is 2.
+        assert_eq!(s.schema_version().unwrap(), 2);
         let uv: u32 = s
             .conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(uv, 1);
+        assert_eq!(uv, 2);
         let jm: String = s
             .conn
             .pragma_query_value(None, "journal_mode", |r| r.get(0))
@@ -468,7 +471,7 @@ mod tests {
             }
         };
         let mut ro = Storage::open(tmp.path(), OpenMode::ReadOnly, clock()).unwrap();
-        assert_eq!(ro.schema_version().unwrap(), 1);
+        assert_eq!(ro.schema_version().unwrap(), 2);
         assert!(ro.get_clip(&id).unwrap().is_some());
         assert_eq!(ro.read_representation(&id, 0).unwrap(), b"stored");
         assert_eq!(
@@ -497,7 +500,7 @@ mod tests {
         }
         let want = StorageError::SchemaTooNew {
             found: 99,
-            supported: 1,
+            supported: 2,
         };
         assert_eq!(
             Storage::open(tmp.path(), OpenMode::ReadOnly, clock()).err(),
@@ -519,7 +522,8 @@ mod tests {
     fn migration_backup_created_and_removed() {
         let tmp = tempfile::tempdir().unwrap();
         let db = tmp.path().join("history.db");
-        let bak = tmp.path().join("history.db.pre-v1.bak");
+        // Named after the target version (2 since Task 401).
+        let bak = tmp.path().join("history.db.pre-v2.bak");
         {
             // an existing version-0 database (e.g. created by an interrupted first run)
             let c = rusqlite::Connection::open(&db).unwrap();
@@ -528,7 +532,7 @@ mod tests {
         }
         // a fresh store gets no backup; this one existed, so it does
         let s = open(tmp.path());
-        assert_eq!(s.schema_version().unwrap(), 1);
+        assert_eq!(s.schema_version().unwrap(), 2);
         assert!(bak.is_file(), "backup created before migrating");
         {
             let b = rusqlite::Connection::open(&bak).unwrap();
@@ -550,15 +554,15 @@ mod tests {
             );
         }
         drop(s);
-        // the next successful run at version 1 removes it
+        // the next successful run at version 2 removes it
         let s = open(tmp.path());
-        assert_eq!(s.schema_version().unwrap(), 1);
+        assert_eq!(s.schema_version().unwrap(), 2);
         assert!(!bak.exists(), "backup removed after a successful run");
 
         // a brand-new store never creates one
         let fresh = tempfile::tempdir().unwrap();
         drop(open(fresh.path()));
-        assert!(!fresh.path().join("history.db.pre-v1.bak").exists());
+        assert!(!fresh.path().join("history.db.pre-v2.bak").exists());
     }
 
     #[test]
@@ -762,7 +766,7 @@ mod tests {
     #[test]
     fn stale_backup_removal_failure_is_ignored() {
         let tmp = tempfile::tempdir().unwrap();
-        let bak = tmp.path().join("history.db.pre-v1.bak");
+        let bak = tmp.path().join("history.db.pre-v2.bak");
         {
             let c = rusqlite::Connection::open(tmp.path().join("history.db")).unwrap();
             c.execute_batch("CREATE TABLE legacy(x);").unwrap();

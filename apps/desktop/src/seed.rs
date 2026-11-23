@@ -225,6 +225,8 @@ mod tests {
             include_masked: true,
             limit,
             cursor: None,
+            collection: None,
+            tag: None,
         }
     }
 

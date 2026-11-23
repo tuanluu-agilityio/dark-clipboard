@@ -108,6 +108,8 @@ impl Request {
             include_masked: false,
             limit: self.limit,
             cursor: self.cursor.as_deref().and_then(Cursor::decode),
+            collection: None,
+            tag: None,
         }
     }
 }

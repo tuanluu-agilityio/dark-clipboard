@@ -10,7 +10,8 @@
 //! - `classified.plain_text` is not stored separately: it is the text/plain rep.
 //!
 //! On a `content_hash` conflict the existing row keeps its id, `created_at`, use
-//! counters, pin state and note; it gets `last_copied_at = now`, `copy_count + 1`,
+//! counters, pin state, note, tags and collections (a masked capture clears the note and
+//! tags); it gets `last_copied_at = now`, `copy_count + 1`,
 //! the new source, and everything derived from the new capture (representations,
 //! preview, size, metadata/thumbnail, sensitivity, `expires_at`).
 
@@ -33,19 +34,19 @@ const THUMB_MAX_PX: u32 = 256;
 type InlineData = Option<Vec<u8>>;
 type BlobRef = Option<[u8; 32]>;
 
-fn decode_err() -> StorageError {
+pub(crate) fn decode_err() -> StorageError {
     StorageError::Sqlite("ColumnDecode".into())
 }
 
 /// The serde name of a unit enum variant (`"rich_text"`, `"linux-x11"`, ...).
-fn enum_name<T: Serialize>(v: &T) -> Result<String, StorageError> {
+pub(crate) fn enum_name<T: Serialize>(v: &T) -> Result<String, StorageError> {
     match serde_json::to_value(v) {
         Ok(serde_json::Value::String(s)) => Ok(s),
         _ => Err(StorageError::Sqlite("ColumnEncode".into())),
     }
 }
 
-fn enum_parse<T: DeserializeOwned>(s: String) -> Result<T, StorageError> {
+pub(crate) fn enum_parse<T: DeserializeOwned>(s: String) -> Result<T, StorageError> {
     serde_json::from_value(serde_json::Value::String(s)).map_err(|_| decode_err())
 }
 
@@ -156,7 +157,11 @@ impl Storage {
             pin_order: existing.as_ref().and_then(|e| e.pin_order),
             source: new.source.clone(),
             sensitivity: new.sensitivity.clone(),
-            note: existing.as_ref().and_then(|e| e.note.clone()),
+            // A masked clip carries no note (or tags): they are cleared below on a bump.
+            note: existing
+                .as_ref()
+                .and_then(|e| e.note.clone())
+                .filter(|_| new.sensitivity.level != SensitivityLevel::Masked),
             tags: Vec::new(),
             collections: Vec::new(),
             expires_at: new.expires_at,
@@ -203,6 +208,12 @@ impl Storage {
         if let Some(e) = &existing {
             stale.extend(e.old_blobs.iter().copied());
             tx.execute("DELETE FROM representations WHERE clip_id = ?1", [&id_s])?;
+            if clip.sensitivity.level == SensitivityLevel::Masked {
+                // Re-captured as masked: drop its note and tags (memberships stay).
+                tx.execute("UPDATE clips SET note = NULL WHERE id = ?1", [&id_s])?;
+                tx.execute("DELETE FROM clip_tags WHERE clip_id = ?1", [&id_s])?;
+                crate::organize::delete_unused_tags(&tx)?;
+            }
             tx.execute(
                 "UPDATE clips SET preview = ?2, size_bytes = ?3, last_copied_at = ?4, \
                  copy_count = copy_count + 1, source_app_id = ?5, source_app_name = ?6, \
@@ -270,7 +281,7 @@ impl Storage {
             }
         }
 
-        // FTS row: masked clips index only the masked preview, never body or note.
+        // FTS row: masked clips index only the masked preview, never body, note or tags.
         let masked = clip.sensitivity.level == SensitivityLevel::Masked;
         let body = if masked {
             String::new()
@@ -282,12 +293,19 @@ impl Storage {
                 .unwrap_or_default()
         };
         let note = clip.note.as_deref().filter(|_| !masked).unwrap_or_default();
+        // A bump keeps the clip's tags; a new clip has none.
+        let tags = if masked || existing.is_none() {
+            String::new()
+        } else {
+            crate::organize::tags_text(&tx, &id_s)?
+        };
         crate::search::index_clip(
             &tx,
             &id_s,
             &clip.preview,
             crate::search::truncate_body(&body),
             note,
+            &tags,
         )?;
 
         #[cfg(test)]
@@ -395,6 +413,7 @@ impl Storage {
             None => Vec::new(),
         };
         let metadata: ClipMetadata = serde_json::from_str(&row.meta).map_err(|_| decode_err())?;
+        let (tags, collections) = crate::organize::clip_refs(&self.conn, &id_s)?;
         Ok(Some(Clip {
             schema_version: SchemaVersion,
             id: *id,
@@ -416,8 +435,8 @@ impl Storage {
                 categories,
             },
             note: row.note,
-            tags: Vec::new(),
-            collections: Vec::new(),
+            tags,
+            collections,
             expires_at: row.expires_at.map(Timestamp),
             metadata,
         }))
