@@ -15,7 +15,7 @@
 
 #![cfg_attr(not(windows), allow(dead_code))]
 
-use darkclip_core::limits::{within_decode_caps, MAX_RGBA_BYTES, MAX_SIDE};
+use darkclip_core::limits::{png_palette_ok, within_decode_caps, MAX_RGBA_BYTES, MAX_SIDE};
 use std::io::Write;
 use zeroize::Zeroizing;
 
@@ -352,6 +352,10 @@ const LCS_GM_IMAGES: u32 = 4;
 /// on a malformed PNG (GC-10); errors carry no pixel data (GC-06).
 pub(crate) fn png_to_dibs(png_bytes: &[u8]) -> Result<DibPair, DibError> {
     const CORRUPT: DibError = DibError::Malformed("not a decodable PNG");
+    // `png` 0.18.1 panics on a palette of a bad length (Task 406 fuzz finding).
+    if !png_palette_ok(png_bytes) {
+        return Err(DibError::Malformed("malformed palette"));
+    }
     let mut decoder = png::Decoder::new_with_limits(
         std::io::Cursor::new(png_bytes),
         png::Limits {

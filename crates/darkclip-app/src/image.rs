@@ -47,6 +47,10 @@ pub fn decode_png(
     max_pixels: u64,
     max_rgba_bytes: u64,
 ) -> Result<DecodedImage, ImageError> {
+    // `png` 0.18.1 panics on a palette of a bad length (Task 406 fuzz finding).
+    if !darkclip_core::limits::png_palette_ok(bytes) {
+        return Err(ImageError::Corrupt);
+    }
     let mut decoder = Decoder::new_with_limits(
         Cursor::new(bytes),
         Limits {
