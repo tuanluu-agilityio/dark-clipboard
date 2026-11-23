@@ -2,9 +2,9 @@
 
 A local-first clipboard manager for Windows, macOS and Linux, written in Rust. It is part of the Darkshot family.
 
-> **Status: design phase (Phase 0 complete).** There is no usable build yet. This repository currently holds the product and architecture blueprint, measured feasibility spikes, and the implementation plan.
+> **Status: Windows alpha (0.1.0-alpha, internal).** A Windows desktop app exists and runs from source; it has not been released, tagged or published. macOS and Linux have no app yet. See [Windows alpha](#windows-alpha-010-alpha-internal) below for what is verified and what is not.
 
-## What it will do (first release)
+## What it is meant to do (first release)
 
 - Remembers what you copy (text, rich text, images, file lists) and finds it again as you type.
 - Keyboard first: one shortcut, type, Enter.
@@ -14,9 +14,62 @@ A local-first clipboard manager for Windows, macOS and Linux, written in Rust. I
 
 On first start a one-screen welcome explains what is never captured and where your data lives. **Nothing is captured until you press Start**; "Not now" keeps capture off, and the welcome stays reachable from Settings > About and the tray. Start at login is off unless you tick it.
 
+## Windows alpha (0.1.0-alpha, internal)
+
+An internal alpha for the owner's own testing. It is built from source; there is no installer, no signed binary and no release. User guide: [docs/user/windows-alpha.md](docs/user/windows-alpha.md). The exact build that was hashed is in [docs/testing/alpha-artifact.md](docs/testing/alpha-artifact.md).
+
+### What works (implemented)
+
+- Tray icon with menu (pause, private mode, history, settings, quit) and a global shortcut (default `Ctrl+Shift+V`).
+- Popup near the cursor: search as you type (accent-insensitive), filters, previews for text, images and file lists, pin, delete with undo.
+- Copy back with Enter; paste into the previous app with Ctrl+Enter (opt-in "Enter also pastes"). Paste is refused for elevated apps, the taskbar and windows it cannot identify.
+- History window with filters, multi-select, pin, delete (always asks first) and a detail pane.
+- Settings window (shortcut, language, start at login, capture mode, retention, excluded apps, about and licences) and a first-run welcome. English and Vietnamese.
+- Start at login through the current user's `Run` registry key (off unless you tick it).
+- Software renderer by default (small memory, no idle CPU).
+
+### What is tested
+
+- **Automated, passing in the quality gate:** the portable core, storage (SQLite with FTS5), capture policy, privacy markers, sensitive-data detection, the application API, settings handling, and the Windows adapter's non-interactive parts. Run `powershell -File scripts/check.ps1`.
+- **Tested by hand on one Windows 11 machine (Task 107):** capture from KeePassXC (not stored), Darkshot (not stored), Notepad, Chrome, Explorer file copies and Snipping Tool, and the ignored real-clipboard tests. Details and the apps that were not available (Word, Excel, Bitwarden, 1Password, RDP) are in the [platform checklist](docs/testing/platform-checklist.md).
+- **Measured by script, not by hand:** popup open time driven through `--toggle` (p95 about 22-27 ms with 10,000 clips) and memory and idle CPU, in [perf-windows.md](docs/testing/perf-windows.md). The real-shortcut timing is not measured.
+- **Untested by hand:** almost every Windows UI row, including the tray, the real shortcut, popup keys, paste into Notepad, VS Code, Edge or Word, elevated targets, the history and settings windows, the welcome, start at login, mixed-DPI monitors, Vietnamese input methods and screen readers. These are owner manual rows in the [platform checklist](docs/testing/platform-checklist.md) marked **untested**. An agent only ran the app with a temporary data folder; no agent clicked, typed or screenshot it.
+- **macOS and Linux:** untested, and there is no app for them.
+
+### Build and run
+
+Requires a recent stable Rust toolchain on Windows 11.
+
+    cargo build --release -p dark-clipboard
+    target\release\dark-clipboard.exe
+
+The app starts hidden with a tray icon. Open the popup with `Ctrl+Shift+V`. On the first start a welcome appears and **nothing is captured until you press Start**. To try it without touching your own history, add `--data-dir <empty folder>` (the folder then also holds the settings; the login entry cannot be changed in that mode).
+
+### Where your data lives
+
+| What | Default location |
+|---|---|
+| History database, image blobs, log | `%LOCALAPPDATA%\DarkClipboard` (`history.db`, `blobs\`, `logs\`) |
+| Settings | `%APPDATA%\DarkClipboard\settings.json` |
+| Start at login | Registry value `DarkClipboard` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (only if you turn it on) |
+
+With `--data-dir <folder>` the history, log and settings all live in that folder. The log never contains clip content.
+
+### Privacy promises
+
+- Clips that carry the Windows clipboard-history, cloud or monitor-exclusion markers, or that Darkshot marks private, are never stored. Those markers cannot be switched off in the settings.
+- Clips from excluded apps are never stored. The list has built-in entries (password managers such as KeePassXC, plus Darkshot) that you can edit after a confirmation. App identity is cooperative, so the markers are the main defence.
+- Capture is off on a fresh install until you press Start in the welcome. "Not now" keeps it off.
+- No account, no cloud, no network access in the app, no telemetry.
+- Verified: KeePassXC 2.8.0 and Darkshot 0.6.0 clips were not stored (see the checklist). Not verified: Bitwarden, 1Password, Office, RDP.
+
+### Known limits
+
+See "Known issues" in the [CHANGELOG](CHANGELOG.md). In short: the Windows build has no console, so `--toggle`, `--quit` and `--help` do not set a shell exit code interactively; a popup opened from the tray only copies; the context menu in the history window is mouse only; an Explorer restart may remove the tray icon; GNOME on Wayland may not support background capture later.
+
 ## Platform status
 
-Only Windows has been tested so far. See `docs/architecture/platform-compatibility.md` for every capability with its evidence (tested, documented, reported or unknown). macOS and Linux are designed but untested. GNOME on Wayland may not support background capture.
+Only Windows has been tested, and only partly (see the alpha section). See `docs/architecture/platform-compatibility.md` for every capability with its evidence (tested, documented, reported or unknown). macOS and Linux are designed but untested. GNOME on Wayland may not support background capture.
 
 ## Documentation
 
