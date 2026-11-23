@@ -10,6 +10,7 @@
 use std::path::PathBuf;
 #[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// What to ask for.
 pub struct Pick {
@@ -33,6 +34,39 @@ pub enum Started {
 
 #[cfg(windows)]
 static OPEN: AtomicBool = AtomicBool::new(false);
+
+/// Waits for a started backup, restore, export or import on a short thread of its own (the
+/// App worker stays free for mode changes and searches) and hands the result to `done` on
+/// the Slint event loop. There is no timeout: the actor always answers, or reports that it
+/// stopped (`AppNotRunning`), so the window never claims a failure while a restore may
+/// still be finishing.
+pub fn wait_transfer<F>(wait: darkclip_app::TransferWait, done: F)
+where
+    F: FnOnce(Result<darkclip_app::TransferReply, darkclip_app::ApiError>) + Send + 'static,
+{
+    let slot = Arc::new(Mutex::new(Some((wait, done))));
+    let theirs = Arc::clone(&slot);
+    let spawned = std::thread::Builder::new()
+        .name("darkclip-transfer-wait".into())
+        .spawn(move || deliver(&theirs));
+    if spawned.is_err() {
+        // No thread: wait here (the caller's worker) rather than lose the result.
+        deliver(&slot);
+    }
+}
+
+type Slot<F> = Mutex<Option<(darkclip_app::TransferWait, F)>>;
+
+fn deliver<F>(slot: &Slot<F>)
+where
+    F: FnOnce(Result<darkclip_app::TransferReply, darkclip_app::ApiError>) + Send + 'static,
+{
+    let taken = slot.lock().unwrap_or_else(PoisonError::into_inner).take();
+    if let Some((wait, done)) = taken {
+        let r = wait.wait();
+        let _ = slint::invoke_from_event_loop(move || done(r));
+    }
+}
 
 /// Shows the picker; `done` runs on the Slint event loop with the chosen file, or `None` when
 /// the user cancelled. Not called when the result is not `Started::Yes`.

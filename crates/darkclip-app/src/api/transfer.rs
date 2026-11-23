@@ -54,29 +54,20 @@ impl TransferWait {
     }
 }
 
-/// Longest wait for a backup, restore, export or import (large histories take a while).
-const TRANSFER_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// How long a queued transfer may wait for the actor before it is dropped unexecuted.
+const TRANSFER_DEADLINE: Duration = Duration::from_secs(24 * 60 * 60);
 /// Folder of `export_collection` files: `<data>/exports/` (T-11: never a caller's path).
 pub const EXPORTS_DIR: &str = "exports";
 
 impl App {
-    fn transfer(&self, op: TransferOp) -> Result<TransferReply, ApiError> {
-        let (tx, rx) = mpsc::channel();
-        let deadline = Instant::now() + TRANSFER_TIMEOUT;
-        self.cap.send(ActorCommand::Transfer {
-            op,
-            deadline,
-            reply: tx,
-        })?;
-        rx.recv_timeout(TRANSFER_TIMEOUT)
-            .map_err(|_| ApiError::Internal)?
-    }
-
     /// Writes a backup of the whole history (masked clips excluded) to `dest`, which the
     /// user chose. The file appears only when complete.
     pub fn ui_backup(&self, c: &Caller, dest: &Path) -> Result<BackupReport, ApiError> {
         ui_only(c)?;
-        match self.transfer(TransferOp::Backup(dest.to_path_buf()))? {
+        match self
+            .ui_start(c, UiTransfer::Backup(dest.to_path_buf()))?
+            .wait()?
+        {
             TransferReply::Backup(r) => Ok(r),
             _ => Err(ApiError::Internal),
         }
@@ -92,7 +83,11 @@ impl App {
         free_bytes: Option<u64>,
     ) -> Result<RestoreReport, ApiError> {
         ui_only(c)?;
-        match self.transfer(TransferOp::Restore(archive.to_path_buf(), free_bytes))? {
+        let start = UiTransfer::Restore {
+            archive: archive.to_path_buf(),
+            free_bytes,
+        };
+        match self.ui_start(c, start)?.wait()? {
             TransferReply::Restore(r) => Ok(r),
             _ => Err(ApiError::Internal),
         }
@@ -107,12 +102,11 @@ impl App {
         dest: &Path,
     ) -> Result<ExportReport, ApiError> {
         ui_only(c)?;
-        let (ids, collection) = self.export_target(what)?;
-        match self.transfer(TransferOp::Export {
-            ids,
-            collection,
+        let start = UiTransfer::Export {
+            what,
             dest: dest.to_path_buf(),
-        })? {
+        };
+        match self.ui_start(c, start)?.wait()? {
             TransferReply::Export(r) => Ok(r),
             _ => Err(ApiError::Internal),
         }
@@ -121,31 +115,47 @@ impl App {
     /// Imports an export file; reports counts per outcome.
     pub fn ui_import(&self, c: &Caller, archive: &Path) -> Result<ImportReport, ApiError> {
         ui_only(c)?;
-        match self.transfer(TransferOp::Import(archive.to_path_buf()))? {
+        match self
+            .ui_start(c, UiTransfer::Import(archive.to_path_buf()))?
+            .wait()?
+        {
             TransferReply::Import(r) => Ok(r),
             _ => Err(ApiError::Internal),
         }
     }
 
     /// Starts a transfer and returns at once; the caller waits for the result on a thread of
-    /// its own (`TransferWait::wait`), so its worker stays free. Stub: runs to the end first.
+    /// its own (`TransferWait::wait`), so its worker stays free for mode changes and searches.
+    /// The actor runs it as one command: a capture-mode change sent after this call is
+    /// applied before any clipboard change that arrives after it (one FIFO queue).
     pub fn ui_start(&self, c: &Caller, what: UiTransfer) -> Result<TransferWait, ApiError> {
         ui_only(c)?;
-        let r = match what {
-            UiTransfer::Backup(p) => self.ui_backup(c, &p).map(TransferReply::Backup),
+        let op = match what {
+            UiTransfer::Backup(p) => TransferOp::Backup(p),
             UiTransfer::Restore {
                 archive,
                 free_bytes,
-            } => self
-                .ui_restore(c, &archive, free_bytes)
-                .map(TransferReply::Restore),
+            } => TransferOp::Restore(archive, free_bytes),
             UiTransfer::Export { what, dest } => {
-                self.ui_export(c, what, &dest).map(TransferReply::Export)
+                let (ids, collection) = self.export_target(what)?;
+                TransferOp::Export {
+                    ids,
+                    collection,
+                    dest,
+                }
             }
-            UiTransfer::Import(p) => self.ui_import(c, &p).map(TransferReply::Import),
+            UiTransfer::Import(p) => TransferOp::Import(p),
         };
         let (tx, rx) = mpsc::channel();
-        let _ = tx.send(r);
+        // The actor skips a command whose deadline has passed; a transfer queued behind
+        // another long one must still run, so the deadline is far away.
+        let now = Instant::now();
+        let deadline = now.checked_add(TRANSFER_DEADLINE).unwrap_or(now);
+        self.cap.send(ActorCommand::Transfer {
+            op,
+            deadline,
+            reply: tx,
+        })?;
         Ok(TransferWait(rx))
     }
 
@@ -191,11 +201,18 @@ impl App {
         let dir = self.data_dir.join(EXPORTS_DIR);
         std::fs::create_dir_all(&dir).map_err(|_| ApiError::Storage)?;
         let dest = dir.join(format!("{}.dcexport", ClipId::new_v7(self.clock.now())));
-        let r = match self.transfer(TransferOp::Export {
-            ids,
-            collection,
-            dest: dest.clone(),
-        })? {
+        let (tx, rx) = mpsc::channel();
+        let now = Instant::now();
+        self.cap.send(ActorCommand::Transfer {
+            op: TransferOp::Export {
+                ids,
+                collection,
+                dest: dest.clone(),
+            },
+            deadline: now.checked_add(TRANSFER_DEADLINE).unwrap_or(now),
+            reply: tx,
+        })?;
+        let r = match TransferWait(rx).wait()? {
             TransferReply::Export(r) => r,
             _ => return Err(ApiError::Internal),
         };

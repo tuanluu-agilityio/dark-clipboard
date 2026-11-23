@@ -3,26 +3,42 @@
 //! **Backup** (`.dcbackup`, a zip): `history.db` + the blob files it references +
 //! `manifest.json` `{ format, schema_version, app_version, created_at, clip_count, files }`.
 //! The database is a `VACUUM INTO` snapshot (a consistent online copy that carries no free
-//! pages), from which masked and expired clips are then deleted and the snapshot vacuumed
-//! again: a backup never holds what the history would have dropped within minutes. The zip is
-//! written to `<dest>.partial`, flushed, then renamed.
+//! pages), from which masked clips and clips already expired are then deleted and the
+//! snapshot vacuumed again. Clips flagged no-export (NoCloud) are kept: a backup is the
+//! user's own full copy. The zip is written to `<dest>.dark-clipboard-partial`, flushed,
+//! checked against the limits its own restore enforces (`TooLargeToWrite` otherwise), then
+//! renamed. A crash can leave the partial file behind; it is safe to delete.
 //!
-//! **Restore** validates everything before the live data is touched: entry names, count and
-//! sizes ([`crate::archive`]), the manifest (a newer `format` or `schema_version` is refused),
-//! every file's size and SHA-256. The files are extracted to a private staging folder in the
-//! data folder, the database there is opened with [`Storage::open`] (migrations run), then
-//! checked: `integrity_check`, `foreign_key_check`, its schema must equal the one the
-//! migrations create (no extra trigger, view or table can come in), the Favorites row, and
-//! every clip must decode and validate. Only then:
-//! 1. a safety copy of the live database is written as `history.db.pre-restore-<ms>` (kept
-//!    until the next successful open, which deletes it; masked clips are purged from it);
-//! 2. the staged blobs are copied into the live blob folder (content-addressed: existing
-//!    files are never changed);
-//! 3. the staged database is copied over the live one with SQLite's online backup API, on
-//!    the store's own connection (the single writer, D-028). The destination write
-//!    transaction is held across steps and rolled back if the copy does not finish, so a
-//!    failure leaves the live database as it was.
+//! **Restore** validates everything before the live data is touched:
+//! 1. the archive ([`crate::archive`]: names, counts, declared sizes and their ratio to the
+//!    file, header consistency), the manifest (a newer `format` or `schema_version` is
+//!    refused; it must list exactly the archive's files), and free disk space for the
+//!    staging copy, the safety copy and the blobs (`InsufficientSpace`, also when the
+//!    caller could not measure it);
+//! 2. every file is extracted to a private staging folder with its size and SHA-256 checked;
+//! 3. before any migration, the staged database is opened on a raw, defensive connection
+//!    (`SQLITE_DBCONFIG_DEFENSIVE`, `trusted_schema=OFF`, `cell_size_check=ON`, no mmap):
+//!    `integrity_check`, text encoding UTF-8, `user_version` equal to the manifest's, and a
+//!    schema exactly equal to one this app ever created (versions 1 to current): no extra
+//!    trigger, view, table or index can reach a migration or the live store;
+//! 4. then it is opened with [`Storage::open`] (migrations run) and checked again:
+//!    `integrity_check`, `foreign_key_check`, the current schema exactly, the Favorites row,
+//!    every clip decodes and validates;
+//! 5. header fields the online backup API copies with page 1 are normalised to the live
+//!    database's: page size and auto-vacuum (converted with a `VACUUM`), `application_id`,
+//!    WAL journal mode; the encoding is never converted (UTF-16 is refused in step 3) and
+//!    `user_version` is the current schema version.
 //!
+//! Only then: a safety copy of the live database is written as
+//! `history.db.pre-restore-<ms>` (kept until the next successful open, which deletes it;
+//! masked clips are purged from it); the staged blobs are copied into the live blob folder
+//! (content-addressed: existing files are never changed); and the staged database is copied
+//! over the live one with SQLite's online backup API, on the store's own connection (the
+//! single writer, D-028). The destination write transaction is held across steps and rolled
+//! back if the copy does not finish, so a failure leaves the live database as it was.
+//!
+//! A restored database is not scanned again for sensitive content: it holds what the user's
+//! own history held when the backup was made (masked clips were left out then).
 //! Blobs the old history used stay on disk (the safety copy references them) until the
 //! orphan sweep of the next open. Nothing here logs or returns content or paths (GC-06).
 
@@ -210,10 +226,80 @@ fn schema_of(conn: &Connection) -> Result<Vec<SchemaRow>, StorageError> {
     Ok(rows)
 }
 
-fn expected_schema() -> Result<Vec<SchemaRow>, StorageError> {
+/// The schema migrations 1..=`version` create (from an in-memory database).
+fn known_schema(version: u32) -> Result<Vec<SchemaRow>, StorageError> {
     let mut mem = Connection::open_in_memory()?;
-    migrate::run(&mut mem, migrate::MIGRATIONS)?;
+    let upto: Vec<migrate::Migration> = migrate::MIGRATIONS
+        .iter()
+        .filter(|m| m.version <= version)
+        .map(|m| migrate::Migration {
+            version: m.version,
+            sql: m.sql,
+        })
+        .collect();
+    migrate::run(&mut mem, &upto)?;
     schema_of(&mem)
+}
+
+/// The header fields the online backup API carries with page 1 that this module controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Header {
+    page_size: i64,
+    auto_vacuum: i64,
+    application_id: i64,
+}
+
+fn header_of(c: &Connection) -> Result<Header, StorageError> {
+    let get = |name: &str| -> Result<i64, StorageError> {
+        Ok(c.pragma_query_value(None, name, |r| r.get(0))?)
+    };
+    Ok(Header {
+        page_size: get("page_size")?,
+        auto_vacuum: get("auto_vacuum")?,
+        application_id: get("application_id")?,
+    })
+}
+
+fn text_pragma(c: &Connection, name: &str) -> Result<String, StorageError> {
+    Ok(c.pragma_query_value(None, name, |r| r.get(0))?)
+}
+
+/// Step 3 of a restore: the staged file on a raw, defensive connection, before any migration
+/// runs on it. Returns its schema version.
+fn precheck_raw(db: &Path, manifest_version: u32, supported: u32) -> Result<u32, StorageError> {
+    let corrupt = || StorageError::Archive(ArchiveError::Corrupt);
+    let c = Connection::open_with_flags(
+        db,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|_| corrupt())?;
+    let check = || -> Result<u32, StorageError> {
+        c.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
+        c.pragma_update(None, "trusted_schema", false)?;
+        c.pragma_update(None, "cell_size_check", true)?;
+        let _: i64 = c.pragma_update_and_check(None, "mmap_size", 0, |r| r.get(0))?;
+        // A file that is not a sound database is refused before its header is believed.
+        if text_pragma(&c, "integrity_check")? != "ok" {
+            return Err(corrupt());
+        }
+        if text_pragma(&c, "encoding")? != "UTF-8" {
+            return Err(corrupt());
+        }
+        let found = migrate::user_version(&c)?;
+        if found > supported {
+            return Err(StorageError::SchemaTooNew { found, supported });
+        }
+        if found != manifest_version {
+            return Err(ArchiveError::BadManifest.into());
+        }
+        if found == 0 || schema_of(&c)? != known_schema(found)? {
+            return Err(corrupt());
+        }
+        Ok(found)
+    };
+    let r = check().map_err(staged_err);
+    drop(c);
+    r
 }
 
 /// Any failure to read or check the staged database means the file is not a valid backup,
@@ -228,19 +314,15 @@ fn staged_err(e: StorageError) -> StorageError {
     }
 }
 
-/// Opens the extracted database (migrating it), checks it, matches its page size to the
-/// live one; returns its clip count. The store is closed again on return.
-fn check_staged(
-    staging: &Path,
-    clock: Arc<dyn Clock>,
-    live_page_size: i64,
-) -> Result<u64, StorageError> {
+/// Steps 4 and 5 of a restore: opens the extracted database (migrating it), checks it and
+/// normalises its header to `live`; returns its clip count. Closed again on return.
+fn check_staged(staging: &Path, clock: Arc<dyn Clock>, live: Header) -> Result<u64, StorageError> {
     let st = Storage::open(staging, OpenMode::ReadWrite, clock).map_err(staged_err)?;
     let corrupt = || StorageError::Archive(ArchiveError::Corrupt);
+    let supported = migrate::target_version(migrate::MIGRATIONS);
     let check = || -> Result<u64, StorageError> {
         let c = &st.conn;
-        let ok: String = c.query_row("PRAGMA integrity_check(1)", [], |r| r.get(0))?;
-        if ok != "ok" {
+        if text_pragma(c, "integrity_check")? != "ok" {
             return Err(corrupt());
         }
         let fk_problem = c
@@ -251,7 +333,7 @@ fn check_staged(
         if fk_problem {
             return Err(corrupt());
         }
-        if schema_of(c)? != expected_schema()? {
+        if migrate::user_version(c)? != supported || schema_of(c)? != known_schema(supported)? {
             return Err(corrupt());
         }
         let systems: i64 = c.query_row(
@@ -276,17 +358,27 @@ fn check_staged(
             let clip = st.get_clip(&id)?.ok_or_else(corrupt)?;
             clip.validate().map_err(|_| corrupt())?;
         }
-        let page: i64 = c.pragma_query_value(None, "page_size", |r| r.get(0))?;
-        if page != live_page_size {
-            // The online backup into a WAL database needs equal page sizes.
+        // Header fields the backup API copies with page 1 (step 5).
+        let mut h = header_of(c)?;
+        if h.page_size != live.page_size || h.auto_vacuum != live.auto_vacuum {
+            // Both need a rebuild; page size cannot change in WAL mode.
             let _: String =
                 c.pragma_update_and_check(None, "journal_mode", "DELETE", |r| r.get(0))?;
-            c.pragma_update(None, "page_size", live_page_size)?;
+            c.pragma_update(None, "page_size", live.page_size)?;
+            c.pragma_update(None, "auto_vacuum", live.auto_vacuum)?;
             c.execute_batch("VACUUM")?;
-            let now: i64 = c.pragma_query_value(None, "page_size", |r| r.get(0))?;
-            if now != live_page_size {
-                return Err(corrupt());
-            }
+        }
+        if h.application_id != live.application_id {
+            c.pragma_update(None, "application_id", live.application_id)?;
+        }
+        let jm: String = c.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))?;
+        h = header_of(c)?;
+        if h != live
+            || !jm.eq_ignore_ascii_case("wal")
+            || text_pragma(c, "encoding")? != "UTF-8"
+            || migrate::user_version(c)? != supported
+        {
+            return Err(corrupt());
         }
         Ok(hex_len(ids.len()))
     };
@@ -310,12 +402,12 @@ impl Storage {
         &mut self,
         dest: &Path,
         app_version: &str,
-        _limits: ArchiveLimits,
+        limits: ArchiveLimits,
     ) -> Result<BackupReport, StorageError> {
         self.ensure_writable()?;
         let now = self.clock.now();
         let staging = archive::fresh_dir(&self.dir, STAGING_PREFIXES[0], now.0)?;
-        let result = self.backup_in(dest, app_version, &staging, now);
+        let result = self.backup_in(dest, app_version, &staging, now, limits);
         archive::remove_dir(&staging);
         result
     }
@@ -326,7 +418,9 @@ impl Storage {
         app_version: &str,
         staging: &Path,
         now: Timestamp,
+        limits: ArchiveLimits,
     ) -> Result<BackupReport, StorageError> {
+        let too_big = || StorageError::Archive(ArchiveError::TooLargeToWrite);
         let snap = staging.join(HISTORY_DB);
         private_snapshot(&self.conn, &snap, now)?;
         let (clips, schema_version, referenced) = {
@@ -343,6 +437,15 @@ impl Storage {
                 referenced,
             )
         };
+        // Refuse what the restore would refuse, before writing anything.
+        let db_len = std::fs::metadata(&snap)?.len();
+        if referenced.len().saturating_add(2) > limits.max_entries
+            || db_len > limits.max_entry_bytes
+            || db_len > limits.max_total_bytes
+        {
+            return Err(too_big());
+        }
+        let mut total = db_len;
         let mut z = AtomicZip::create(dest)?;
         let mut files = Vec::new();
         let (size, sha) = z.add_file(HISTORY_DB, &snap)?;
@@ -365,6 +468,11 @@ impl Storage {
                 )) => continue,
                 Err(e) => return Err(e),
             };
+            let len = hex_len(bytes.len());
+            total = total.saturating_add(len);
+            if len > limits.max_entry_bytes || total > limits.max_total_bytes {
+                return Err(too_big());
+            }
             let entry = archive::blob_entry_name(&sha);
             z.add_bytes(&entry, &bytes)?;
             files.push(ManifestFile {
@@ -384,8 +492,13 @@ impl Storage {
         };
         let json = serde_json::to_vec_pretty(&manifest)
             .map_err(|_| StorageError::Sqlite("ColumnEncode".into()))?;
+        let json_len = hex_len(json.len());
+        total = total.saturating_add(json_len);
+        if json_len > limits.max_json_bytes || total > limits.max_total_bytes {
+            return Err(too_big());
+        }
         z.add_bytes(MANIFEST, &json)?;
-        z.commit()?;
+        z.commit_checked(total, limits)?;
         Ok(BackupReport {
             clips,
             blobs: blob_count,
@@ -409,12 +522,12 @@ impl Storage {
         &mut self,
         archive: &Path,
         limits: ArchiveLimits,
-        _free_bytes: Option<u64>,
+        free_bytes: Option<u64>,
     ) -> Result<RestoreReport, StorageError> {
         self.ensure_writable()?;
         let now = self.clock.now();
         let staging = archive::fresh_dir(&self.dir, STAGING_PREFIXES[1], now.0)?;
-        let result = self.restore_in(archive, limits, &staging, now);
+        let result = self.restore_in(archive, limits, free_bytes, &staging, now);
         archive::remove_dir(&staging);
         result
     }
@@ -423,6 +536,7 @@ impl Storage {
         &mut self,
         path: &Path,
         limits: ArchiveLimits,
+        free_bytes: Option<u64>,
         staging: &Path,
         now: Timestamp,
     ) -> Result<RestoreReport, StorageError> {
@@ -434,6 +548,14 @@ impl Storage {
         let supported = migrate::target_version(migrate::MIGRATIONS);
         let manifest = parse_manifest(&z.read_json(EntryKind::Manifest)?, supported)?;
         let expected = expected_files(&manifest, &z)?;
+        // Room for the staged files, the safety copy of the live database and the blobs
+        // copied into the live folder (unknown free space is refused, like compaction).
+        let declared: u64 = expected.values().map(|(size, _)| *size).sum();
+        let live_db = std::fs::metadata(self.dir.join(db::DB_FILE)).map_or(0, |m| m.len());
+        let needed = declared.saturating_mul(2).saturating_add(live_db);
+        if free_bytes.is_none_or(|free| free < needed) {
+            return Err(StorageError::InsufficientSpace);
+        }
         let staged_blobs = staging.join(blobs::BLOBS_DIR);
         blobs::ensure_private_dir(&staged_blobs)?;
         let mut blob_files = Vec::new();
@@ -458,11 +580,14 @@ impl Storage {
         }
         drop(z);
 
-        // 2. Open the staged copy (migrations run) and check it.
-        let live_page: i64 = self
-            .conn
-            .pragma_query_value(None, "page_size", |r| r.get(0))?;
-        let clips = check_staged(staging, Arc::clone(&self.clock), live_page)?;
+        // 2. Check the staged copy raw, then open it (migrations run) and check it again.
+        precheck_raw(
+            &staging.join(HISTORY_DB),
+            manifest.schema_version,
+            supported,
+        )?;
+        let live = header_of(&self.conn)?;
+        let clips = check_staged(staging, Arc::clone(&self.clock), live)?;
 
         // 3. Safety copy of the live data.
         let pre = pre_restore_path(&self.dir, now);

@@ -31,10 +31,16 @@ fn utc_date(now: Timestamp) -> String {
 
 /// The message for a failed backup, restore, export or import.
 pub fn error_msg(e: &ApiError) -> Msg {
-    use darkclip_app::events::{FILE_INVALID, FILE_TOO_LARGE, IMPORT_PRIVATE};
+    use darkclip_app::events::{
+        FILE_INVALID, FILE_TOO_LARGE, FILE_TOO_LARGE_TO_WRITE, IMPORT_PRIVATE,
+    };
     match e {
         ApiError::SchemaTooNew => Msg::TransferNewer,
         ApiError::InvalidArgument(w) if *w == FILE_TOO_LARGE => Msg::TransferTooLarge,
+        ApiError::InvalidArgument(w) if *w == FILE_TOO_LARGE_TO_WRITE => {
+            Msg::TransferTooLargeToWrite
+        }
+        ApiError::InvalidArgument("not enough free disk space") => Msg::TransferNoSpace,
         ApiError::InvalidArgument(w) if *w == FILE_INVALID => Msg::TransferInvalid,
         ApiError::InvalidArgument(w) if *w == IMPORT_PRIVATE => Msg::TransferPrivate,
         _ => Msg::TransferFailed,

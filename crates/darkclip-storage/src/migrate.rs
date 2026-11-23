@@ -19,6 +19,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 2,
         sql: include_str!("../migrations/0002_organization.sql"),
     },
+    Migration {
+        version: 3,
+        sql: include_str!("../migrations/0003_no_export.sql"),
+    },
 ];
 
 /// The highest version `migrations` brings a database to.

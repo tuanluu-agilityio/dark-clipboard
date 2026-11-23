@@ -97,6 +97,9 @@ pub(crate) fn map_storage(e: &StorageError) -> ApiError {
         StorageError::InsufficientSpace => ApiError::InvalidArgument("not enough free disk space"),
         // Task 405: a backup or export file that was refused. A newer one has its own code.
         StorageError::Archive(ArchiveError::NewerFormat) => ApiError::SchemaTooNew,
+        StorageError::Archive(ArchiveError::TooLargeToWrite) => {
+            ApiError::InvalidArgument(FILE_TOO_LARGE_TO_WRITE)
+        }
         StorageError::Archive(ArchiveError::TooLarge | ArchiveError::TooManyEntries) => {
             ApiError::InvalidArgument(FILE_TOO_LARGE)
         }

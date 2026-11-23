@@ -128,7 +128,10 @@ fn rebuild(
             .iter()
             .find(|(n, _)| n == "history.db")
             .and_then(|(_, b)| b.get(60..64))
-            .map_or(3, |v| u32::from_be_bytes([v[0], v[1], v[2], v[3]]));
+            .map(|v| u32::from_be_bytes([v[0], v[1], v[2], v[3]]))
+            // Not a real header (a garbage database in a test): the current version.
+            .filter(|v| *v < 1000)
+            .unwrap_or(3);
         let m = manifest(&e, 1, schema);
         e.push(("manifest.json".into(), m));
     }
@@ -878,10 +881,8 @@ fn a_bomb_within_the_entry_limit_is_refused_by_the_total() {
     let crafted = tmp.path().join("bomb.dcbackup");
     rebuild(&out, &crafted, true, |e| {
         for k in 0..2u8 {
-            e.push((
-                format!("blobs/0{k}/0{k}{}", "0".repeat(62)),
-                vec![k; 2 << 20],
-            ));
+            let data = vec![k; 2 << 20];
+            e.push((crate::archive::blob_entry_name(&blobs::sha256(&data)), data));
         }
     });
     // Each entry is far below the per-entry limit; together they break the total.
@@ -909,10 +910,8 @@ fn a_far_too_compressed_archive_is_refused_before_extraction() {
     let crafted = tmp.path().join("ratio.dcbackup");
     rebuild(&out, &crafted, true, |e| {
         for k in 0..3u8 {
-            e.push((
-                format!("blobs/0{k}/0{k}{}", "0".repeat(62)),
-                vec![0u8; 30 << 20],
-            ));
+            let data = vec![k; 30 << 20];
+            e.push((crate::archive::blob_entry_name(&blobs::sha256(&data)), data));
         }
     });
     assert!(std::fs::metadata(&crafted).unwrap().len() < 2 << 20);

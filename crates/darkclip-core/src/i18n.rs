@@ -762,8 +762,8 @@ messages! {
     ),
     TransferExportDone => ("Exported {n} clips", "Đã xuất {n} mục"),
     TransferExportExcluded => (
-        "Masked or sensitive clips left out: {n}",
-        "Mục bị che hoặc nhạy cảm đã bỏ qua: {n}"
+        "Masked, sensitive or no-export clips left out: {n}",
+        "Mục bị che, nhạy cảm hoặc không được xuất đã bỏ qua: {n}"
     ),
     TransferNewer => (
         "This file was made by a newer version of Dark Clipboard. Update the app to open it. Nothing was changed.",

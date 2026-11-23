@@ -2,10 +2,13 @@
 //! data-model §8, `export.schema.json`).
 //!
 //! An export holds `export.json` (`export.schema.json`) and one `blobs/<aa>/<sha256>` file per
-//! distinct representation: every representation is exported as a blob, so the JSON never
-//! carries content. Masked clips and clips with a detected sensitive category are never
-//! exported; the report counts them. Exported clips carry no source app, no platform format
-//! names, no thumbnail reference and only the exported collection as membership.
+//! distinct representation: the representation bytes (the full text, HTML, image, file list)
+//! are in the blob files, while `export.json` carries each clip's preview (up to 512
+//! characters of its text), note, tag names and the collection's name. Masked clips, clips
+//! with a detected sensitive category and clips flagged no-export (NoCloud at capture) are
+//! never exported; the report counts them together. Exported clips carry no source app, no
+//! platform format names, no thumbnail reference and only the exported collection as
+//! membership. Writing refuses (`TooLargeToWrite`) a file its own import would refuse.
 //!
 //! Reading treats the file as untrusted (`crate::archive` limits and name rules; a newer
 //! `schema_version` is refused). The reader only parses and verifies: the import itself
@@ -61,6 +64,8 @@ pub struct ExportArchive {
     zip: CheckedZip,
     /// Blob hash -> (zip index, size).
     blobs: HashMap<[u8; 32], (usize, u64)>,
+    /// Blobs read at least once.
+    read: HashSet<[u8; 32]>,
 }
 
 /// Counts only (GC-06): names, notes and content are never printed.
@@ -128,6 +133,7 @@ impl ExportArchive {
             clips: doc.clips,
             zip,
             blobs,
+            read: HashSet::new(),
         })
     }
 
@@ -143,15 +149,18 @@ impl ExportArchive {
 
     /// The size the file declares for blob `sha` (checked again when it is read).
     pub fn blob_size(&self, sha: &[u8; 32]) -> Option<u64> {
-        let _ = sha;
-        None
+        self.blobs.get(sha).map(|(_, size)| *size)
     }
 
     /// The bytes of blob `sha`, verified against its size and hash. `NotFound` when the file
     /// does not list it.
+    ///
+    /// A blob several clips share counts once against the total limit; every read, repeats
+    /// included, counts against a work budget of `REREAD_FACTOR` times that limit.
     pub fn blob(&mut self, sha: &[u8; 32]) -> Result<Vec<u8>, StorageError> {
         let (idx, size) = self.blobs.get(sha).copied().ok_or(StorageError::NotFound)?;
-        self.zip.read_verified(idx, size, sha)
+        let first = self.read.insert(*sha);
+        self.zip.read_verified(idx, size, sha, first)
     }
 }
 
@@ -175,9 +184,14 @@ impl Storage {
         collection: &Collection,
         dest: &Path,
         app_version: &str,
-        _limits: ArchiveLimits,
+        limits: ArchiveLimits,
     ) -> Result<ExportReport, StorageError> {
         let now = self.clock.now();
+        let too_big = || StorageError::Archive(ArchiveError::TooLargeToWrite);
+        if ids.len() > limits.max_entries {
+            return Err(too_big());
+        }
+        let mut total: u64 = 0;
         let mut report = ExportReport::default();
         let mut z = AtomicZip::create(dest)?;
         let mut written: HashSet<[u8; 32]> = HashSet::new();
@@ -194,6 +208,7 @@ impl Storage {
             }
             if clip.sensitivity.level == SensitivityLevel::Masked
                 || !clip.sensitivity.categories.is_empty()
+                || self.is_no_export(id)?
             {
                 report.excluded_sensitive += 1;
                 continue;
@@ -225,6 +240,14 @@ impl Storage {
             }
             for (sha, bytes) in pending {
                 if written.insert(sha) {
+                    // Refuse what the import would refuse: entries, entry size, total.
+                    total = total.saturating_add(len64(bytes.len()));
+                    if written.len() + 1 > limits.max_entries
+                        || len64(bytes.len()) > limits.max_entry_bytes
+                        || total > limits.max_total_bytes
+                    {
+                        return Err(too_big());
+                    }
                     let path = archive::blob_entry_name(&sha);
                     z.add_bytes(&path, &bytes)?;
                     blob_list.push(BlobEntry {
@@ -259,15 +282,14 @@ impl Storage {
         };
         let json = serde_json::to_vec_pretty(&doc)
             .map_err(|_| StorageError::Sqlite("ColumnEncode".into()))?;
+        let json_len = len64(json.len());
+        total = total.saturating_add(json_len);
+        if json_len > limits.max_json_bytes || total > limits.max_total_bytes {
+            return Err(too_big());
+        }
         z.add_bytes(EXPORT_JSON, &json)?;
-        z.commit()?;
+        z.commit_checked(total, limits)?;
         Ok(report)
-    }
-
-    /// Whether the clip carries the no-export flag (NoCloud at capture). Stub.
-    pub fn is_no_export(&self, id: &ClipId) -> Result<bool, StorageError> {
-        let _ = id;
-        Ok(false)
     }
 
     /// Sets an imported clip's `created_at` to `created_at` clamped to `[0, now]` and to at

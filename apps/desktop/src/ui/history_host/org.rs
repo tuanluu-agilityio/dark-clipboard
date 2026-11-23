@@ -712,17 +712,27 @@ impl Host {
                 return;
             };
             with_host(|h| h.show_toast(t(h.lang, Msg::TransferWorking).to_string()));
-            poster.post_quiet(move |app| {
-                let r = app.ui_export(&Caller::Ui, what, &path);
+            let finish = move |r: Result<darkclip_app::TransferReply, ApiError>| {
                 let _ = ui.upgrade_in_event_loop(move |_| {
                     with_host(|h| {
                         let text = match r {
-                            Ok(r) => transfer::export_text(h.lang, &r),
+                            Ok(darkclip_app::TransferReply::Export(r)) => {
+                                transfer::export_text(h.lang, &r)
+                            }
+                            Ok(_) => t(h.lang, Msg::TransferFailed).to_string(),
                             Err(e) => t(h.lang, transfer::error_msg(&e)).to_string(),
                         };
                         h.show_toast(text);
                     });
                 });
+            };
+            // A quick send on the worker; the wait runs on its own thread.
+            poster.post_quiet(move |app| {
+                let start = darkclip_app::UiTransfer::Export { what, dest: path };
+                match app.ui_start(&Caller::Ui, start) {
+                    Ok(wait) => crate::filedlg::wait_transfer(wait, finish),
+                    Err(e) => finish(Err(e)),
+                }
             });
         });
         if started == crate::filedlg::Started::Unavailable {

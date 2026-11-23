@@ -28,7 +28,7 @@ use crate::prefs::sys;
 use crate::prefs::transfer::{self, RestoreFlow};
 use darkclip_app::api::{AppStatus, Caller, CaptureStatus, StorageStatsView};
 use darkclip_app::settings::{PopupPosition, Settings};
-use darkclip_app::{App, ClipApi};
+use darkclip_app::{ApiError, App, ClipApi, TransferReply, TransferWait, UiTransfer};
 use darkclip_core::i18n::{t, Lang, Msg};
 use darkclip_core::{CaptureMode, ClipType, SensitiveHandling, FAR_FUTURE};
 use darkclip_platform::Capabilities;
@@ -897,9 +897,11 @@ fn pick_then(
 }
 
 /// Runs `job` on the worker with the buttons disabled; `report` makes the status line text.
-fn run_transfer<T: Send + 'static>(
-    job: impl FnOnce(&App) -> Result<T, darkclip_app::ApiError> + Send + 'static,
-    report: impl FnOnce(Lang, T) -> String + Send + 'static,
+/// Starts a transfer on the worker (a quick send) and waits for it on its own thread, so the
+/// worker keeps serving mode changes and searches meanwhile (Task 405 review).
+fn run_transfer(
+    start: impl FnOnce(&App) -> Result<TransferWait, ApiError> + Send + 'static,
+    report: impl FnOnce(Lang, TransferReply) -> Option<String> + Send + 'static,
 ) {
     let Some(poster) = with_host(|h| {
         h.win.set_transfer_busy(true);
@@ -908,20 +910,25 @@ fn run_transfer<T: Send + 'static>(
     }) else {
         return;
     };
-    // Not quiet: the status refresh afterwards updates the tray and the open windows.
-    poster.post(move |app: &App| {
-        let r = job(app);
-        let _ = slint::invoke_from_event_loop(move || {
-            with_host(|h| {
-                h.win.set_transfer_busy(false);
-                let msg = match r {
-                    Ok(v) => (report(h.lang, v), false),
-                    Err(e) => (t(h.lang, transfer::error_msg(&e)).to_string(), true),
-                };
-                h.set_status(Some(msg));
-            });
-            request_stats();
+    let finish = move |r: Result<TransferReply, ApiError>| {
+        with_host(|h| {
+            h.win.set_transfer_busy(false);
+            let msg = match r {
+                Ok(v) => match report(h.lang, v) {
+                    Some(text) => (text, false),
+                    None => (t(h.lang, Msg::TransferFailed).to_string(), true),
+                },
+                Err(e) => (t(h.lang, transfer::error_msg(&e)).to_string(), true),
+            };
+            h.set_status(Some(msg));
         });
+        request_stats();
+    };
+    poster.post_quiet(move |app: &App| match start(app) {
+        Ok(wait) => crate::filedlg::wait_transfer(wait, finish),
+        Err(e) => {
+            let _ = slint::invoke_from_event_loop(move || finish(Err(e)));
+        }
     });
 }
 
@@ -936,8 +943,13 @@ fn backup_ask() {
         Some(name),
         |path| {
             run_transfer(
-                move |app| app.ui_backup(&Caller::Ui, &path),
-                |lang, r| fill(t(lang, Msg::TransferBackupDone), r.clips),
+                move |app| app.ui_start(&Caller::Ui, UiTransfer::Backup(path)),
+                |lang, r| match r {
+                    TransferReply::Backup(r) => {
+                        Some(fill(t(lang, Msg::TransferBackupDone), r.clips))
+                    }
+                    _ => None,
+                },
             );
         },
     );
@@ -962,16 +974,29 @@ fn restore_ask() {
 }
 
 fn restore_confirm() {
-    let Some(path) = with_host(|h| {
+    let Some((path, data_dir)) = with_host(|h| {
         h.win.set_restore_open(false);
-        h.restore.confirm()
+        h.restore.confirm().map(|p| (p, h.data_dir.clone()))
     })
     .flatten() else {
         return;
     };
+    // Measured here, on the UI thread: a quick OS call, and the App has no OS access.
+    let free_bytes = sys::free_disk_bytes(&data_dir);
     run_transfer(
-        move |app| app.ui_restore(&Caller::Ui, &path, None),
-        |lang, r| fill(t(lang, Msg::TransferRestoreDone), r.clips),
+        move |app| {
+            app.ui_start(
+                &Caller::Ui,
+                UiTransfer::Restore {
+                    archive: path,
+                    free_bytes,
+                },
+            )
+        },
+        |lang, r| match r {
+            TransferReply::Restore(r) => Some(fill(t(lang, Msg::TransferRestoreDone), r.clips)),
+            _ => None,
+        },
     );
 }
 
@@ -984,8 +1009,11 @@ fn import_ask() {
         None,
         |path| {
             run_transfer(
-                move |app| app.ui_import(&Caller::Ui, &path),
-                |lang, r| transfer::import_text(lang, &r),
+                move |app| app.ui_start(&Caller::Ui, UiTransfer::Import(path)),
+                |lang, r| match r {
+                    TransferReply::Import(r) => Some(transfer::import_text(lang, &r)),
+                    _ => None,
+                },
             );
         },
     );

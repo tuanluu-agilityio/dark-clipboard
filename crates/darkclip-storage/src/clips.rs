@@ -220,7 +220,8 @@ impl Storage {
                 "UPDATE clips SET preview = ?2, size_bytes = ?3, last_copied_at = ?4, \
                  copy_count = copy_count + 1, source_app_id = ?5, source_app_name = ?6, \
                  source_platform = ?7, source_confidence = ?8, sensitivity_level = ?9, \
-                 sensitivity_categories = ?10, expires_at = ?11, meta = ?12 WHERE id = ?1",
+                 sensitivity_categories = ?10, expires_at = ?11, meta = ?12, \
+                 no_export = max(no_export, ?13) WHERE id = ?1",
                 params![
                     id_s,
                     clip.preview,
@@ -233,7 +234,8 @@ impl Storage {
                     level,
                     categories,
                     expires,
-                    meta
+                    meta,
+                    new.no_export
                 ],
             )?;
         } else {
@@ -241,8 +243,9 @@ impl Storage {
                 "INSERT INTO clips (id, kind, preview, content_hash, size_bytes, created_at, \
                  last_copied_at, copy_count, use_count, pinned, source_app_id, \
                  source_app_name, source_platform, source_confidence, sensitivity_level, \
-                 sensitivity_categories, expires_at, meta) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 1, 0, 0, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                 sensitivity_categories, expires_at, meta, no_export) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 1, 0, 0, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, \
+                 ?15)",
                 params![
                     id_s,
                     kind,
@@ -257,7 +260,8 @@ impl Storage {
                     level,
                     categories,
                     expires,
-                    meta
+                    meta,
+                    new.no_export
                 ],
             )?;
             tx.execute("INSERT INTO clip_rowid (clip_id) VALUES (?1)", [&id_s])?;
@@ -501,6 +505,20 @@ impl Storage {
             .optional()?;
         id.map(|s| ClipId::parse(&s).map_err(|_| decode_err()))
             .transpose()
+    }
+
+    /// Whether the clip carries the no-export flag (`NoCloud` at capture; Task 405). Such a
+    /// clip is never exported. `NotFound` when the clip does not exist.
+    pub fn is_no_export(&self, id: &ClipId) -> Result<bool, StorageError> {
+        let flag: Option<bool> = self
+            .conn
+            .query_row(
+                "SELECT no_export FROM clips WHERE id = ?1",
+                [id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        flag.ok_or(StorageError::NotFound)
     }
 
     pub fn mark_used(&mut self, id: &ClipId) -> Result<(), StorageError> {

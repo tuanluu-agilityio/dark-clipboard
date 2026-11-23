@@ -2,6 +2,9 @@
 //! only writable `Storage` (D-028), so the restore swap and every imported clip go through it,
 //! serialized with capture (no clipboard change is processed while one runs).
 //!
+//! Import never sets the no-export flag (NoCloud) from anything in a file: the file format
+//! has no such field, and an unknown field makes the file invalid.
+//!
 //! Import trusts nothing in the file but the bytes it verified: each clip's representations
 //! go through capture's own `prepare` (classify, kind check, sensitive scan and handling per
 //! settings, decode and hash), so kind, preview, metadata, hash and sensitivity are
@@ -218,12 +221,18 @@ impl Actor {
         for rep in &clip.representations {
             let skip = (|| {
                 let sha = rep.blob_sha256.ok_or(Skip::Invalid)?;
-                let mut bytes = file.blob(&sha).map_err(|_| Skip::Invalid)?;
                 let cap = if rep.mime == Mime::ImagePng {
                     caps.image_max_bytes
                 } else {
                     caps.text_max_bytes
                 };
+                // The size the file declares is checked before anything is decompressed
+                // (the read then checks it again against the bytes).
+                let declared = file.blob_size(&sha).ok_or(Skip::Invalid)?;
+                if declared > cap {
+                    return Err(Skip::TooLarge);
+                }
+                let mut bytes = file.blob(&sha).map_err(|_| Skip::Invalid)?;
                 if bytes.len() as u64 > cap {
                     wipe_bytes(&mut bytes);
                     return Err(Skip::TooLarge);
@@ -270,7 +279,6 @@ impl Actor {
             Err(SkipReason::KindDisabled) => return Ok(Err(Skip::Kind)),
             Err(_) => return Ok(Err(Skip::Invalid)),
         };
-        let masked = new.sensitivity.level == SensitivityLevel::Masked;
         // A duplicate keeps its own source (the file's is never used).
         let existing = self
             .storage
@@ -283,19 +291,19 @@ impl Actor {
                 .map_err(|e| map_storage(&e))?
                 .and_then(|c| c.source);
         }
-        match self.insert_new(new) {
-            Some(UpsertOutcome::Inserted(id)) => Ok(Ok(Stored {
-                id,
-                merged: false,
-                masked,
-            })),
-            Some(UpsertOutcome::Bumped(id)) => Ok(Ok(Stored {
-                id,
-                merged: true,
-                masked,
-            })),
-            None => Err(ApiError::Storage),
-        }
+        let (id, merged) = match self.insert_new(new) {
+            Some(UpsertOutcome::Inserted(id)) => (id, false),
+            Some(UpsertOutcome::Bumped(id)) => (id, true),
+            None => return Err(ApiError::Storage),
+        };
+        // The stored clip decides (D-060): a masked one is never organised, whatever the
+        // file or the prepared value said.
+        let masked = self
+            .storage
+            .get_clip(&id)
+            .map_err(|e| map_storage(&e))?
+            .is_none_or(|c| c.sensitivity.level == SensitivityLevel::Masked);
+        Ok(Ok(Stored { id, merged, masked }))
     }
 
     /// The collection imported clips join: Favorites for an export of Favorites; otherwise a

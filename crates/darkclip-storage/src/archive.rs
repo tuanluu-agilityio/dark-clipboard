@@ -2,12 +2,20 @@
 //!
 //! Every archive that is read is untrusted input. Reading enforces, before anything is
 //! written anywhere:
-//! - the archive file size, the entry count, every entry's size and the total uncompressed
-//!   size (sizes are counted while decompressing, never taken from the headers alone);
+//! - the archive file size (before the central directory is parsed), the entry count, every
+//!   entry's declared size, the declared total and its ratio to the file size (a compression
+//!   bomb is refused before any decompression); sizes are then counted again while
+//!   decompressing, never taken from the headers alone;
+//! - header consistency: every local header must match its central-directory entry, and no
+//!   name may appear twice (`zip::ZipArchive::validate_header_consistency`);
 //! - entry names from a fixed allow-list (`manifest.json`, `history.db`, `export.json`,
 //!   `blobs/<aa>/<64 hex>` with `aa` the first two digits): no directories, no absolute paths,
-//!   no `..`, no drive letters, no backslashes, no duplicates, no symlinks, no encryption;
+//!   no `..`, no drive letters, no backslashes, no symlinks, no encryption;
 //! - the SHA-256 and size of every file against its manifest entry.
+//!
+//! Writing refuses (`TooLargeToWrite`) any archive its own reader would refuse. A file being
+//! written is `<dest>.dark-clipboard-partial` until it is complete and renamed; a crash may
+//! leave one behind, which is safe to delete.
 //!
 //! A name from an archive is never used as a path: files are written under paths this module
 //! builds from the validated SHA-256 only.
@@ -101,6 +109,20 @@ pub struct ArchiveLimits {
 
 const MIB: u64 = 1024 * 1024;
 
+/// Largest accepted ratio of the declared uncompressed total to the archive file size.
+/// Deflate tops out near 1:1032; real backups (PNG blobs, a SQLite file) stay far below 50.
+pub(crate) const MAX_RATIO: u64 = 200;
+/// Archives that declare at most this much in total skip the ratio check.
+pub(crate) const RATIO_FLOOR: u64 = 64 * MIB;
+/// Every read of a blob, repeats included, counts against this many times the total limit
+/// (a blob shared by many clips counts once against the total itself).
+pub(crate) const REREAD_FACTOR: u64 = 4;
+
+/// Whether `declared` uncompressed bytes from a file of `file_len` bytes is a plausible ratio.
+pub(crate) fn ratio_ok(declared: u64, file_len: u64) -> bool {
+    declared <= RATIO_FLOOR || declared <= file_len.saturating_mul(MAX_RATIO)
+}
+
 impl ArchiveLimits {
     /// A backup: the database (at most 4 GiB) plus up to 200,000 blobs (at most 256 MiB each,
     /// 8 GiB together).
@@ -168,8 +190,11 @@ pub(crate) struct CheckedZip {
     /// Allowed entries, by kind, with their index in the zip.
     pub entries: Vec<(EntryKind, usize)>,
     pub limits: ArchiveLimits,
-    /// Uncompressed bytes read so far (bounded by `limits.max_total_bytes`).
+    /// Uncompressed bytes read so far, each entry once (bounded by `limits.max_total_bytes`).
     read_total: u64,
+    /// Uncompressed bytes of every read, repeats included (bounded by `REREAD_FACTOR` times
+    /// the total limit).
+    read_work: u64,
 }
 
 impl CheckedZip {
@@ -190,6 +215,11 @@ impl CheckedZip {
         if zip.len() > limits.max_entries {
             return Err(ArchiveError::TooManyEntries.into());
         }
+        // Duplicate names (the reader would keep only one of them) and local headers that
+        // disagree with the central directory are refused before anything is read.
+        zip.validate_header_consistency()
+            .map_err(|_| ArchiveError::Inconsistent)?;
+        let mut declared_total: u64 = 0;
         let mut entries = Vec::with_capacity(zip.len());
         let mut seen = std::collections::HashSet::new();
         for i in 0..zip.len() {
@@ -223,14 +253,20 @@ impl CheckedZip {
             if f.size() > cap {
                 return Err(ArchiveError::TooLarge.into());
             }
+            declared_total = declared_total.saturating_add(f.size());
             drop(f);
             entries.push((kind, i));
+        }
+        // The declared total, and its ratio to the file, are checked before extraction.
+        if declared_total > limits.max_total_bytes || !ratio_ok(declared_total, len) {
+            return Err(ArchiveError::TooLarge.into());
         }
         Ok(Self {
             zip,
             entries,
             limits,
             read_total: 0,
+            read_work: 0,
         })
     }
 
@@ -246,19 +282,21 @@ impl CheckedZip {
         let idx = self.index_of(kind).ok_or(ArchiveError::NotAnArchive)?;
         let cap = self.limits.max_json_bytes;
         let mut out = Vec::new();
-        self.copy_entry(idx, cap, &mut out)?;
+        self.copy_entry(idx, cap, true, &mut out)?;
         Ok(out)
     }
 
-    /// Reads entry `idx` into memory after checking its size and SHA-256.
+    /// `first`: the first read of this entry (later reads do not count against the total).
     pub fn read_verified(
         &mut self,
         idx: usize,
         size: u64,
         sha: &[u8; 32],
+        first: bool,
     ) -> Result<Vec<u8>, StorageError> {
         let mut out = Vec::new();
-        let (n, got) = self.copy_entry(idx, size.min(self.limits.max_entry_bytes), &mut out)?;
+        let (n, got) =
+            self.copy_entry(idx, size.min(self.limits.max_entry_bytes), first, &mut out)?;
         if n != size || got != *sha {
             return Err(ArchiveError::ChecksumMismatch.into());
         }
@@ -276,7 +314,8 @@ impl CheckedZip {
     ) -> Result<(), StorageError> {
         let result = (|| {
             let mut f = blobs::create_private_file(target, true)?;
-            let (n, got) = self.copy_entry(idx, size.min(self.limits.max_entry_bytes), &mut f)?;
+            let (n, got) =
+                self.copy_entry(idx, size.min(self.limits.max_entry_bytes), true, &mut f)?;
             if n != size || got != *sha {
                 return Err(ArchiveError::ChecksumMismatch.into());
             }
@@ -290,14 +329,25 @@ impl CheckedZip {
     }
 
     /// Copies at most `cap` bytes of entry `idx` to `out`; one byte more is an error. Returns
-    /// the byte count and the SHA-256 of what was copied. Counts toward the total limit.
+    /// the byte count and the SHA-256 of what was copied. Counts toward the total limit when
+    /// `count` (the first read of the entry), and toward the work budget always.
     fn copy_entry(
         &mut self,
         idx: usize,
         cap: u64,
+        count: bool,
         out: &mut dyn Write,
     ) -> Result<(u64, [u8; 32]), StorageError> {
-        let total_left = self.limits.max_total_bytes.saturating_sub(self.read_total);
+        let total_left = if count {
+            self.limits.max_total_bytes.saturating_sub(self.read_total)
+        } else {
+            u64::MAX
+        };
+        let work_left = self
+            .limits
+            .max_total_bytes
+            .saturating_mul(REREAD_FACTOR)
+            .saturating_sub(self.read_work);
         let entry = self
             .zip
             .by_index(idx)
@@ -318,19 +368,23 @@ impl CheckedZip {
             if n > cap {
                 return Err(ArchiveError::TooLarge.into());
             }
-            if n > total_left {
+            if n > total_left || n > work_left {
                 return Err(ArchiveError::TooLarge.into());
             }
             let chunk = buf.get(..k).unwrap_or_default();
             hasher.update(chunk);
             out.write_all(chunk)?;
         }
-        self.read_total = self.read_total.saturating_add(n);
+        if count {
+            self.read_total = self.read_total.saturating_add(n);
+        }
+        self.read_work = self.read_work.saturating_add(n);
         Ok((n, hasher.finalize().into()))
     }
 }
 
-/// Writes a zip to `<dest>.partial` and renames it over `dest` once complete and flushed.
+/// Writes a zip to `<dest>.dark-clipboard-partial` and renames it over `dest` once complete
+/// and flushed.
 /// A failure removes the partial file; `dest` is never left half-written.
 pub(crate) struct AtomicZip {
     zip: Option<zip::ZipWriter<File>>,
@@ -341,7 +395,7 @@ pub(crate) struct AtomicZip {
 impl AtomicZip {
     pub fn create(dest: &Path) -> Result<Self, StorageError> {
         let mut partial = dest.as_os_str().to_owned();
-        partial.push(".partial");
+        partial.push(PARTIAL_SUFFIX);
         let partial = PathBuf::from(partial);
         let file = blobs::create_private_file(&partial, true)?;
         Ok(Self {
@@ -397,18 +451,41 @@ impl AtomicZip {
         Ok((n, hasher.finalize().into()))
     }
 
-    /// Finishes the zip, flushes it and renames it into place.
-    pub fn commit(mut self) -> Result<(), StorageError> {
+    /// Finishes the zip, flushes it and renames it into place, unless its reader would
+    /// refuse it for `limits` (`declared_total`: the uncompressed bytes written): then the
+    /// partial file is removed and the result is `TooLargeToWrite`.
+    pub fn commit_checked(
+        mut self,
+        declared_total: u64,
+        limits: ArchiveLimits,
+    ) -> Result<(), StorageError> {
         let zip = self
             .zip
             .take()
             .ok_or(StorageError::Io(std::io::ErrorKind::Other))?;
-        let file = zip
-            .finish()
-            .map_err(|_| StorageError::Io(std::io::ErrorKind::Other))?;
-        file.sync_all()?;
+        let file = zip.finish().map_err(|_| {
+            let _ = std::fs::remove_file(&self.partial);
+            StorageError::Io(std::io::ErrorKind::Other)
+        })?;
+        let result = (|| {
+            file.sync_all()?;
+            let len = file.metadata()?.len();
+            if len > limits.max_total_bytes.saturating_add(limits.max_json_bytes)
+                || !ratio_ok(declared_total, len)
+            {
+                return Err(StorageError::Archive(ArchiveError::TooLargeToWrite));
+            }
+            Ok(())
+        })();
         drop(file);
-        std::fs::rename(&self.partial, &self.dest)?;
+        if let Err(e) = result {
+            let _ = std::fs::remove_file(&self.partial);
+            return Err(e);
+        }
+        if let Err(e) = std::fs::rename(&self.partial, &self.dest) {
+            let _ = std::fs::remove_file(&self.partial);
+            return Err(e.into());
+        }
         Ok(())
     }
 }
