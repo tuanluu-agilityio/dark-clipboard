@@ -730,12 +730,71 @@ messages! {
     OrgDoneInexact => ("Done", "Xong"),
     OrgKeyHintsConfirm => ("Enter apply · Esc cancel", "Enter áp dụng · Esc hủy"),
     OrgKeyHintsHistory => (
-        "Ctrl+D favorite · Ctrl+N note · Ctrl+G tags · Ctrl+L add to collection · Ctrl+Shift+L remove · Ctrl+Shift+N new collection",
-        "Ctrl+D yêu thích · Ctrl+N ghi chú · Ctrl+G thẻ · Ctrl+L thêm vào bộ sưu tập · Ctrl+Shift+L bỏ khỏi · Ctrl+Shift+N bộ sưu tập mới"
+        "Ctrl+D favorite · Ctrl+N note · Ctrl+G tags · Ctrl+L add to collection · Ctrl+Shift+L remove · Ctrl+Shift+N new collection · Ctrl+Shift+E export",
+        "Ctrl+D yêu thích · Ctrl+N ghi chú · Ctrl+G thẻ · Ctrl+L thêm vào bộ sưu tập · Ctrl+Shift+L bỏ khỏi · Ctrl+Shift+N bộ sưu tập mới · Ctrl+Shift+E xuất"
     ),
     // Backup, restore, export and import (Task 405)
     ExportSelectedName => ("Selected clips", "Mục đã chọn"),
     ImportCollectionName => ("Imported clips", "Mục đã nhập"),
+    SettingsTransferHeading => ("Backup and transfer", "Sao lưu và chuyển dữ liệu"),
+    SettingsBackupDo => ("Back up now...", "Sao lưu ngay..."),
+    SettingsRestoreDo => ("Restore from backup...", "Khôi phục từ bản sao lưu..."),
+    SettingsImportDo => ("Import clips...", "Nhập mục..."),
+    SettingsTransferNote => (
+        "Backups and exports leave out masked and sensitive clips. Imported clips are checked like copied ones: secrets follow your sensitive-content setting. Export a collection or marked clips from the history window with Ctrl+Shift+E.",
+        "Bản sao lưu và tệp xuất bỏ qua mục bị che và mục nhạy cảm. Mục được nhập được kiểm tra như mục sao chép: bí mật theo cài đặt nội dung nhạy cảm của bạn. Xuất một bộ sưu tập hoặc các mục đã chọn trong cửa sổ lịch sử bằng Ctrl+Shift+E."
+    ),
+    SettingsRestoreConfirm => (
+        "Replace your whole history with this backup? Your current history is kept as a safety copy until Dark Clipboard starts again.",
+        "Thay toàn bộ lịch sử bằng bản sao lưu này? Lịch sử hiện tại được giữ làm bản an toàn đến khi Dark Clipboard khởi động lại."
+    ),
+    SettingsRestoreYes => ("Restore", "Khôi phục"),
+    TransferWorking => ("Working...", "Đang xử lý..."),
+    TransferBackupDone => ("Backup saved: {n} clips", "Đã lưu bản sao lưu: {n} mục"),
+    TransferRestoreDone => ("History restored: {n} clips", "Đã khôi phục lịch sử: {n} mục"),
+    TransferImportDone => (
+        "Imported {n} new clips; {m} were already in your history",
+        "Đã nhập {n} mục mới; {m} mục đã có trong lịch sử"
+    ),
+    TransferImportSkipped => (
+        "Not imported: {s} secrets, {k} turned-off kinds or file lists, {l} too large, {d} damaged",
+        "Không nhập: {s} bí mật, {k} loại đã tắt hoặc danh sách tệp, {l} quá lớn, {d} bị hỏng"
+    ),
+    TransferExportDone => ("Exported {n} clips", "Đã xuất {n} mục"),
+    TransferExportExcluded => (
+        "Masked or sensitive clips left out: {n}",
+        "Mục bị che hoặc nhạy cảm đã bỏ qua: {n}"
+    ),
+    TransferNewer => (
+        "This file was made by a newer version of Dark Clipboard. Update the app to open it. Nothing was changed.",
+        "Tệp này được tạo bởi phiên bản Dark Clipboard mới hơn. Hãy cập nhật ứng dụng để mở. Không có gì thay đổi."
+    ),
+    TransferInvalid => (
+        "This is not a valid Dark Clipboard file, or it is damaged. Nothing was changed.",
+        "Đây không phải tệp Dark Clipboard hợp lệ hoặc tệp đã hỏng. Không có gì thay đổi."
+    ),
+    TransferTooLarge => (
+        "This file is too large to open safely. Nothing was changed.",
+        "Tệp này quá lớn để mở an toàn. Không có gì thay đổi."
+    ),
+    TransferPrivate => (
+        "Private mode is on: nothing is imported.",
+        "Chế độ riêng tư đang bật: không nhập gì."
+    ),
+    TransferFailed => (
+        "The file could not be read or written. Nothing was changed.",
+        "Không thể đọc hoặc ghi tệp. Không có gì thay đổi."
+    ),
+    TransferNoDialog => (
+        "Choosing a file is not available on this platform yet.",
+        "Chưa thể chọn tệp trên nền tảng này."
+    ),
+    TransferDialogBackup => ("Save a backup", "Lưu bản sao lưu"),
+    TransferDialogRestore => ("Choose a backup to restore", "Chọn bản sao lưu để khôi phục"),
+    TransferDialogImport => ("Choose a file to import", "Chọn tệp để nhập"),
+    TransferDialogExport => ("Export clips", "Xuất mục"),
+    TransferFilterBackup => ("Dark Clipboard backup", "Bản sao lưu Dark Clipboard"),
+    TransferFilterExport => ("Dark Clipboard export", "Tệp xuất Dark Clipboard"),
     OrgCollectionKeys => (
         "Ctrl+Shift+R rename the shown collection · Ctrl+Shift+Del delete it",
         "Ctrl+Shift+R đổi tên bộ sưu tập đang xem · Ctrl+Shift+Del xóa"

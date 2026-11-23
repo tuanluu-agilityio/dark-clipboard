@@ -764,6 +764,7 @@ impl Host {
             HistoryAction::NewCollection => self.open_new_collection(),
             HistoryAction::RenameCollection => self.open_rename_collection(),
             HistoryAction::DeleteCollection => self.request_delete_collection(),
+            HistoryAction::Export => {}
             HistoryAction::Swallow => {}
         }
         true
