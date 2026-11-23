@@ -18,9 +18,11 @@
 //! 2. every file is extracted to a private staging folder with its size and SHA-256 checked;
 //! 3. before any migration, the staged database is opened on a raw, defensive connection
 //!    (`SQLITE_DBCONFIG_DEFENSIVE`, `trusted_schema=OFF`, `cell_size_check=ON`, no mmap):
-//!    `integrity_check`, text encoding UTF-8, `user_version` equal to the manifest's, and a
-//!    schema exactly equal to one this app ever created (versions 1 to current): no extra
-//!    trigger, view, table or index can reach a migration or the live store;
+//!    the whole `sqlite_master` (unfiltered: `sqlite_*` names included) must equal a schema
+//!    this app ever created (versions 1 to current) plus at most SQLite's own
+//!    `sqlite_sequence` / `sqlite_stat1` / `sqlite_stat4` tables, so no extra trigger, view,
+//!    table or index can reach a migration or the live store, whatever its name; then text
+//!    encoding UTF-8, `user_version` equal to the manifest's, and only then `integrity_check`;
 //! 4. then it is opened with [`Storage::open`] (migrations run) and checked again:
 //!    `integrity_check`, `foreign_key_check`, the current schema exactly, the Favorites row,
 //!    every clip decodes and validates;
@@ -213,13 +215,11 @@ fn expected_files(
 /// One `sqlite_master` row: type, name, table, SQL.
 type SchemaRow = (String, String, String, Option<String>);
 
-/// The schema objects (type, name, table, SQL) a store must have: those the migrations
-/// create, read from an in-memory database. SQLite's own objects are left out.
+/// Every `sqlite_master` row (type, name, table, SQL), unfiltered: objects named `sqlite_*`
+/// included, since `writable_schema` can plant a trigger or table under such a name.
 fn schema_of(conn: &Connection) -> Result<Vec<SchemaRow>, StorageError> {
-    let mut st = conn.prepare(
-        "SELECT type, name, tbl_name, sql FROM sqlite_master \
-         WHERE name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY type, name",
-    )?;
+    let mut st =
+        conn.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name")?;
     let rows = st
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -239,6 +239,45 @@ fn known_schema(version: u32) -> Result<Vec<SchemaRow>, StorageError> {
         .collect();
     migrate::run(&mut mem, &upto)?;
     schema_of(&mem)
+}
+
+/// SQLite's own tables that may appear in a store besides the migrations' objects, with the
+/// exact SQL SQLite gives them: `sqlite_sequence` (AUTOINCREMENT) and the `ANALYZE` statistics
+/// (`sqlite_stat1`, and `sqlite_stat4` when compiled in). Taken from a scratch in-memory
+/// database, so the text is SQLite's own.
+fn allowed_sqlite_tables() -> Result<Vec<SchemaRow>, StorageError> {
+    let mem = Connection::open_in_memory()?;
+    mem.execute_batch(
+        "CREATE TABLE t(x INTEGER PRIMARY KEY AUTOINCREMENT, y); CREATE INDEX ti ON t(y); \
+         INSERT INTO t(y) VALUES (1), (2); ANALYZE;",
+    )?;
+    Ok(schema_of(&mem)?
+        .into_iter()
+        .filter(|(kind, name, _, _)| {
+            kind == "table"
+                && matches!(
+                    name.as_str(),
+                    "sqlite_sequence" | "sqlite_stat1" | "sqlite_stat4"
+                )
+        })
+        .collect())
+}
+
+/// Whether `staged` is exactly the `known` schema, plus at most SQLite's own allowed tables.
+/// Any other object (a trigger, view, table or index, whatever its name, `sqlite_*` included,
+/// or an `sqlite_autoindex_*` of an unexpected table) fails, as does a missing one.
+fn schema_matches(staged: &[SchemaRow], known: &[SchemaRow]) -> Result<bool, StorageError> {
+    let allowed = allowed_sqlite_tables()?;
+    let all_known_present = known.iter().all(|k| staged.contains(k));
+    let nothing_else = staged
+        .iter()
+        .all(|row| known.contains(row) || allowed.contains(row));
+    let no_repeats = {
+        let mut names: Vec<(&String, &String)> = staged.iter().map(|(t, n, _, _)| (t, n)).collect();
+        names.sort();
+        names.windows(2).all(|w| w.first() != w.get(1))
+    };
+    Ok(all_known_present && nothing_else && no_repeats)
 }
 
 /// The header fields the online backup API carries with page 1 that this module controls.
@@ -278,10 +317,9 @@ fn precheck_raw(db: &Path, manifest_version: u32, supported: u32) -> Result<u32,
         c.pragma_update(None, "trusted_schema", false)?;
         c.pragma_update(None, "cell_size_check", true)?;
         let _: i64 = c.pragma_update_and_check(None, "mmap_size", 0, |r| r.get(0))?;
-        // A file that is not a sound database is refused before its header is believed.
-        if text_pragma(&c, "integrity_check")? != "ok" {
-            return Err(corrupt());
-        }
+        // The whole schema is read first: a file that is not a database fails here, before its
+        // header is believed.
+        let rows = schema_of(&c).map_err(|_| corrupt())?;
         if text_pragma(&c, "encoding")? != "UTF-8" {
             return Err(corrupt());
         }
@@ -292,7 +330,12 @@ fn precheck_raw(db: &Path, manifest_version: u32, supported: u32) -> Result<u32,
         if found != manifest_version {
             return Err(ArchiveError::BadManifest.into());
         }
-        if found == 0 || schema_of(&c)? != known_schema(found)? {
+        // The unfiltered schema is compared before `integrity_check`, so the check only ever
+        // walks the app's own objects.
+        if found == 0 || !schema_matches(&rows, &known_schema(found)?)? {
+            return Err(corrupt());
+        }
+        if text_pragma(&c, "integrity_check")? != "ok" {
             return Err(corrupt());
         }
         Ok(found)
@@ -333,7 +376,9 @@ fn check_staged(staging: &Path, clock: Arc<dyn Clock>, live: Header) -> Result<u
         if fk_problem {
             return Err(corrupt());
         }
-        if migrate::user_version(c)? != supported || schema_of(c)? != known_schema(supported)? {
+        if migrate::user_version(c)? != supported
+            || !schema_matches(&schema_of(c)?, &known_schema(supported)?)?
+        {
             return Err(corrupt());
         }
         let systems: i64 = c.query_row(
