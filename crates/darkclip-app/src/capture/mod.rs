@@ -20,6 +20,7 @@
 
 mod actor;
 mod copy_back;
+mod organize;
 mod pending;
 mod pipeline;
 mod retention;
@@ -30,7 +31,9 @@ mod wipe;
 use crate::config::CaptureConfig;
 use crate::events::{ApiError, AppEvent, SkipCounters};
 use actor::Actor;
-use darkclip_core::{CaptureMode, ClipId, Clock, Lang, PrivacyPolicy, RetentionPolicy};
+use darkclip_core::{
+    CaptureMode, ClipId, Clock, CollectionId, Lang, PrivacyPolicy, RetentionPolicy,
+};
 use darkclip_platform::{ChangeSignal, PlatformBundle};
 use darkclip_storage::Storage;
 #[cfg(test)]
@@ -77,11 +80,55 @@ pub enum ActorCommand {
         deadline: Instant,
         reply: Sender<Result<u64, ApiError>>,
     },
+    /// A collection, favorite, tag or note change; replies with what it produced.
+    Organize {
+        op: OrganizeOp,
+        deadline: Instant,
+        reply: Sender<Result<OrganizeReply, ApiError>>,
+    },
     UpdatePolicy(PrivacyPolicy, RetentionPolicy),
     /// Processes every command queued before it, stops the monitor and ends the actor.
     Shutdown {
         reply: Sender<()>,
     },
+}
+
+/// An organisation mutation (Task 402). Names and notes are user text, so the manual `Debug`
+/// below prints the variant name only (the derived `Debug` of `ActorCommand` uses it).
+pub enum OrganizeOp {
+    CreateCollection(String),
+    RenameCollection(CollectionId, String),
+    DeleteCollection(CollectionId),
+    AddToCollection(CollectionId, ClipId),
+    RemoveFromCollection(CollectionId, ClipId),
+    Reorder(CollectionId, ClipId, u32),
+    SetFavorite(ClipId, bool),
+    SetNote(ClipId, Option<String>),
+    SetTags(ClipId, Vec<String>),
+}
+
+/// Prints the operation only, never a name, tag or note (GC-06).
+impl std::fmt::Debug for OrganizeOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::CreateCollection(_) => "CreateCollection",
+            Self::RenameCollection(..) => "RenameCollection",
+            Self::DeleteCollection(_) => "DeleteCollection",
+            Self::AddToCollection(..) => "AddToCollection",
+            Self::RemoveFromCollection(..) => "RemoveFromCollection",
+            Self::Reorder(..) => "Reorder",
+            Self::SetFavorite(..) => "SetFavorite",
+            Self::SetNote(..) => "SetNote",
+            Self::SetTags(..) => "SetTags",
+        })
+    }
+}
+
+/// What an `OrganizeOp` produced.
+pub enum OrganizeReply {
+    Done,
+    Collection(darkclip_core::Collection),
+    Tags(Vec<darkclip_core::TagRef>),
 }
 
 /// Retention instrumentation: an attempt counter, and (tests only) forced failure.

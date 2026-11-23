@@ -264,6 +264,21 @@ impl Actor {
                 };
                 let _ = reply.send(r);
             }
+            ActorCommand::Organize {
+                op,
+                deadline,
+                reply,
+            } => {
+                let r = if late(deadline) {
+                    Err(ApiError::Internal)
+                } else {
+                    self.organize(op)
+                };
+                if r.is_ok() {
+                    self.emit(AppEvent::OrganizationChanged);
+                }
+                let _ = reply.send(r);
+            }
             ActorCommand::SetMode(mode) => {
                 let p = PrivacyPolicy {
                     mode,

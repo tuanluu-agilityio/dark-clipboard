@@ -8,7 +8,7 @@
 //!
 //! Errors carry no clip content (GC-06); `Caller::Mcp` never sees masked clips.
 
-use crate::capture::{ActorCommand, CaptureHandle};
+use crate::capture::{ActorCommand, CaptureHandle, OrganizeOp, OrganizeReply};
 use crate::config::CaptureConfig;
 use crate::envelope::Page;
 use crate::events::{
@@ -66,6 +66,12 @@ pub struct ClipSummaryView {
     /// the envelope (CLI/MCP) is unchanged.
     #[serde(skip)]
     pub source_app: Option<String>,
+    /// Member of Favorites. Serialized only when true.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub favorite: bool,
+    /// Tag names, sorted. Serialized only when there are any.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 /// Never prints the preview (GC-06).
@@ -91,6 +97,8 @@ impl From<ClipSummary> for ClipSummaryView {
             last_copied_at: c.last_copied_at,
             masked: c.sensitivity == SensitivityLevel::Masked,
             source_app: c.source_app,
+            favorite: false,
+            tags: Vec::new(),
         }
     }
 }
@@ -176,6 +184,28 @@ pub struct ClipView {
 pub struct CollectionView {
     pub id: CollectionId,
     pub name: String,
+    /// The system Favorites collection: it cannot be renamed or deleted.
+    pub system: bool,
+    pub clip_count: u64,
+}
+
+impl From<darkclip_core::Collection> for CollectionView {
+    fn from(c: darkclip_core::Collection) -> Self {
+        Self {
+            id: c.id,
+            name: c.name,
+            system: c.kind == darkclip_core::CollectionKind::System,
+            clip_count: c.clip_count,
+        }
+    }
+}
+
+/// A tag with the number of clips that carry it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TagCountView {
+    pub id: TagId,
+    pub name: String,
+    pub clip_count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -251,6 +281,25 @@ pub trait ClipApi {
         clip: ClipId,
         tags: Vec<String>,
     ) -> Result<Vec<TagView>, ApiError>;
+    fn rename_collection(&self, c: &Caller, col: CollectionId, name: &str) -> Result<(), ApiError>;
+    /// User collections only; the clips stay in the history.
+    fn delete_collection(&self, c: &Caller, col: CollectionId) -> Result<(), ApiError>;
+    fn remove_clip_from_collection(
+        &self,
+        c: &Caller,
+        col: CollectionId,
+        clip: ClipId,
+    ) -> Result<(), ApiError>;
+    /// Moves a member of a manually sorted collection to `index` (clamped to the end).
+    fn reorder_clip_in_collection(
+        &self,
+        c: &Caller,
+        col: CollectionId,
+        clip: ClipId,
+        index: u32,
+    ) -> Result<(), ApiError>;
+    fn set_favorite(&self, c: &Caller, clip: ClipId, favorite: bool) -> Result<(), ApiError>;
+    fn list_tags(&self, c: &Caller) -> Result<Vec<TagCountView>, ApiError>;
     fn pin_clip(&self, c: &Caller, clip: ClipId, pinned: bool) -> Result<(), ApiError>;
     fn copy_clip_to_clipboard(
         &self,
@@ -316,7 +365,7 @@ impl StatusState {
             },
             AppEvent::RetentionOk => self.retention = None,
             AppEvent::ClipAdded(_) | AppEvent::ClipBumped(_) => self.transient = None,
-            AppEvent::ModeChanged(_) | AppEvent::Skipped(_) => {}
+            AppEvent::ModeChanged(_) | AppEvent::Skipped(_) | AppEvent::OrganizationChanged => {}
         }
     }
 
@@ -713,6 +762,29 @@ impl App {
         Ok(clip)
     }
 
+    /// The clip an organisation call targets: `NotFound` when it is missing, expired or
+    /// hidden from this caller. `adding` (a membership, note or tag is being added) also
+    /// refuses masked clips for the UI: masked clips cannot be organised, only cleared.
+    fn organize_target(&self, c: &Caller, id: &ClipId, adding: bool) -> Result<(), ApiError> {
+        let clip = self.visible_clip(c, id)?;
+        if adding && clip.sensitivity.level == SensitivityLevel::Masked {
+            return Err(ApiError::NotFound);
+        }
+        Ok(())
+    }
+
+    fn organize(&self, op: OrganizeOp) -> Result<OrganizeReply, ApiError> {
+        self.ask(|reply, deadline| ActorCommand::Organize {
+            op,
+            deadline,
+            reply,
+        })
+    }
+
+    fn organize_done(&self, op: OrganizeOp) -> Result<(), ApiError> {
+        self.organize(op).map(|_| ())
+    }
+
     fn mode_name(&self) -> &'static str {
         match self.status().capture {
             CaptureStatus::Active => "normal",
@@ -741,9 +813,25 @@ impl ClipApi for App {
             include_masked: *c == Caller::Ui,
             ..q
         };
-        let (rows, next) = self.reader().search(&q).map_err(|e| map_storage(&e))?;
+        let st = self.reader();
+        let (rows, next) = st.search(&q).map_err(|e| map_storage(&e))?;
+        let ids: Vec<ClipId> = rows.iter().map(|r| r.id).collect();
+        let mut labels = st.clip_labels_batch(&ids).map_err(|e| map_storage(&e))?;
+        let items = rows
+            .into_iter()
+            .map(|row| {
+                let id = row.id;
+                let mut v = ClipSummaryView::from(row);
+                if let Some((favorite, tags)) = labels.remove(&id) {
+                    v.favorite = favorite;
+                    v.tags = tags;
+                }
+                v
+            })
+            .collect();
+        drop(st);
         Ok(Page {
-            items: rows.into_iter().map(ClipSummaryView::from).collect(),
+            items,
             limit,
             next_cursor: next.map(|n| n.encode()),
         })
@@ -763,42 +851,113 @@ impl ClipApi for App {
 
     fn list_collections(&self, c: &Caller) -> Result<Vec<CollectionView>, ApiError> {
         PermissionGuard::check(c, Operation::ListCollections)?;
-        Err(NOT_YET)
+        let rows = self
+            .reader()
+            .list_collections()
+            .map_err(|e| map_storage(&e))?;
+        Ok(rows.into_iter().map(CollectionView::from).collect())
     }
 
-    fn create_collection(&self, c: &Caller, _name: &str) -> Result<CollectionView, ApiError> {
+    fn create_collection(&self, c: &Caller, name: &str) -> Result<CollectionView, ApiError> {
         PermissionGuard::check(c, Operation::CreateCollection)?;
-        Err(NOT_YET)
+        match self.organize(OrganizeOp::CreateCollection(name.to_string()))? {
+            OrganizeReply::Collection(col) => Ok(col.into()),
+            _ => Err(ApiError::Internal),
+        }
     }
 
     fn add_clip_to_collection(
         &self,
         c: &Caller,
-        _clip: ClipId,
-        _col: CollectionId,
+        clip: ClipId,
+        col: CollectionId,
     ) -> Result<(), ApiError> {
         PermissionGuard::check(c, Operation::AddClipToCollection)?;
-        Err(NOT_YET)
+        self.organize_target(c, &clip, true)?;
+        self.organize_done(OrganizeOp::AddToCollection(col, clip))
     }
 
     fn update_clip_note(
         &self,
         c: &Caller,
-        _clip: ClipId,
-        _note: Option<String>,
+        clip: ClipId,
+        note: Option<String>,
     ) -> Result<(), ApiError> {
         PermissionGuard::check(c, Operation::UpdateClipNote)?;
-        Err(NOT_YET)
+        self.organize_target(c, &clip, note.as_deref().is_some_and(|n| !n.is_empty()))?;
+        self.organize_done(OrganizeOp::SetNote(clip, note))
     }
 
     fn update_clip_tags(
         &self,
         c: &Caller,
-        _clip: ClipId,
-        _tags: Vec<String>,
+        clip: ClipId,
+        tags: Vec<String>,
     ) -> Result<Vec<TagView>, ApiError> {
         PermissionGuard::check(c, Operation::UpdateClipTags)?;
-        Err(NOT_YET)
+        self.organize_target(c, &clip, !tags.is_empty())?;
+        match self.organize(OrganizeOp::SetTags(clip, tags))? {
+            OrganizeReply::Tags(t) => Ok(t
+                .into_iter()
+                .map(|t| TagView {
+                    id: t.id,
+                    name: t.name,
+                })
+                .collect()),
+            _ => Err(ApiError::Internal),
+        }
+    }
+
+    fn rename_collection(&self, c: &Caller, col: CollectionId, name: &str) -> Result<(), ApiError> {
+        PermissionGuard::check(c, Operation::RenameCollection)?;
+        self.organize_done(OrganizeOp::RenameCollection(col, name.to_string()))
+    }
+
+    fn delete_collection(&self, c: &Caller, col: CollectionId) -> Result<(), ApiError> {
+        PermissionGuard::check(c, Operation::DeleteCollection)?;
+        self.organize_done(OrganizeOp::DeleteCollection(col))
+    }
+
+    fn remove_clip_from_collection(
+        &self,
+        c: &Caller,
+        col: CollectionId,
+        clip: ClipId,
+    ) -> Result<(), ApiError> {
+        PermissionGuard::check(c, Operation::RemoveClipFromCollection)?;
+        self.organize_target(c, &clip, false)?;
+        self.organize_done(OrganizeOp::RemoveFromCollection(col, clip))
+    }
+
+    fn reorder_clip_in_collection(
+        &self,
+        c: &Caller,
+        col: CollectionId,
+        clip: ClipId,
+        index: u32,
+    ) -> Result<(), ApiError> {
+        PermissionGuard::check(c, Operation::ReorderClipInCollection)?;
+        self.organize_target(c, &clip, false)?;
+        self.organize_done(OrganizeOp::Reorder(col, clip, index))
+    }
+
+    fn set_favorite(&self, c: &Caller, clip: ClipId, favorite: bool) -> Result<(), ApiError> {
+        PermissionGuard::check(c, Operation::SetFavorite)?;
+        self.organize_target(c, &clip, favorite)?;
+        self.organize_done(OrganizeOp::SetFavorite(clip, favorite))
+    }
+
+    fn list_tags(&self, c: &Caller) -> Result<Vec<TagCountView>, ApiError> {
+        PermissionGuard::check(c, Operation::ListTags)?;
+        let rows = self.reader().list_tags().map_err(|e| map_storage(&e))?;
+        Ok(rows
+            .into_iter()
+            .map(|t| TagCountView {
+                id: t.tag.id,
+                name: t.tag.name,
+                clip_count: t.clip_count,
+            })
+            .collect())
     }
 
     fn pin_clip(&self, c: &Caller, clip: ClipId, pinned: bool) -> Result<(), ApiError> {
@@ -1298,31 +1457,6 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_methods_report_not_available() {
-        let h = start(&[("x", false)], None);
-        let a = h.app();
-        let col = CollectionId::new_v7(Timestamp(T0));
-        let nope = ApiError::InvalidArgument("not available until P1");
-        assert_eq!(a.list_collections(&Caller::Ui).unwrap_err(), nope);
-        assert_eq!(a.create_collection(&Caller::Cli, "n").unwrap_err(), nope);
-        assert_eq!(
-            a.add_clip_to_collection(&Caller::Ui, h.ids[0], col)
-                .unwrap_err(),
-            nope
-        );
-        assert_eq!(
-            a.update_clip_note(&Caller::Ui, h.ids[0], None).unwrap_err(),
-            nope
-        );
-        assert_eq!(
-            a.update_clip_tags(&Caller::Ui, h.ids[0], vec![])
-                .unwrap_err(),
-            nope
-        );
-        assert_eq!(a.export_collection(&Caller::Ui, col).unwrap_err(), nope);
-    }
-
-    #[test]
     fn status_cause_recovery() {
         let added = AppEvent::ClipAdded(ClipId::new_v7(Timestamp(T0)));
         let mut st = StatusState::default();
@@ -1368,6 +1502,8 @@ mod tests {
             last_copied_at: Timestamp(T0),
             masked: false,
             source_app: Some(secret.into()),
+            favorite: false,
+            tags: Vec::new(),
         };
         let content = ClipContent {
             text: secret.into(),
@@ -2041,5 +2177,380 @@ file:///C:/c.txt
             h.app().update_settings(bad),
             Err(ApiError::InvalidArgument(_))
         ));
+    }
+
+    // ---- Task 402: organisation API ----
+
+    fn fav_id() -> CollectionId {
+        CollectionId::parse(darkclip_core::FAVORITES_COLLECTION_ID).unwrap()
+    }
+
+    fn ids_of(p: &Page<ClipSummaryView>) -> Vec<ClipId> {
+        p.items.iter().map(|i| i.id).collect()
+    }
+
+    fn user_collections(a: &App) -> Vec<CollectionView> {
+        a.list_collections(&Caller::Ui)
+            .unwrap()
+            .into_iter()
+            .filter(|c| !c.system)
+            .collect()
+    }
+
+    #[test]
+    fn export_stays_unavailable() {
+        let h = start(&[("x", false)], None);
+        let a = h.app();
+        let col = CollectionId::new_v7(Timestamp(T0));
+        let nope = ApiError::InvalidArgument("not available until P1");
+        assert_eq!(a.export_collection(&Caller::Ui, col).unwrap_err(), nope);
+    }
+
+    #[test]
+    fn collections_create_list_rename_delete() {
+        let h = start(&[("a", false)], None);
+        let a = h.app();
+        let ui = &Caller::Ui;
+        let all = a.list_collections(ui).unwrap();
+        assert_eq!(all.len(), 1);
+        assert!(all[0].system);
+        assert_eq!(all[0].id, fav_id());
+        let col = a.create_collection(ui, "  Work  ").unwrap();
+        assert_eq!(col.name, "Work");
+        assert!(!col.system);
+        assert_eq!(a.list_collections(ui).unwrap().len(), 2);
+        a.rename_collection(ui, col.id, "Home").unwrap();
+        assert_eq!(user_collections(a)[0].name, "Home");
+        a.add_clip_to_collection(ui, h.ids[0], col.id).unwrap();
+        assert_eq!(user_collections(a)[0].clip_count, 1);
+        a.delete_collection(ui, col.id).unwrap();
+        assert!(user_collections(a).is_empty());
+        // The clip is kept.
+        assert!(a.get_clip(ui, h.ids[0], GetOptions::default()).is_ok());
+        // Errors.
+        for bad in ["", "   ", &"x".repeat(81)] {
+            assert!(matches!(
+                a.create_collection(ui, bad),
+                Err(ApiError::InvalidArgument(_))
+            ));
+        }
+        let other = a.create_collection(ui, "Other").unwrap();
+        assert!(matches!(
+            a.rename_collection(ui, other.id, " "),
+            Err(ApiError::InvalidArgument(_))
+        ));
+        let ghost = CollectionId::new_v7(Timestamp(T0));
+        assert_eq!(
+            a.rename_collection(ui, ghost, "x").unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.delete_collection(ui, ghost).unwrap_err(),
+            ApiError::NotFound
+        );
+        let fav = fav_id();
+        assert!(matches!(
+            a.rename_collection(ui, fav, "x"),
+            Err(ApiError::InvalidArgument(_))
+        ));
+        assert!(matches!(
+            a.delete_collection(ui, fav),
+            Err(ApiError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn membership_add_remove_reorder_and_filter() {
+        let h = start(
+            &[("a", false), ("b", false), ("c", false), ("m", true)],
+            None,
+        );
+        let a = h.app();
+        let ui = &Caller::Ui;
+        let col = a.create_collection(ui, "Set").unwrap();
+        for i in [0, 1, 2] {
+            a.add_clip_to_collection(ui, h.ids[i], col.id).unwrap();
+        }
+        a.add_clip_to_collection(ui, h.ids[0], col.id).unwrap(); // idempotent
+        let mut q = query(None);
+        q.collection = Some(col.id);
+        let page = a.search_clips(ui, q.clone()).unwrap();
+        assert_eq!(ids_of(&page), vec![h.ids[0], h.ids[1], h.ids[2]]);
+        a.reorder_clip_in_collection(ui, col.id, h.ids[2], 0)
+            .unwrap();
+        let page = a.search_clips(ui, q.clone()).unwrap();
+        assert_eq!(ids_of(&page), vec![h.ids[2], h.ids[0], h.ids[1]]);
+        a.remove_clip_from_collection(ui, col.id, h.ids[0]).unwrap();
+        let page = a.search_clips(ui, q.clone()).unwrap();
+        assert_eq!(ids_of(&page), vec![h.ids[2], h.ids[1]]);
+        // Unknown ids and masked clips.
+        let ghost_col = CollectionId::new_v7(Timestamp(T0));
+        let ghost_clip = ClipId::new_v7(Timestamp(T0));
+        assert_eq!(
+            a.add_clip_to_collection(ui, h.ids[0], ghost_col)
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.add_clip_to_collection(ui, ghost_clip, col.id)
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.add_clip_to_collection(ui, h.ids[3], col.id).unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.remove_clip_from_collection(ui, ghost_col, h.ids[1])
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.reorder_clip_in_collection(ui, col.id, h.ids[0], 0)
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.remove_clip_from_collection(ui, col.id, ghost_clip)
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.reorder_clip_in_collection(ui, col.id, ghost_clip, 0)
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        // A tag filter that is not a valid name matches nothing.
+        let mut bad = query(None);
+        bad.tag = Some("no way!".into());
+        assert!(a.search_clips(ui, bad).unwrap().items.is_empty());
+    }
+
+    #[test]
+    fn favorites_flag_filter_and_retention() {
+        let h = start(&[("old", false), ("mid", false), ("new", false)], None);
+        let a = h.app();
+        let ui = &Caller::Ui;
+        a.set_favorite(ui, h.ids[0], true).unwrap();
+        a.set_favorite(ui, h.ids[0], true).unwrap();
+        let all = a.search_clips(ui, query(None)).unwrap();
+        for item in &all.items {
+            assert_eq!(item.favorite, item.id == h.ids[0]);
+        }
+        let mut q = query(None);
+        q.collection = Some(fav_id());
+        assert_eq!(
+            ids_of(&a.search_clips(ui, q.clone()).unwrap()),
+            vec![h.ids[0]]
+        );
+        let ghost = ClipId::new_v7(Timestamp(T0));
+        assert_eq!(
+            a.set_favorite(ui, ghost, true).unwrap_err(),
+            ApiError::NotFound
+        );
+        // Retention keeps the favorite while everything else is evicted.
+        let mut s = a.settings();
+        s.retention.max_items = 1;
+        a.update_settings(s).unwrap();
+        let mut left = 3;
+        for _ in 0..300 {
+            left = a.search_clips(ui, query(None)).unwrap().items.len();
+            if left == 1 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(left, 1);
+        assert!(a.get_clip(ui, h.ids[0], GetOptions::default()).is_ok());
+        a.set_favorite(ui, h.ids[0], false).unwrap();
+        assert!(!a.search_clips(ui, query(None)).unwrap().items[0].favorite);
+    }
+
+    #[test]
+    fn notes_and_tags() {
+        let h = start(&[("alpha", false), ("beta", false), ("secret", true)], None);
+        let a = h.app();
+        let ui = &Caller::Ui;
+        a.update_clip_note(ui, h.ids[0], Some("remember this".into()))
+            .unwrap();
+        let v = a.get_clip(ui, h.ids[0], GetOptions::default()).unwrap();
+        assert_eq!(v.clip.note.as_deref(), Some("remember this"));
+        a.update_clip_note(ui, h.ids[0], None).unwrap();
+        let v = a.get_clip(ui, h.ids[0], GetOptions::default()).unwrap();
+        assert_eq!(v.clip.note, None);
+        assert!(matches!(
+            a.update_clip_note(ui, h.ids[0], Some("n".repeat(4001))),
+            Err(ApiError::InvalidArgument(_))
+        ));
+        let tags = a
+            .update_clip_tags(
+                ui,
+                h.ids[0],
+                vec!["Work".into(), "ideas".into(), "work".into()],
+            )
+            .unwrap();
+        let names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["ideas", "work"]);
+        a.update_clip_tags(ui, h.ids[1], vec!["work".into()])
+            .unwrap();
+        let listed = a.list_tags(ui).unwrap();
+        assert_eq!(listed.len(), 2);
+        let work = listed.iter().find(|t| t.name == "work").unwrap();
+        assert_eq!(work.clip_count, 2);
+        let mut q = query(None);
+        q.tag = Some("ideas".into());
+        let page = a.search_clips(ui, q).unwrap();
+        assert_eq!(ids_of(&page), vec![h.ids[0]]);
+        assert_eq!(page.items[0].tags, ["ideas", "work"]);
+        // Replace, and an unused tag disappears.
+        a.update_clip_tags(ui, h.ids[0], vec![]).unwrap();
+        assert!(a.list_tags(ui).unwrap().iter().all(|t| t.name != "ideas"));
+        // Invalid names, too many tags, unknown clip, masked clip.
+        assert!(matches!(
+            a.update_clip_tags(ui, h.ids[0], vec!["no good!".into()]),
+            Err(ApiError::InvalidArgument(_))
+        ));
+        let many: Vec<String> = (0..21).map(|i| format!("t{i}")).collect();
+        assert!(matches!(
+            a.update_clip_tags(ui, h.ids[0], many),
+            Err(ApiError::InvalidArgument(_))
+        ));
+        let ghost = ClipId::new_v7(Timestamp(T0));
+        assert_eq!(
+            a.update_clip_tags(ui, ghost, vec!["x".into()]).unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.update_clip_note(ui, ghost, None).unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.update_clip_tags(ui, h.ids[2], vec!["x".into()])
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.update_clip_note(ui, h.ids[2], Some("x".into()))
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.set_favorite(ui, h.ids[2], true).unwrap_err(),
+            ApiError::NotFound
+        );
+    }
+
+    #[test]
+    fn expired_clips_are_not_found_for_organisation_calls() {
+        let mut exp = new_clip("expiring", false);
+        exp.expires_at = Some(Timestamp(T0 + 60_000));
+        let (h, clock) = start_with_clips_clock(&[exp]);
+        let a = h.app();
+        let col = a.create_collection(&Caller::Ui, "c").unwrap();
+        clock.0.store(T0 + 2 * 3_600_000, Ordering::SeqCst);
+        let id = h.ids[0];
+        let ui = &Caller::Ui;
+        assert_eq!(
+            a.add_clip_to_collection(ui, id, col.id).unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.set_favorite(ui, id, true).unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.update_clip_note(ui, id, Some("x".into())).unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.update_clip_tags(ui, id, vec!["x".into()]).unwrap_err(),
+            ApiError::NotFound
+        );
+    }
+
+    #[test]
+    fn organisation_follows_the_permission_guard() {
+        let h = start(&[("a", false), ("m", true)], None);
+        let a = h.app();
+        let mcp = mcp();
+        let col = a.create_collection(&Caller::Ui, "c").unwrap();
+        let denied = |e: ApiError| assert!(matches!(e, ApiError::PermissionDenied(_)));
+        denied(a.list_collections(&mcp).unwrap_err());
+        denied(a.create_collection(&mcp, "x").unwrap_err());
+        denied(a.rename_collection(&mcp, col.id, "x").unwrap_err());
+        denied(a.delete_collection(&mcp, col.id).unwrap_err());
+        denied(
+            a.add_clip_to_collection(&mcp, h.ids[0], col.id)
+                .unwrap_err(),
+        );
+        denied(
+            a.remove_clip_from_collection(&mcp, col.id, h.ids[0])
+                .unwrap_err(),
+        );
+        denied(
+            a.reorder_clip_in_collection(&mcp, col.id, h.ids[0], 0)
+                .unwrap_err(),
+        );
+        denied(a.set_favorite(&mcp, h.ids[0], true).unwrap_err());
+        denied(a.update_clip_note(&mcp, h.ids[0], None).unwrap_err());
+        denied(a.update_clip_tags(&mcp, h.ids[0], vec![]).unwrap_err());
+        denied(a.list_tags(&mcp).unwrap_err());
+        // Nothing changed.
+        assert_eq!(user_collections(a).len(), 1);
+        assert_eq!(user_collections(a)[0].clip_count, 0);
+        // The CLI keeps today's guard behaviour (allowed), but never sees masked clips.
+        a.add_clip_to_collection(&Caller::Cli, h.ids[0], col.id)
+            .unwrap();
+        assert_eq!(
+            a.add_clip_to_collection(&Caller::Cli, h.ids[1], col.id)
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.update_clip_tags(&Caller::Cli, h.ids[1], vec![])
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.remove_clip_from_collection(&Caller::Cli, col.id, h.ids[1])
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+        assert_eq!(
+            a.reorder_clip_in_collection(&Caller::Cli, col.id, h.ids[1], 0)
+                .unwrap_err(),
+            ApiError::NotFound
+        );
+    }
+
+    #[test]
+    fn mutations_publish_an_organization_event() {
+        let h = start(&[("a", false)], None);
+        let a = h.app();
+        while h.events.try_recv().is_ok() {}
+        a.create_collection(&Caller::Ui, "ev").unwrap();
+        let got = h.events.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(got, AppEvent::OrganizationChanged);
+        // A failed mutation publishes nothing.
+        while h.events.try_recv().is_ok() {}
+        assert!(a.create_collection(&Caller::Ui, " ").is_err());
+        assert!(h.events.recv_timeout(Duration::from_millis(200)).is_err());
+    }
+
+    #[test]
+    fn summary_view_serializes_tags_and_favorite_only_when_set() {
+        let h = start(&[("alpha", false)], None);
+        let a = h.app();
+        let page = a.search_clips(&Caller::Ui, query(None)).unwrap();
+        let json = serde_json::to_value(&page.items[0]).unwrap();
+        assert!(json.get("tags").is_none());
+        assert!(json.get("favorite").is_none());
+        a.update_clip_tags(&Caller::Ui, h.ids[0], vec!["work".into()])
+            .unwrap();
+        a.set_favorite(&Caller::Ui, h.ids[0], true).unwrap();
+        let page = a.search_clips(&Caller::Ui, query(None)).unwrap();
+        let json = serde_json::to_value(&page.items[0]).unwrap();
+        assert_eq!(json["tags"][0], "work");
+        assert_eq!(json["favorite"], true);
     }
 }

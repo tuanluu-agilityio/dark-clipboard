@@ -9,7 +9,8 @@
 3. **Multi-select:** add to collection, remove from collection, add tag, favorite/unfavorite for the marked rows (confirmation shows the count).
 4. **Popup:** favorite star on rows; filter chips for Favorites and collections (keyboard reachable); a key to toggle favorite on the selected row (document it in the popup help and README).
 5. "Snippets" (D-037): documented as a user collection plus pinned clips; no template engine. README + CHANGELOG.
-6. All strings en + vi; no business logic in the UI (view-models call `App`). New windows/dialogs are cleared on close like D-052.
+6. Masked rows offer no add actions (favorite, note, tags, add to collection): the API returns NotFound for them (D-060).
+7. All strings en + vi; no business logic in the UI (view-models call `App`). New windows/dialogs are cleared on close like D-052.
 
 ## Tests
 View-model tests: collection create/rename validation, delete confirmation, multi-select counts, note length limit, tag chip validation, popup favorite toggle mapping. Owner checklist rows for each flow (keyboard only).

@@ -509,7 +509,9 @@ fn run_headless(cli: &Cli, lang: Lang) -> ExitCode {
                         "unavailable",
                         &[("what", Val::Name(unavailable_name(what)))],
                     ),
-                    AppEvent::ModeChanged(_) | AppEvent::RetentionOk => {}
+                    AppEvent::ModeChanged(_)
+                    | AppEvent::RetentionOk
+                    | AppEvent::OrganizationChanged => {}
                 }
             }
             (added, bumped, skips)

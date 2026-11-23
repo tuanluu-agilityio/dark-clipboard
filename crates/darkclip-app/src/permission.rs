@@ -13,6 +13,12 @@ pub enum Operation {
     AddClipToCollection,
     UpdateClipNote,
     UpdateClipTags,
+    RenameCollection,
+    DeleteCollection,
+    RemoveClipFromCollection,
+    ReorderClipInCollection,
+    SetFavorite,
+    ListTags,
     PinClip,
     CopyClipToClipboard,
     DeleteClip,
@@ -43,7 +49,7 @@ impl PermissionGuard {
 mod tests {
     use super::*;
 
-    const ALL: [Operation; 14] = [
+    const ALL: [Operation; 20] = [
         Operation::SearchClips,
         Operation::GetClip,
         Operation::ListCollections,
@@ -51,6 +57,12 @@ mod tests {
         Operation::AddClipToCollection,
         Operation::UpdateClipNote,
         Operation::UpdateClipTags,
+        Operation::RenameCollection,
+        Operation::DeleteCollection,
+        Operation::RemoveClipFromCollection,
+        Operation::ReorderClipInCollection,
+        Operation::SetFavorite,
+        Operation::ListTags,
         Operation::PinClip,
         Operation::CopyClipToClipboard,
         Operation::DeleteClip,

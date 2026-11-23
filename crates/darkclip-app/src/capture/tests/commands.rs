@@ -100,3 +100,41 @@ fn late_commands_have_no_side_effect() {
     assert_eq!(h.clip_count(), 1);
     assert!(!h.ro().get_clip(&id).unwrap().unwrap().pinned);
 }
+
+#[test]
+fn late_organize_command_has_no_side_effect_and_no_event() {
+    let h = start(PrivacyPolicy::default());
+    h.fake.copy(text_copy("keep me"));
+    let (id, _) = h.wait_added();
+    let deadline = Instant::now();
+    std::thread::sleep(Duration::from_millis(5));
+    while h.events.try_recv().is_ok() {}
+    let (tx, rx) = mpsc::channel();
+    h.cap()
+        .send(ActorCommand::Organize {
+            op: crate::capture::OrganizeOp::CreateCollection("late".into()),
+            deadline,
+            reply: tx,
+        })
+        .unwrap();
+    assert!(matches!(
+        rx.recv_timeout(WAIT).unwrap(),
+        Err(ApiError::Internal)
+    ));
+    let (tx, rx) = mpsc::channel();
+    h.cap()
+        .send(ActorCommand::Organize {
+            op: crate::capture::OrganizeOp::SetFavorite(id, true),
+            deadline,
+            reply: tx,
+        })
+        .unwrap();
+    assert!(matches!(
+        rx.recv_timeout(WAIT).unwrap(),
+        Err(ApiError::Internal)
+    ));
+    let ro = h.ro();
+    assert_eq!(ro.list_collections().unwrap().len(), 1);
+    assert!(!ro.clip_labels(&id).unwrap().0);
+    assert!(h.events.recv_timeout(Duration::from_millis(200)).is_err());
+}
