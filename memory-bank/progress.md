@@ -62,7 +62,7 @@ Phase 2 complete 2026-11-23 (Bitwarden/1Password rows n/a on the test machine; s
 | 208 Autostart + welcome | task/208-autostart-welcome | builder | sonnet | done | 184,991 | 138,156 (security-reviewer opus ×2: CR (blocking: read-only defaults enabled capture) → APPROVED) | 48,074 | 371,221 |
 | 209 ADR-0001 revisit | task/209-adr0001-revisit | platform-verifier | sonnet | done (NFR-05/NFR-04 not met with the GPU renderer → Task 212) | 64,210 | 72,411 (reviewer opus: CR (invalid runs: welcome visible, BOM settings) → fixed) | 34,759 | 171,380 |
 | 212 Software renderer, BOM, timing | task/212-renderer-memory | specialist | opus | done (NFR-04, NFR-05 met on Windows) | 179,641 | 65,427 (reviewer opus: APPROVED, wording fixed) | 5,255 | 250,323 |
-| 210 Alpha docs, artifact, phase review | task/210-alpha-docs | scaffolder + specialist | sonnet + opus | next | | | | |
+| 210 Alpha docs, artifact, phase review | task/210-alpha-docs | scaffolder + specialist | sonnet + opus | in progress | | | | |
 
 ## Totals by model
 
