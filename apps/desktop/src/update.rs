@@ -36,15 +36,15 @@ pub enum UpdateError {
     BadUrl,
 }
 
-/// A release page address that passed the allow check: the fixed prefix and then only
-/// letters, digits and `. _ ~ / + -`; no `..`, query, fragment, escape or space. It is the only
-/// address the app ever opens.
+/// A release page address that passed the allow check: the fixed prefix, then `tag/` and a
+/// name of letters, digits and `. _ ~ / + -`; no `..`, query, fragment, escape or space. Never
+/// a download (`releases/download/`) or the list. It is the only address the app ever opens.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseUrl(String);
 
 impl ReleaseUrl {
     pub fn parse(s: &str) -> Option<ReleaseUrl> {
-        let rest = s.strip_prefix(RELEASE_URL_PREFIX)?;
+        let rest = s.strip_prefix(RELEASE_URL_PREFIX)?.strip_prefix("tag/")?;
         let clean = !rest.is_empty()
             && !rest.contains("..")
             && rest
@@ -97,8 +97,24 @@ fn pre_id(id: &str) -> Option<PreId> {
 impl Version {
     /// `1.2.3`, `v1.2.3`, `1.2.3-rc.1`, `1.2.3+build`. Anything else is `None`.
     pub fn parse(s: &str) -> Option<Version> {
+        if s.len() > MAX_TAG_BYTES {
+            return None;
+        }
         let s = s.strip_prefix('v').unwrap_or(s);
-        let s = s.split_once('+').map_or(s, |(core, _)| core);
+        // Build metadata is checked like a pre-release (dot-separated `[0-9A-Za-z-]`), then
+        // dropped: it never takes part in the comparison or in what is shown.
+        let s = match s.split_once('+') {
+            Some((core, meta)) => {
+                let ok = meta.split('.').all(|id| {
+                    !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                });
+                if !ok {
+                    return None;
+                }
+                core
+            }
+            None => s,
+        };
         let (core, pre) = match s.split_once('-') {
             Some((core, pre)) => (core, Some(pre)),
             None => (s, None),
@@ -120,6 +136,26 @@ impl Version {
             patch,
             pre,
         })
+    }
+}
+
+impl Version {
+    /// `X.Y.Z` or `X.Y.Z-pre`, rebuilt from the parsed parts (no build metadata, no `v`).
+    pub fn shown(&self) -> String {
+        let mut out = format!("{}.{}.{}", self.major, self.minor, self.patch);
+        if !self.pre.is_empty() {
+            let ids: Vec<String> = self
+                .pre
+                .iter()
+                .map(|id| match id {
+                    PreId::Num(n) => n.to_string(),
+                    PreId::Name(n) => n.clone(),
+                })
+                .collect();
+            out.push('-');
+            out.push_str(&ids.join("."));
+        }
+        out
     }
 }
 
@@ -152,8 +188,8 @@ impl Ord for Version {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Release {
     pub version: Version,
-    /// The tag as shown to the user (`X.Y.Z`, no `v`); it passed `Version::parse`, so it only
-    /// holds letters, digits and `. + -`.
+    /// The version as shown to the user, rebuilt from the parsed version (`Version::shown`):
+    /// digits, letters, `.` and `-` only. Nothing of the tag text is passed on as it is.
     pub shown: String,
     pub url: ReleaseUrl,
 }
@@ -172,8 +208,8 @@ pub fn parse_response(body: &[u8]) -> Result<Release, UpdateError> {
     let version = Version::parse(tag).ok_or(UpdateError::Malformed)?;
     let url = ReleaseUrl::parse(url).ok_or(UpdateError::BadUrl)?;
     Ok(Release {
+        shown: version.shown(),
         version,
-        shown: tag.strip_prefix('v').unwrap_or(tag).to_string(),
         url,
     })
 }
@@ -240,11 +276,11 @@ impl InFlight {
 
     /// True when the caller may start a check; it must call [`InFlight::end`] afterwards.
     pub fn try_begin(&self) -> bool {
-        unimplemented!()
+        !self.0.swap(true, std::sync::atomic::Ordering::AcqRel)
     }
 
     pub fn end(&self) {
-        unimplemented!()
+        self.0.store(false, std::sync::atomic::Ordering::Release);
     }
 }
 

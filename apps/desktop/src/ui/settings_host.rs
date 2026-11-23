@@ -88,6 +88,9 @@ thread_local! {
     static UPDATE_VIEW: RefCell<UpdateView> = const { RefCell::new(UpdateView::Idle) };
 }
 
+/// One update check at a time, whether from the button or the weekly path.
+static IN_FLIGHT: update::InFlight = update::InFlight::new();
+
 /// The update check as About shows it (Task 412).
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum UpdateView {
@@ -135,9 +138,11 @@ fn spawn_check(gate: Option<(UpdateSettings, Timestamp)>) {
                 Some((u, now)) => update::check_if_due(&u, now, &UreqFetch, current),
             };
             let view = outcome.map_or(UpdateView::Idle, UpdateView::Done);
+            IN_FLIGHT.end();
             let _ = slint::invoke_from_event_loop(move || set_update_view(view));
         });
     if started.is_err() {
+        IN_FLIGHT.end();
         let _ =
             slint::invoke_from_event_loop(|| set_update_view(UpdateView::Done(Outcome::Failed)));
     }
@@ -150,7 +155,7 @@ fn set_update_view(view: UpdateView) {
 
 /// "Check for updates" pressed: the only way to a request besides the weekly toggle.
 fn check_updates() {
-    if UPDATE_VIEW.with(|v| *v.borrow() == UpdateView::Checking) {
+    if !IN_FLIGHT.try_begin() {
         return;
     }
     set_update_view(UpdateView::Checking);
@@ -167,10 +172,14 @@ fn run_due_check(poster: &Poster) {
         if !update::auto_due(&settings.updates, now) {
             return;
         }
+        if !IN_FLIGHT.try_begin() {
+            return;
+        }
         let due = (settings.updates.clone(), now);
         let mut next = settings;
         next.updates.last_check_ms = Some(now.0);
         if app.update_settings(next).is_err() {
+            IN_FLIGHT.end();
             return;
         }
         let _ = slint::invoke_from_event_loop(|| set_update_view(UpdateView::Checking));
@@ -228,7 +237,7 @@ fn open_release() {
         if !update::open_release(&url) {
             with_host(|h| {
                 h.set_status(Some((
-                    t(h.lang, Msg::SettingsOpenFolderFailed).to_string(),
+                    t(h.lang, Msg::SettingsUpdateOpenFailed).to_string(),
                     true,
                 )))
             });
@@ -415,6 +424,8 @@ fn set_strings(w: &SettingsWindow, lang: Lang, snap: Option<&Snapshot>) {
     s.set_mode_current(t(lang, status_msg(capture)).into());
     w.set_caps_text(caps_text(caps.as_ref(), lang).into());
     w.set_can_save(can_save(read_only, false));
+    // Read-only settings cannot keep the choice or the last check time: no toggle then.
+    w.set_auto_update_enabled(!read_only);
     w.set_mode(mode_index(capture));
 }
 

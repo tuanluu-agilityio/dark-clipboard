@@ -43,7 +43,7 @@ if ($hasWorkspace) {
     Write-Host '== crates/ stay network-free (GC-08, D-057)'
     $netPattern = '^(ureq[\w-]*|reqwest|hyper[\w-]*|isahc|surf|attohttpc|curl[\w-]*|minreq|h2|rustls[\w-]*|tokio-rustls|native-tls|openssl[\w-]*|webpki[\w-]*) v'
     foreach ($manifest in @(Get-ChildItem -Path 'crates' -Directory | ForEach-Object { Join-Path $_.FullName 'Cargo.toml' } | Where-Object { Test-Path -LiteralPath $_ })) {
-        $tree = cargo tree --manifest-path $manifest -e normal,build --target all --prefix none
+        $tree = cargo tree --manifest-path $manifest -e normal,build,dev --target all --prefix none
         if ($LASTEXITCODE -ne 0) { Fail "cargo tree --manifest-path $manifest" }
         $net = $tree | Where-Object { $_ -match $netPattern } | Sort-Object -Unique
         if ($net) {
@@ -115,10 +115,22 @@ foreach ($f in $rs) {
 }
 if ($bad) { exit 1 }
 
+Write-Host '== no renamed network dependency or Windows networking feature in any Cargo.toml (GC-08, D-057)'
+$tomls = @()
+foreach ($d in @('crates', 'apps', 'fuzz')) {
+    if (Test-Path -LiteralPath $d) { $tomls += @(Get-ChildItem -Path $d -Recurse -File -Filter 'Cargo.toml' | Where-Object { $_.FullName -notmatch '\target\' }) }
+}
+foreach ($f in $tomls) {
+    foreach ($h in @(Select-String -LiteralPath $f.FullName -Pattern 'package\s*=\s*"(ureq|reqwest|hyper|h2|attohttpc|isahc|minreq|curl|socket2|surf)"|Win32_Networking|WinHttp|WinINet')) {
+        Write-Host "CHECK FAILED: network dependency or feature in $(Rel $f):$($h.LineNumber)"; $bad = $true
+    }
+}
+if ($bad) { exit 1 }
+
 Write-Host '== network APIs only in apps/desktop/src/update.rs (GC-08, D-057)'
 foreach ($f in $rs) {
     if ((Rel $f) -eq 'apps/desktop/src/update.rs') { continue }
-    foreach ($h in @(Select-String -LiteralPath $f.FullName -Pattern '\bureq::|\buse ureq\b|\bstd::net\b|\b(TcpStream|TcpListener|UdpSocket)\b')) {
+    foreach ($h in @(Select-String -LiteralPath $f.FullName -Pattern '\b(ureq|reqwest|hyper|h2|attohttpc|isahc|minreq|curl|socket2|surf)::|\b(use|extern crate) (ureq|reqwest|hyper|h2|attohttpc|isahc|minreq|curl|socket2|surf)\b|\b(mio|tokio)::net\b|\bstd::net\b|\b(TcpStream|TcpListener|UdpSocket)\b|\bWinHttp|\bWinINet|\bWin32::Networking')) {
         if ($h.Line -match '^\s*//') { continue }
         Write-Host "CHECK FAILED: network API outside update.rs in $(Rel $f):$($h.LineNumber)"; $bad = $true
     }

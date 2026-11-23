@@ -513,6 +513,10 @@ messages! {
     SettingsUpdateAvailable => ("New version available:", "Có phiên bản mới:"),
     SettingsUpdateFailed => ("Could not check", "Không kiểm tra được"),
     SettingsUpdateOpen => ("Open the release page", "Mở trang phát hành"),
+    SettingsUpdateOpenFailed => (
+        "The release page could not be opened",
+        "Không mở được trang phát hành"
+    ),
     SettingsStartAtLoginCustomProfile => (
         "Not available with a custom data folder: the login entry would start the default profile.",
         "Không dùng được với thư mục dữ liệu tùy chọn: mục khởi động sẽ chạy hồ sơ mặc định."

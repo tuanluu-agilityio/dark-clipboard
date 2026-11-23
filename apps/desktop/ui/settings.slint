@@ -242,6 +242,7 @@ export component SettingsWindow inherits Window {
     in property <bool> update-busy;
     in property <bool> update-found;
     in-out property <bool> auto-update;
+    in property <bool> auto-update-enabled: true;
     in property <string> data-path;
 
     callback save();
@@ -845,6 +846,7 @@ export component SettingsWindow inherits Window {
                             CheckBox {
                                 text: SText.update-auto;
                                 checked <=> root.auto-update;
+                                enabled: root.auto-update-enabled;
                                 toggled => {
                                     root.auto-update-toggled(root.auto-update);
                                 }

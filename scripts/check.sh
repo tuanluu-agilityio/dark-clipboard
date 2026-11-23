@@ -25,7 +25,7 @@ if [ "$has_ws" = 1 ]; then
   echo "== crates/ stay network-free (GC-08, D-057)"
   for m in crates/*/Cargo.toml; do
     [ -f "$m" ] || continue
-    tree="$(cargo tree --manifest-path "$m" -e normal,build --target all --prefix none)" || fail "cargo tree --manifest-path $m"
+    tree="$(cargo tree --manifest-path "$m" -e normal,build,dev --target all --prefix none)" || fail "cargo tree --manifest-path $m"
     net="$(printf '%s\n' "$tree" | grep -E '^(ureq[A-Za-z0-9_-]*|reqwest|hyper[A-Za-z0-9_-]*|isahc|surf|attohttpc|curl[A-Za-z0-9_-]*|minreq|h2|rustls[A-Za-z0-9_-]*|tokio-rustls|native-tls|openssl[A-Za-z0-9_-]*|webpki[A-Za-z0-9_-]*) v' | sort -u)"
     [ -z "$net" ] || { echo "CHECK FAILED: $m depends on a network crate:"; echo "$net"; exit 1; }
   done
@@ -55,9 +55,14 @@ hits="$(rs_files | grep -vE '^(crates/darkclip-app/src/capture/.*|crates/darkcli
   | xargs -r grep -nE '\bClipboardAccess\b|\.access\b|\baccess[[:space:]]*:' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)"
 [ -z "$hits" ] || { echo "CHECK FAILED: ClipboardAccess used outside capture actor:"; echo "$hits"; exit 1; }
 
+echo "== no renamed network dependency or Windows networking feature in any Cargo.toml (GC-08, D-057)"
+hits="$(find crates apps fuzz -name Cargo.toml -not -path '*/target/*' 2>/dev/null \
+  | xargs -r grep -nE 'package[[:space:]]*=[[:space:]]*"(ureq|reqwest|hyper|h2|attohttpc|isahc|minreq|curl|socket2|surf)"|Win32_Networking|WinHttp|WinINet' || true)"
+[ -z "$hits" ] || { echo "CHECK FAILED: network dependency or feature in a manifest:"; echo "$hits"; exit 1; }
+
 echo "== network APIs only in apps/desktop/src/update.rs (GC-08, D-057)"
 hits="$(rs_files | grep -vx 'apps/desktop/src/update.rs' \
-  | xargs -r grep -nE '\bureq::|\buse ureq\b|\bstd::net\b|\b(TcpStream|TcpListener|UdpSocket)\b' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)"
+  | xargs -r grep -nE '\b(ureq|reqwest|hyper|h2|attohttpc|isahc|minreq|curl|socket2|surf)::|\b(use|extern crate) (ureq|reqwest|hyper|h2|attohttpc|isahc|minreq|curl|socket2|surf)\b|\b(mio|tokio)::net\b|\bstd::net\b|\b(TcpStream|TcpListener|UdpSocket)\b|\bWinHttp|\bWinINet|\bWin32::Networking' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)"
 [ -z "$hits" ] || { echo "CHECK FAILED: network API outside update.rs:"; echo "$hits"; exit 1; }
 
 echo "== no window-title capture (SR-11)"
