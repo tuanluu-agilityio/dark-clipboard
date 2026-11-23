@@ -25,6 +25,7 @@ use crate::prefs::model::{
     Field, Problem, RemoveOutcome, SaveResult, ALL_KINDS,
 };
 use crate::prefs::sys;
+use crate::prefs::transfer::{self, RestoreFlow};
 use darkclip_app::api::{AppStatus, Caller, CaptureStatus, StorageStatsView};
 use darkclip_app::settings::{PopupPosition, Settings};
 use darkclip_app::{App, ClipApi};
@@ -61,6 +62,8 @@ struct Host {
     clear: ClearFlow,
     clear_counts: ClearCounts,
     cleanup: CleanupFlow,
+    /// The restore confirmation, with the chosen backup (Task 405).
+    restore: RestoreFlow,
     saving: bool,
     app_rows: Rc<VecModel<AppRow>>,
     kind_rows: Rc<VecModel<KindItem>>,
@@ -220,6 +223,12 @@ fn set_strings(w: &SettingsWindow, lang: Lang, snap: Option<&Snapshot>) {
     s.set_folder_label(m(Msg::SettingsDataFolder));
     s.set_open_folder(m(Msg::SettingsOpenFolder));
     s.set_show_welcome(m(Msg::SettingsShowWelcome));
+    s.set_transfer_heading(m(Msg::SettingsTransferHeading));
+    s.set_transfer_note(m(Msg::SettingsTransferNote));
+    s.set_backup_do(m(Msg::SettingsBackupDo));
+    s.set_restore_do(m(Msg::SettingsRestoreDo));
+    s.set_import_do(m(Msg::SettingsImportDo));
+    s.set_restore_yes(m(Msg::SettingsRestoreYes));
     w.set_version_text(format!("{} {}", t(lang, Msg::SettingsVersion), about::version()).into());
     // Parts that follow the latest status refresh.
     let (read_only, caps, warning, capture) = snap
@@ -397,6 +406,8 @@ impl Host {
         self.clear.cancel();
         self.cleanup.cancel();
         self.win.set_cleanup_open(false);
+        self.restore.cancel();
+        self.win.set_restore_open(false);
         self.win.set_clear_open(false);
         self.win.set_picker_open(false);
         self.picker_rows.set_vec(Vec::new());
@@ -637,6 +648,7 @@ fn create() -> Option<()> {
             clear: ClearFlow::default(),
             clear_counts: ClearCounts::default(),
             cleanup: CleanupFlow::default(),
+            restore: RestoreFlow::default(),
             saving: false,
             app_rows,
             kind_rows,
@@ -833,6 +845,152 @@ fn cleanup_confirm() {
     });
 }
 
+// ---- Backup and transfer (Task 405) ----
+
+fn set_transfer_busy(busy: bool) {
+    with_host(|h| h.win.set_transfer_busy(busy));
+}
+
+fn transfer_status(text: String, error: bool) {
+    with_host(|h| h.set_status(Some((text, error))));
+}
+
+/// Opens the file picker; `then` runs on the event loop with the chosen file. The buttons are
+/// disabled while the picker is open.
+fn pick_then(
+    save: bool,
+    title: Msg,
+    ext: &'static str,
+    default_name: Option<String>,
+    then: impl FnOnce(PathBuf) + Send + 'static,
+) {
+    let Some(lang) = with_host(|h| h.lang) else {
+        return;
+    };
+    let filter = if ext == transfer::BACKUP_EXT {
+        Msg::TransferFilterBackup
+    } else {
+        Msg::TransferFilterExport
+    };
+    let req = crate::filedlg::Pick {
+        save,
+        title: t(lang, title).to_string(),
+        filter_name: t(lang, filter).to_string(),
+        ext,
+        default_name,
+    };
+    set_transfer_busy(true);
+    let started = crate::filedlg::pick(req, move |path| {
+        set_transfer_busy(false);
+        if let Some(p) = path {
+            then(p);
+        }
+    });
+    match started {
+        crate::filedlg::Started::Yes => {}
+        crate::filedlg::Started::AlreadyOpen => set_transfer_busy(false),
+        crate::filedlg::Started::Unavailable => {
+            set_transfer_busy(false);
+            transfer_status(t(lang, Msg::TransferNoDialog).to_string(), true);
+        }
+    }
+}
+
+/// Runs `job` on the worker with the buttons disabled; `report` makes the status line text.
+fn run_transfer<T: Send + 'static>(
+    job: impl FnOnce(&App) -> Result<T, darkclip_app::ApiError> + Send + 'static,
+    report: impl FnOnce(Lang, T) -> String + Send + 'static,
+) {
+    let Some(poster) = with_host(|h| {
+        h.win.set_transfer_busy(true);
+        h.set_status(Some((t(h.lang, Msg::TransferWorking).to_string(), false)));
+        h.poster.clone()
+    }) else {
+        return;
+    };
+    // Not quiet: the status refresh afterwards updates the tray and the open windows.
+    poster.post(move |app: &App| {
+        let r = job(app);
+        let _ = slint::invoke_from_event_loop(move || {
+            with_host(|h| {
+                h.win.set_transfer_busy(false);
+                let msg = match r {
+                    Ok(v) => (report(h.lang, v), false),
+                    Err(e) => (t(h.lang, transfer::error_msg(&e)).to_string(), true),
+                };
+                h.set_status(Some(msg));
+            });
+            request_stats();
+        });
+    });
+}
+
+/// "Back up now...": the user picks where, then the worker writes it.
+fn backup_ask() {
+    use darkclip_core::Clock;
+    let name = transfer::backup_file_name(crate::SystemClock.now());
+    pick_then(
+        true,
+        Msg::TransferDialogBackup,
+        transfer::BACKUP_EXT,
+        Some(name),
+        |path| {
+            run_transfer(
+                move |app| app.ui_backup(&Caller::Ui, &path),
+                |lang, r| fill(t(lang, Msg::TransferBackupDone), r.clips),
+            );
+        },
+    );
+}
+
+/// "Restore from backup...": the user picks the file, then confirms the replacement.
+fn restore_ask() {
+    pick_then(
+        false,
+        Msg::TransferDialogRestore,
+        transfer::BACKUP_EXT,
+        None,
+        |path| {
+            with_host(|h| {
+                h.restore.ask(path);
+                h.win
+                    .set_restore_question(t(h.lang, Msg::SettingsRestoreConfirm).into());
+                h.win.set_restore_open(true);
+            });
+        },
+    );
+}
+
+fn restore_confirm() {
+    let Some(path) = with_host(|h| {
+        h.win.set_restore_open(false);
+        h.restore.confirm()
+    })
+    .flatten() else {
+        return;
+    };
+    run_transfer(
+        move |app| app.ui_restore(&Caller::Ui, &path),
+        |lang, r| fill(t(lang, Msg::TransferRestoreDone), r.clips),
+    );
+}
+
+/// "Import clips...": the user picks an export file; the counts are reported.
+fn import_ask() {
+    pick_then(
+        false,
+        Msg::TransferDialogImport,
+        transfer::EXPORT_EXT,
+        None,
+        |path| {
+            run_transfer(
+                move |app| app.ui_import(&Caller::Ui, &path),
+                |lang, r| transfer::import_text(lang, &r),
+            );
+        },
+    );
+}
+
 fn clear_history() {
     let Some((keep, poster)) = with_host(|h| {
         h.clear.set_keep_pinned(h.win.get_clear_keep_pinned());
@@ -960,6 +1118,16 @@ fn connect(w: &SettingsWindow) {
             h.win.set_cleanup_open(false);
         });
     });
+    w.on_backup_ask(backup_ask);
+    w.on_restore_ask(restore_ask);
+    w.on_import_ask(import_ask);
+    w.on_restore_confirm(restore_confirm);
+    w.on_restore_cancel(|| {
+        with_host(|h| {
+            h.restore.cancel();
+            h.win.set_restore_open(false);
+        });
+    });
     w.on_clear_confirm(clear_history);
     w.on_clear_cancel(|| {
         with_host(|h| {
@@ -980,6 +1148,7 @@ fn connect(w: &SettingsWindow) {
         let closed = with_host(|h| {
             let open = h.clear.is_open()
                 || h.cleanup.is_open()
+                || h.restore.is_open()
                 || h.apps.pending().is_some()
                 || h.win.get_limits_open()
                 || h.win.get_picker_open();

@@ -13,6 +13,7 @@
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+mod filedlg;
 mod history;
 mod log;
 mod organize;
@@ -114,7 +115,7 @@ fn parse_args(args: &[String]) -> Result<Cli, ()> {
     Ok(cli)
 }
 
-struct SystemClock;
+pub(crate) struct SystemClock;
 
 impl Clock for SystemClock {
     fn now(&self) -> Timestamp {

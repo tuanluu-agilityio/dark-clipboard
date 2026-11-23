@@ -121,6 +121,7 @@ pub fn map_key(k: Key, m: Mods, ctx: HistoryCtx) -> Option<HistoryAction> {
         Key::Char('n' | 'N' | '\u{e}') if ctrl_shift => Some(HistoryAction::NewCollection),
         Key::Char('r' | 'R' | '\u{12}') if ctrl_shift => Some(HistoryAction::RenameCollection),
         Key::Delete if ctrl_shift => Some(HistoryAction::DeleteCollection),
+        Key::Char('e' | 'E' | '\u{5}') if ctrl_shift => Some(HistoryAction::Export),
         // Ctrl+A selects text in a non-empty search box; otherwise it selects every loaded row.
         Key::Char('a' | 'A' | '\u{1}') if m.ctrl && !m.alt && list_keys => {
             Some(HistoryAction::SelectAll)

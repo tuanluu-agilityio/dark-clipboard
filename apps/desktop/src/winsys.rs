@@ -258,3 +258,99 @@ pub fn free_disk_bytes(dir: &std::path::Path) -> Option<u64> {
         .ok()
         .map(|()| free)
 }
+
+/// The shell's file dialog (Task 405): `IFileSaveDialog` when `save`, else `IFileOpenDialog`,
+/// limited to file-system paths and one file type (`*.ext`, `ext` without the dot). Blocks
+/// until the user closes it; call it on its own thread (it initialises COM there as a
+/// single-threaded apartment and uninitialises it before returning). `None` when cancelled or
+/// when the dialog cannot be shown. No owner window: the app's windows stay usable.
+pub fn pick_file(
+    save: bool,
+    title: &str,
+    filter_name: &str,
+    ext: &str,
+    default_name: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    use windows::Win32::System::Com::{
+        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+    };
+
+    /// Uninitialises COM on drop, after every interface has been released.
+    struct ComGuard;
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            // SAFETY: paired with the successful `CoInitializeEx` on this same thread.
+            unsafe { CoUninitialize() };
+        }
+    }
+
+    // SAFETY: no reserved pointer; a fresh thread, so the apartment cannot clash. S_FALSE
+    // (already initialised) also needs the matching uninitialise, which `ok()` keeps.
+    let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
+    if hr.is_err() {
+        return None;
+    }
+    let _com = ComGuard;
+    // Every COM object lives inside this call and is released before `_com` drops.
+    show_file_dialog(save, title, filter_name, ext, default_name).ok()
+}
+
+fn show_file_dialog(
+    save: bool,
+    title: &str,
+    filter_name: &str,
+    ext: &str,
+    default_name: Option<&str>,
+) -> windows::core::Result<std::path::PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
+    use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
+    use windows::Win32::UI::Shell::{
+        FileOpenDialog, FileSaveDialog, IFileDialog, IFileOpenDialog, IFileSaveDialog,
+        FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_NOCHANGEDIR, FOS_OVERWRITEPROMPT,
+        FOS_PATHMUSTEXIST, SIGDN_FILESYSPATH,
+    };
+
+    let title = HSTRING::from(title);
+    let name = HSTRING::from(filter_name);
+    let spec = HSTRING::from(format!("*.{ext}"));
+    let ext = HSTRING::from(ext);
+    let filters = [COMDLG_FILTERSPEC {
+        pszName: PCWSTR(name.as_ptr()),
+        pszSpec: PCWSTR(spec.as_ptr()),
+    }];
+    // SAFETY: plain COM calls on interfaces this function owns; every string passed is an
+    // `HSTRING` (NUL-terminated) that outlives the dialog; the result string is freed with
+    // `CoTaskMemFree` after it was copied.
+    unsafe {
+        let dlg: IFileDialog = if save {
+            let d: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER)?;
+            windows::core::Interface::cast(&d)?
+        } else {
+            let d: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+            windows::core::Interface::cast(&d)?
+        };
+        let mut opts =
+            dlg.GetOptions()? | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR;
+        opts |= if save {
+            FOS_OVERWRITEPROMPT
+        } else {
+            FOS_FILEMUSTEXIST
+        };
+        dlg.SetOptions(opts)?;
+        dlg.SetTitle(&title)?;
+        dlg.SetFileTypes(&filters)?;
+        dlg.SetDefaultExtension(&ext)?;
+        if let Some(n) = default_name {
+            dlg.SetFileName(&HSTRING::from(n))?;
+        }
+        // Cancelling returns an error (ERROR_CANCELLED): no path.
+        dlg.Show(None)?;
+        let item = dlg.GetResult()?;
+        let raw = item.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let path = std::ffi::OsString::from_wide(raw.as_wide());
+        CoTaskMemFree(Some(raw.0 as *const core::ffi::c_void));
+        Ok(std::path::PathBuf::from(path))
+    }
+}

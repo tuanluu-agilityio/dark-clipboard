@@ -14,32 +14,61 @@ pub const EXPORT_EXT: &str = "dcexport";
 
 /// `dark-clipboard-YYYY-MM-DD.dcbackup` (UTC date).
 pub fn backup_file_name(now: Timestamp) -> String {
-    let _ = now;
-    String::new()
+    format!("dark-clipboard-{}.{BACKUP_EXT}", utc_date(now))
 }
 
 /// `dark-clipboard-export-YYYY-MM-DD.dcexport` (UTC date).
 pub fn export_file_name(now: Timestamp) -> String {
-    let _ = now;
-    String::new()
+    format!("dark-clipboard-export-{}.{EXPORT_EXT}", utc_date(now))
+}
+
+/// `YYYY-MM-DD` of `now` in UTC.
+fn utc_date(now: Timestamp) -> String {
+    let mut s = now.to_rfc3339();
+    s.truncate(10);
+    s
 }
 
 /// The message for a failed backup, restore, export or import.
 pub fn error_msg(e: &ApiError) -> Msg {
-    let _ = e;
-    Msg::TransferFailed
+    use darkclip_app::events::{FILE_INVALID, FILE_TOO_LARGE, IMPORT_PRIVATE};
+    match e {
+        ApiError::SchemaTooNew => Msg::TransferNewer,
+        ApiError::InvalidArgument(w) if *w == FILE_TOO_LARGE => Msg::TransferTooLarge,
+        ApiError::InvalidArgument(w) if *w == FILE_INVALID => Msg::TransferInvalid,
+        ApiError::InvalidArgument(w) if *w == IMPORT_PRIVATE => Msg::TransferPrivate,
+        _ => Msg::TransferFailed,
+    }
 }
 
 /// "Imported 3 new clips; 1 were already in your history" plus the skipped counts, if any.
 pub fn import_text(lang: Lang, r: &ImportReport) -> String {
-    let _ = (lang, r);
-    String::new()
+    let mut out = t(lang, Msg::TransferImportDone)
+        .replace("{n}", &r.imported.to_string())
+        .replace("{m}", &r.merged.to_string());
+    if r.skipped() > 0 {
+        out.push_str(". ");
+        out.push_str(
+            &t(lang, Msg::TransferImportSkipped)
+                .replace("{s}", &r.skipped_sensitive.to_string())
+                .replace("{k}", &r.skipped_kind.to_string())
+                .replace("{l}", &r.skipped_too_large.to_string())
+                .replace("{d}", &r.skipped_invalid.to_string()),
+        );
+    }
+    out
 }
 
 /// "Exported 3 clips" plus the masked or sensitive clips left out, if any.
 pub fn export_text(lang: Lang, r: &ExportReport) -> String {
-    let _ = (lang, r);
-    String::new()
+    let mut out = t(lang, Msg::TransferExportDone).replace("{n}", &r.exported.to_string());
+    if r.excluded_sensitive > 0 {
+        out.push_str(". ");
+        out.push_str(
+            &t(lang, Msg::TransferExportExcluded).replace("{n}", &r.excluded_sensitive.to_string()),
+        );
+    }
+    out
 }
 
 /// The restore confirmation: nothing is replaced without it. Holds the chosen file.
@@ -59,18 +88,20 @@ impl std::fmt::Debug for RestoreFlow {
 
 impl RestoreFlow {
     pub fn ask(&mut self, file: PathBuf) {
-        let _ = file;
+        self.file = Some(file);
     }
 
-    pub fn cancel(&mut self) {}
+    pub fn cancel(&mut self) {
+        self.file = None;
+    }
 
     /// The file when the question was open; closes it.
     pub fn confirm(&mut self) -> Option<PathBuf> {
-        None
+        self.file.take()
     }
 
     pub fn is_open(&self) -> bool {
-        false
+        self.file.is_some()
     }
 }
 
