@@ -19,11 +19,31 @@ pub enum WelcomeResult {
 }
 
 /// Answers the welcome. `login` is the checkbox (only used by Start). `update` writes the
-/// settings (true = written). A failed write puts a changed registration back.
+/// settings (true = written). A failed write puts a changed registration back. The checkbox is
+/// taken as shown with the stored choice (see `run_welcome_shown`, which the window uses).
+#[cfg(test)]
 pub fn run_welcome(
     read_only: bool,
     start: bool,
     login: bool,
+    base: &Settings,
+    auto: Option<&dyn Autostart>,
+    update: impl FnOnce(Settings) -> bool,
+) -> WelcomeResult {
+    let shown = base.startup.launch_at_login;
+    run_welcome_shown(read_only, start, login, shown, base, auto, update)
+}
+
+/// `run_welcome` with `login_shown`, what the checkbox showed when the welcome opened (the live
+/// registration when it could be read). Start changes start at login only when the user changed
+/// the checkbox in this welcome; otherwise the stored choice and the registration stay as they
+/// are, so an entry disabled in Task Manager is never re-enabled without an explicit choice
+/// (D-054).
+pub fn run_welcome_shown(
+    read_only: bool,
+    start: bool,
+    login: bool,
+    login_shown: bool,
     base: &Settings,
     auto: Option<&dyn Autostart>,
     update: impl FnOnce(Settings) -> bool,
@@ -35,7 +55,7 @@ pub fn run_welcome(
     new.finish_onboarding(start);
     let mut before = None;
     let mut failed = false;
-    if start {
+    if start && login != login_shown {
         match sync_login(auto, login, base.startup.launch_at_login) {
             Ok(prev) => {
                 before = prev;
@@ -125,6 +145,46 @@ mod tests {
         let (r, _) = answer(true, true, &Settings::first_run(), Some(&fake), false);
         assert_eq!(r, WelcomeResult::Failed);
         assert!(!fake.enabled());
+    }
+
+    #[test]
+    fn an_untouched_checkbox_never_re_enables_a_disabled_entry() {
+        // Stored "on", but the entry is disabled in Task Manager: the welcome shows the live
+        // "off" and the user presses Start without touching the box.
+        let fake = FakeAutostart::new(false, false);
+        let mut base = Settings::first_run();
+        base.startup.launch_at_login = true;
+        let mut w = None;
+        let r = run_welcome_shown(false, true, false, false, &base, Some(&fake), |s| {
+            w = Some(s);
+            true
+        });
+        assert_eq!(r, WelcomeResult::Done);
+        assert!(!fake.enabled(), "the registration is left alone");
+        let w = w.unwrap();
+        assert!(w.privacy.capture_enabled);
+        assert!(w.startup.launch_at_login, "the stored choice is left alone");
+    }
+
+    #[test]
+    fn a_checkbox_ticked_in_this_welcome_registers() {
+        // Same disabled entry; this time the user ticks the box.
+        let fake = FakeAutostart::new(false, false);
+        let mut base = Settings::first_run();
+        base.startup.launch_at_login = true;
+        let r = run_welcome_shown(false, true, true, false, &base, Some(&fake), |_| true);
+        assert_eq!(r, WelcomeResult::Done);
+        assert!(fake.enabled());
+        // A box unticked in this welcome removes a live entry.
+        let on = FakeAutostart::new(true, false);
+        let mut w = None;
+        let r = run_welcome_shown(false, true, false, true, &base, Some(&on), |s| {
+            w = Some(s);
+            true
+        });
+        assert_eq!(r, WelcomeResult::Done);
+        assert!(!on.enabled());
+        assert!(!w.unwrap().startup.launch_at_login);
     }
 
     #[test]

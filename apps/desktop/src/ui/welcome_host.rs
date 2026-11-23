@@ -12,7 +12,7 @@
 
 use super::{Poster, WText, WelcomeWindow};
 use crate::prefs::model::login_availability;
-use crate::prefs::welcome::{run_welcome, WelcomeResult};
+use crate::prefs::welcome::{run_welcome_shown, WelcomeResult};
 use darkclip_app::settings::Settings;
 use darkclip_app::App;
 use darkclip_core::i18n::{t, Lang, Msg};
@@ -38,6 +38,11 @@ thread_local! {
     static SNAP: RefCell<Option<Snapshot>> = const { RefCell::new(None) };
     /// The welcome opened itself already in this process (it never nags again).
     static AUTO_SHOWN: Cell<bool> = const { Cell::new(false) };
+    /// What the "Start with Windows" box showed when the welcome opened (the live registration
+    /// once it was read): Start changes start at login only if the user changed the box.
+    static LOGIN_SHOWN: Cell<bool> = const { Cell::new(false) };
+    /// Bumped at every opening: a late live-state answer of an earlier opening is dropped.
+    static OPEN_GEN: Cell<u64> = const { Cell::new(0) };
 }
 
 /// Stores what the window needs to be created later. Call once, on the main thread.
@@ -158,6 +163,8 @@ pub fn show() {
         });
         set_strings(&w);
         w.set_login(login);
+        LOGIN_SHOWN.set(login);
+        request_login_state();
         w.set_can_login(can_login);
         w.set_login_enabled(login_availability(can_login, crate::custom_profile()).editable());
         w.set_show_capture_off(capture_off);
@@ -171,6 +178,29 @@ pub fn show() {
         .window()
         .with_winit_window(|ww| ww.set_theme(Some(winit::window::Theme::Dark)));
     let _ = w.window().with_winit_window(|ww| ww.focus_window());
+}
+
+/// Reads the real start-at-login state on the worker (the registry), then shows it in the box,
+/// unless the user already changed the box (D-054: an entry disabled in Task Manager shows as
+/// off and is re-enabled only by an explicit tick).
+fn request_login_state() {
+    let Some(poster) = INIT.with(|i| i.borrow().as_ref().map(|i| i.poster.clone())) else {
+        return;
+    };
+    let gen = OPEN_GEN.get().wrapping_add(1);
+    OPEN_GEN.set(gen);
+    poster.post_quiet(move |_app: &App| {
+        let live = crate::autostart().and_then(|a| a.is_enabled().ok());
+        let _ = slint::invoke_from_event_loop(move || {
+            let (Some(live), Some(w)) = (live, window()) else {
+                return;
+            };
+            if OPEN_GEN.get() == gen && !w.get_busy() && w.get_login() == LOGIN_SHOWN.get() {
+                w.set_login(live);
+                LOGIN_SHOWN.set(live);
+            }
+        });
+    });
 }
 
 fn hide() {
@@ -203,7 +233,7 @@ fn close_answer() {
     });
     let finished = window().is_some_and(|w| w.get_finished());
     if unanswered && !finished {
-        send(false, false, false);
+        send(false, false, false, false);
     }
 }
 
@@ -216,11 +246,11 @@ fn answer(start: bool) {
     }
     w.set_busy(true);
     w.set_error(SharedString::new());
-    send(start, w.get_login(), true);
+    send(start, w.get_login(), LOGIN_SHOWN.get(), true);
 }
 
 /// Posts the answer to the worker; with `waiting` the window is told the result.
-fn send(start: bool, login: bool, waiting: bool) {
+fn send(start: bool, login: bool, login_shown: bool, waiting: bool) {
     let Some(poster) = INIT.with(|i| i.borrow().as_ref().map(|i| i.poster.clone())) else {
         return;
     };
@@ -229,9 +259,15 @@ fn send(start: bool, login: bool, waiting: bool) {
         let read_only = app.status().settings_read_only;
         // The registry write happens here, on the worker, never on the UI thread.
         let auto = crate::autostart();
-        let result = run_welcome(read_only, start, login, &base, auto.as_deref(), |s| {
-            app.update_settings(s).is_ok()
-        });
+        let result = run_welcome_shown(
+            read_only,
+            start,
+            login,
+            login_shown,
+            &base,
+            auto.as_deref(),
+            |s| app.update_settings(s).is_ok(),
+        );
         if waiting {
             let _ = slint::invoke_from_event_loop(move || on_result(result));
         }
@@ -248,6 +284,7 @@ fn on_result(r: WelcomeResult) {
         WelcomeResult::Done => hide(),
         WelcomeResult::DoneLoginFailed => {
             w.set_login(false);
+            LOGIN_SHOWN.set(false);
             w.set_error(t(lang, Msg::WelcomeAutostartFailed).into());
             w.set_finished(true);
         }

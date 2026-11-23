@@ -20,8 +20,8 @@ use super::{AppRow, KindItem};
 use crate::popup::row::fill;
 use crate::prefs::about::{self, CapValue};
 use crate::prefs::model::{
-    self, can_save, limits_lowered, login_availability, login_view, run_save_with_login, ClearFlow,
-    Draft, Field, Problem, RemoveOutcome, SaveResult, ALL_KINDS,
+    self, can_save, limits_lowered, login_availability, run_save_with_login, ClearFlow, Draft,
+    Field, Problem, RemoveOutcome, SaveResult, ALL_KINDS,
 };
 use crate::prefs::sys;
 use darkclip_app::api::{AppStatus, Caller, CaptureStatus, StorageStatsView};
@@ -505,11 +505,10 @@ fn on_login_state(live: Option<bool>) {
     let Some(stored) = stored else {
         return;
     };
-    let (checked, drift) = login_view(stored, live);
     with_host(|h| {
-        if h.win.get_launch_at_login() == stored {
-            h.win.set_launch_at_login(checked);
-        }
+        let (checked, drift) =
+            model::toggle_after_live_read(h.win.get_launch_at_login(), stored, live);
+        h.win.set_launch_at_login(checked);
         LOGIN_DRIFT.set(drift);
         let lang = h.lang;
         h.win.global::<SText>().set_login_drift(
@@ -682,6 +681,9 @@ fn connect(w: &SettingsWindow) {
                 h.fill_form(&s);
                 h.set_status(None);
             });
+            // The toggle shows the live state again, as when the window opened (D-054): a
+            // Revert never leads a Save into re-enabling an entry disabled in Task Manager.
+            request_login_state();
         }
     });
     w.on_edited(|| {

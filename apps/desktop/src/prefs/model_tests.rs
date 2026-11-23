@@ -624,6 +624,36 @@ mod login {
     }
 
     #[test]
+    fn revert_then_save_never_re_enables_a_disabled_entry() {
+        // Stored "on", entry disabled in Task Manager. Revert refills the form from the stored
+        // choice, then the live state is read again; Save without touching the toggle.
+        let fake = FakeAutostart::new(false, false);
+        let mut base = defaults();
+        base.startup.launch_at_login = true;
+        let mut d = Draft::from_settings(&base);
+        let (toggle, drift) = toggle_after_live_read(d.launch_at_login, true, Some(false));
+        assert!(drift);
+        d.launch_at_login = toggle;
+        let (r, w) = save(false, &d, &base, Some(&fake), true);
+        assert!(matches!(r, SaveResult::Saved));
+        assert!(
+            !fake.enabled(),
+            "never re-enabled without an explicit change"
+        );
+        assert!(!w.unwrap().startup.launch_at_login);
+        // A toggle the user already changed is kept; an unreadable registry changes nothing.
+        assert_eq!(
+            toggle_after_live_read(false, true, Some(true)),
+            (false, false)
+        );
+        assert_eq!(toggle_after_live_read(true, true, None), (true, false));
+        assert_eq!(
+            toggle_after_live_read(true, true, Some(true)),
+            (true, false)
+        );
+    }
+
+    #[test]
     fn the_toggle_shows_the_live_state_and_notes_a_difference() {
         assert_eq!(login_view(true, Some(false)), (false, true));
         assert_eq!(login_view(false, Some(true)), (true, true));

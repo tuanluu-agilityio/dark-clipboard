@@ -187,6 +187,8 @@ All rows **untested** until the owner runs them (agents never click, type or tak
 | Start with `--data-dir "%LOCALAPPDATA%\DarkClipboard"` (the default folder, also written in other case) | Treated as the normal profile: settings from `%APPDATA%\DarkClipboard\settings.json`, `--toggle` without `--data-dir` reaches it, the start-at-login toggle is enabled | **untested** |
 | Hand-edit `settings.json` (app quit) to give an excluded app a name containing U+202E (for example `"name": "Pay‮roll"`), start, Settings > Privacy | The name is shown with a replacement mark (U+FFFD) instead of reversing the text | **untested** |
 | Settings > Privacy: Remove on the built-in Darkshot entry, then on KeePassXC (Cancel both) | Darkshot's question says Darkshot marks its own copies so they stay excluded; KeePassXC's says its copies will be stored again. Same in Vietnamese | **untested** |
+| Default profile, start at login on, entry disabled in Task Manager > Startup: open Settings (toggle off, drift note), switch the toggle on, press Revert, wait a moment, Save | After Revert the toggle shows off again with the drift note; after Save the entry is still disabled in Task Manager | **untested** |
+| Same disabled entry: Settings > About > Show welcome | The "Start with Windows" box shows off; Start without touching it leaves the entry disabled in Task Manager; ticking it and pressing Start enables it (remove the entry afterwards) | **untested** |
 | Open the popup, history, settings and welcome windows, then tray > Quit | Every window disappears at once, before the icon goes; the process ends within 2 s | **untested** |
 
 ## macOS

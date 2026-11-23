@@ -361,6 +361,18 @@ pub fn login_view(stored: bool, live: Option<bool>) -> (bool, bool) {
     }
 }
 
+/// The toggle after the live state was read (opening the window, and again after Revert):
+/// `shown` is what the toggle shows now. Returns the toggle and whether stored and live differ.
+/// A toggle the user already changed (it no longer shows the stored choice) is kept.
+pub fn toggle_after_live_read(shown: bool, stored: bool, live: Option<bool>) -> (bool, bool) {
+    let (checked, drift) = login_view(stored, live);
+    if shown == stored {
+        (checked, drift)
+    } else {
+        (shown, drift)
+    }
+}
+
 /// Brings the start-at-login registration in line with `want`. `Ok(previous)` is the state it
 /// had before when it was changed (`None`: nothing to do); `Err(actual)` when it failed, with
 /// the state to store instead (the registry's if it can be read, else `fallback`). Without an
