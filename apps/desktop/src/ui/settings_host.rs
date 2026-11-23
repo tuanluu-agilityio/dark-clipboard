@@ -20,8 +20,8 @@ use super::{AppRow, KindItem};
 use crate::popup::row::fill;
 use crate::prefs::about::{self, CapValue};
 use crate::prefs::model::{
-    self, can_save, limits_lowered, login_availability, login_view, run_save_with_login, ClearFlow,
-    Draft, Field, Problem, RemoveOutcome, SaveResult, ALL_KINDS,
+    self, can_save, limits_lowered, login_availability, run_save_with_login, ClearFlow, Draft,
+    Field, Problem, RemoveOutcome, SaveResult, ALL_KINDS,
 };
 use crate::prefs::sys;
 use darkclip_app::api::{AppStatus, Caller, CaptureStatus, StorageStatsView};
@@ -66,6 +66,9 @@ struct Host {
     picker_names: Vec<String>,
     /// Bumped by every picker request: a late answer for an older one is dropped.
     picker_gen: u64,
+    /// What the start-at-login toggle showed when the form was filled (or last saved): only a
+    /// change from this is written (D-056).
+    login_opened: bool,
 }
 
 thread_local! {
@@ -247,20 +250,22 @@ impl Host {
             .apps
             .items()
             .iter()
-            .map(|a| AppRow {
-                name: a.name.clone().unwrap_or_default().into(),
-                id: a.app_id.clone().into(),
-                builtin: a.builtin,
-                platform: t(self.lang, platform_msg(a.platform)).into(),
+            .map(|a| {
+                // Direction controls from a hand-edited file are shown as U+FFFD (F-18).
+                let (name, id) = model::app_display(a);
+                AppRow {
+                    name: name.into(),
+                    id: id.into(),
+                    builtin: a.builtin,
+                    platform: t(self.lang, platform_msg(a.platform)).into(),
+                }
             })
             .collect();
         self.app_rows.set_vec(rows);
         let pending = self.apps.pending().map(|a| {
-            let name = a.name.as_deref().unwrap_or(&a.app_id);
-            format!(
-                "{name}: {}",
-                t(self.lang, Msg::SettingsConfirmRemoveBuiltin)
-            )
+            let (name, id) = model::app_display(a);
+            let name = if name.is_empty() { id } else { name };
+            format!("{name}: {}", t(self.lang, model::remove_builtin_msg(a)))
         });
         self.win
             .set_confirm_remove_text(pending.unwrap_or_default().into());
@@ -293,6 +298,7 @@ impl Host {
         w.set_shortcut(d.shortcut.clone().into());
         w.set_lang_index(i32::from(d.language == Lang::Vi));
         w.set_launch_at_login(d.launch_at_login);
+        self.login_opened = d.launch_at_login;
         w.set_position_index(i32::from(d.popup_position == PopupPosition::Center));
         w.set_close_on_focus_loss(d.close_on_focus_loss);
         w.set_enter_pastes(d.enter_pastes);
@@ -335,6 +341,7 @@ impl Host {
                 Lang::En
             },
             launch_at_login: w.get_launch_at_login(),
+            launch_at_login_opened: self.login_opened,
             popup_position: if w.get_position_index() == 1 {
                 PopupPosition::Center
             } else {
@@ -393,6 +400,10 @@ fn on_save_result(r: SaveResult, login: bool) {
         match r {
             SaveResult::Saved => {
                 h.clear_errors();
+                // The toggle shows the stored choice; a later save writes it only when the user
+                // changes it again (D-056).
+                h.win.set_launch_at_login(login);
+                h.login_opened = login;
                 h.set_status(Some((t(h.lang, Msg::SettingsSaved).to_string(), false)));
             }
             SaveResult::Invalid(p) => {
@@ -407,6 +418,7 @@ fn on_save_result(r: SaveResult, login: bool) {
                 h.clear_errors();
                 // The toggle goes back to what is really registered; the failure is shown.
                 h.win.set_launch_at_login(login);
+                h.login_opened = login;
                 h.set_status(Some((
                     t(h.lang, Msg::SettingsAutostartFailed).to_string(),
                     true,
@@ -493,11 +505,10 @@ fn on_login_state(live: Option<bool>) {
     let Some(stored) = stored else {
         return;
     };
-    let (checked, drift) = login_view(stored, live);
     with_host(|h| {
-        if h.win.get_launch_at_login() == stored {
-            h.win.set_launch_at_login(checked);
-        }
+        let (checked, drift) =
+            model::toggle_after_live_read(h.win.get_launch_at_login(), stored, live);
+        h.win.set_launch_at_login(checked);
         LOGIN_DRIFT.set(drift);
         let lang = h.lang;
         h.win.global::<SText>().set_login_drift(
@@ -582,6 +593,7 @@ fn create() -> Option<()> {
             picker_rows,
             picker_names: Vec::new(),
             picker_gen: 0,
+            login_opened: false,
         });
     });
     connect(&w);
@@ -669,6 +681,9 @@ fn connect(w: &SettingsWindow) {
                 h.fill_form(&s);
                 h.set_status(None);
             });
+            // The toggle shows the live state again, as when the window opened (D-054): a
+            // Revert never leads a Save into re-enabling an entry disabled in Task Manager.
+            request_login_state();
         }
     });
     w.on_edited(|| {

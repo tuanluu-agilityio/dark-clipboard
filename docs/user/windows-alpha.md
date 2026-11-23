@@ -1,6 +1,6 @@
 # Dark Clipboard for Windows: alpha user guide
 
-This is the guide for the internal Windows alpha (0.1.0-alpha). It is built from source and is not released. Most of the screens below were written and tested by automated tests, but have **not yet been checked by hand on a real desktop**: the rows are listed as untested in the [platform checklist](../testing/platform-checklist.md). If something here does not match what you see, the guide is wrong, not you. macOS and Linux have no app yet.
+This is the guide for the internal Windows alpha (0.1.0-alpha). It is built from source and is not released. The view-models behind the screens below (their logic, not the screens themselves) are covered by automated tests; the screens have **not yet been checked by hand on a real desktop**: the rows are listed as untested in the [platform checklist](../testing/platform-checklist.md). If something here does not match what you see, the guide is wrong, not you. macOS and Linux have no app yet.
 
 ## Install and start
 
@@ -32,6 +32,7 @@ The search box is focused when the popup opens. Recent clips are listed, pinned 
 |---|---|
 | Up, Down, Page Up, Page Down, Home, End | Move in the list |
 | Enter | Copy the clip back to the clipboard and return to the app you were in |
+| Double-click a row | Copy the clip back and return to the app you were in; it never pastes, even with "Enter also pastes" on |
 | Ctrl+Enter | Copy back and paste into that app |
 | Shift+Enter | Copy as plain text |
 | Alt+1 .. Alt+9 | Copy the n-th result |
@@ -64,11 +65,11 @@ If any check fails, or the target runs as administrator (Windows does not let a 
 
 From the tray menu:
 
-- **Pause**: 5 minutes, or until resumed. The icon and tooltip change. Copies made while paused are never stored, not even later.
+- **Pause**: 5 minutes, 1 hour, or until resumed. The icon and tooltip change. Copies made while paused are never stored, not even later.
 - **Private mode**: the same idea, shown as private; switch it off from the same menu.
 - **Resume**: back to normal.
 
-You can also pick the mode in Settings > General.
+You can also pick the mode in Settings > Privacy.
 
 ## What is never stored
 
@@ -86,7 +87,7 @@ Settings > Privacy lists apps whose copies are never stored. The built-in list c
 
 ## Settings
 
-Settings has four sections: **General** (shortcut, language, start at login, popup behaviour, "Enter also pastes", capture mode), **Privacy** (excluded apps, the privacy markers note, a "Start capturing..." button if capture is off), **History** (retention limits for items, days and storage size; 0 means unlimited; lowering a limit asks first because old clips can then be removed) and **About** (version, licence notices, show the welcome again). One Save applies the whole form. If the settings file cannot be written, you see a message and the app does not claim it saved.
+Settings has four sections: **General** (shortcut, language, start at login, popup behaviour, "Enter also pastes"), **Privacy** (capture mode, the privacy markers note, sensitive-data handling, the kinds of content captured, excluded apps, a "Start capturing..." button if capture is off), **History** (retention limits for items, days and storage size; 0 means unlimited; lowering a limit asks first because old clips can then be removed) and **About** (version, licence notices, show the welcome again). One Save applies the whole form. If the settings file cannot be written, you see a message and the app does not claim it saved.
 
 English and Vietnamese are available; the first run follows your Windows language.
 
@@ -102,7 +103,7 @@ Off by default. Switch it on in Settings > General or with the box in the welcom
 | Settings | `%APPDATA%\DarkClipboard\settings.json` |
 | Start at login | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `DarkClipboard` |
 
-With `--data-dir <folder>` the history, log and settings are all in that folder. A second start with the same options forwards `--toggle` or `--quit` to the running app.
+With `--data-dir <folder>` the history, log and settings are all in that folder. A `--data-dir` that names the default folder (`%LOCALAPPDATA%\DarkClipboard`) is the normal profile: settings stay in `%APPDATA%\DarkClipboard\settings.json`. A second start with the same options forwards `--toggle` or `--quit` to the running app.
 
 ## Uninstall and data removal
 

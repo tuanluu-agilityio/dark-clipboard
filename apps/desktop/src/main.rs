@@ -6,7 +6,7 @@
 //! clipboard data. Threads and channels only (GC-05); no network (GC-08).
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-// The only unsafe code is in `single_instance::win`, which opts in explicitly.
+// The only unsafe code is in `single_instance::win` and `winsys`, which opt in explicitly.
 #![deny(unsafe_code)]
 // No console window of its own on Windows; `winsys::attach_parent_console` reconnects to the
 // terminal the app was started from (Task 202).
@@ -231,6 +231,16 @@ fn default_settings_path() -> Option<PathBuf> {
 /// starts the default profile, so such an instance never changes it (Task 208).
 static CUSTOM_PROFILE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// True when `--data-dir` names a folder other than the default data folder: a custom profile
+/// (settings in that folder, its own instance scope, no start-at-login changes). A `--data-dir`
+/// equal to the default folder is the default profile (D-056).
+fn is_custom_profile(
+    data_dir: Option<&std::path::Path>,
+    default: Option<&std::path::Path>,
+) -> bool {
+    single_instance::scope_for(data_dir, default).is_some()
+}
+
 fn custom_profile() -> bool {
     CUSTOM_PROFILE.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -270,7 +280,10 @@ fn main() -> ExitCode {
         eprintln!("{}", t(lang, Msg::CliUsage));
         return ExitCode::from(2);
     };
-    CUSTOM_PROFILE.store(cli.data_dir.is_some(), std::sync::atomic::Ordering::Relaxed);
+    CUSTOM_PROFILE.store(
+        is_custom_profile(cli.data_dir.as_deref(), default_data_dir().as_deref()),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     if cli.mode == Mode::Help {
         println!("{}", t(lang, Msg::CliUsage));
         return ExitCode::SUCCESS;
@@ -347,8 +360,9 @@ fn run_app(cli: &Cli, lang: Lang) -> ExitCode {
             ("renderer", Val::Name(renderer.name)),
         ],
     );
-    // `--data-dir` keeps everything (settings and data) in that folder, for tests.
-    let settings_path = if cli.data_dir.is_some() {
+    // A custom `--data-dir` keeps everything (settings and data) in that folder, for tests;
+    // the default folder named with `--data-dir` is the default profile (D-056).
+    let settings_path = if custom_profile() {
         Some(data_dir.join("settings.json"))
     } else {
         default_settings_path()
@@ -433,8 +447,9 @@ fn run_headless(cli: &Cli, lang: Lang) -> ExitCode {
     };
 
     let (ev_tx, ev_rx) = mpsc::channel::<AppEvent>();
-    // `--data-dir` keeps everything (settings and data) in that folder, for tests.
-    let settings_path = if cli.data_dir.is_some() {
+    // A custom `--data-dir` keeps everything (settings and data) in that folder, for tests;
+    // the default folder named with `--data-dir` is the default profile (D-056).
+    let settings_path = if custom_profile() {
         Some(data_dir.join("settings.json"))
     } else {
         default_settings_path()
@@ -628,6 +643,33 @@ mod tests {
         assert!(parse_args(&a(&["--quit", "--help"])).is_err());
         // The same flag twice is harmless.
         assert!(parse_args(&a(&["--toggle", "--toggle"])).is_ok());
+    }
+
+    #[test]
+    fn a_data_dir_equal_to_the_default_is_the_default_profile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let default = tmp.path().join("DarkClipboard");
+        std::fs::create_dir_all(&default).unwrap();
+        let other = tmp.path().join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        // No `--data-dir`: the default profile.
+        assert!(!is_custom_profile(None, Some(&default)));
+        // The default folder itself, also written another way.
+        assert!(!is_custom_profile(Some(&default), Some(&default)));
+        let dotted = tmp.path().join("other").join("..").join("DarkClipboard");
+        assert!(!is_custom_profile(Some(&dotted), Some(&default)));
+        if cfg!(windows) {
+            let upper = std::path::PathBuf::from(default.to_string_lossy().to_uppercase());
+            assert!(!is_custom_profile(Some(&upper), Some(&default)));
+        }
+        // Another folder, or no known default: a custom profile.
+        assert!(is_custom_profile(Some(&other), Some(&default)));
+        assert!(is_custom_profile(Some(&default), None));
+        // A folder that does not exist yet is compared as given.
+        assert!(is_custom_profile(
+            Some(&tmp.path().join("new")),
+            Some(&default)
+        ));
     }
 
     #[test]

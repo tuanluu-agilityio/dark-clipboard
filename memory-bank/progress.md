@@ -1,6 +1,6 @@
 # Progress and token ledger
 
-Updated: 2026-11-23 (Phase 2 complete)
+Updated: 2026-11-23 (Phase 3 complete)
 
 Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers subagents report when they finish. Orchestrator tokens cannot be measured per task.
 
@@ -63,13 +63,15 @@ Phase 2 complete 2026-11-23 (Bitwarden/1Password rows n/a on the test machine; s
 | 209 ADR-0001 revisit | task/209-adr0001-revisit | platform-verifier | sonnet | done (NFR-05/NFR-04 not met with the GPU renderer → Task 212) | 64,210 | 72,411 (reviewer opus: CR (invalid runs: welcome visible, BOM settings) → fixed) | 34,759 | 171,380 |
 | 212 Software renderer, BOM, timing | task/212-renderer-memory | specialist | opus | done (NFR-04, NFR-05 met on Windows) | 179,641 | 65,427 (reviewer opus: APPROVED, wording fixed) | 5,255 | 250,323 |
 | 210 Alpha docs, artifact, phase review | task/210-alpha-docs | scaffolder (sonnet) + specialist (opus) | sonnet + opus | done: docs + artifact; phase review CHANGES REQUIRED (1 blocking: popup shows stale rows after hide) → Task 213 | 93,903 | 220,611 (phase review, specialist opus) | | 314,514 |
-| 213 Phase 3 review fixes | task/213-phase3-fixes | specialist | opus | next | | | | |
+| 213 Phase 3 review fixes | task/213-phase3-fixes | specialist | opus | done | 220,569 | 102,230 (security-reviewer opus: APPROVED; login re-enable paths fixed) | 16,126 | 338,925 |
+
+Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; see activeContext).
 
 ## Totals by model
 
 | Model | Tokens |
 |---|---|
-| opus | 7,914,449 |
+| opus | 8,253,374 |
 | sonnet | 3,801,785 |
 | haiku | 0 |
-| **Total** | **11,716,234** (subagents only; orchestrator not measured) |
+| **Total** | **12,055,159** (subagents only; orchestrator not measured) |

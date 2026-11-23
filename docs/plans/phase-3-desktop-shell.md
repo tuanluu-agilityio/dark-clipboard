@@ -34,3 +34,10 @@
 ## Execution order and owner-prompt items (D-044)
 
 Packages written 2026-11-23. Order: 200 → 201 → 202 → 203 → 204 → 205 → 206 → 211 → 207 → 208 → 209 → 210. Folded from the owner's prompts (D-036): single instance + IPC base (201), capture-state indicator (202), shortcut conflict explained (203), number shortcuts, filters, highlight, debounce, states, demo seeding (204), restore vs opt-in auto-paste with never-blind paste (205), history window (211), first-run consent with capture off until Start (208). Favorites stay in Phase 5. Dark theme only (D-037). First owner demo after 204.
+
+## Phase exit (2026-11-23)
+
+- [x] Tasks 200–213 merged with independent review; CI green on Windows, macOS, Linux; `check.ps1` ALL CHECKS PASSED.
+- [x] NFR-01 (popup p95 18.4 ms via IPC), NFR-04 (0 % idle CPU), NFR-05 (6.8–7.1 MiB hidden, 11.7 MiB after use) met on Windows with the software renderer (Task 212).
+- [x] ADR-0001 revisit check (Task 209): no trigger hit by measurement; IME and screen reader are owner rows.
+- [ ] Owner manual rows (tray, shortcut, popup, paste, history, settings, welcome, start at login, DPI, IME, Narrator): **untested**.

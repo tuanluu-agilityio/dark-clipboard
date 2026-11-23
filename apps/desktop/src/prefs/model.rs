@@ -143,6 +143,31 @@ pub fn clean_app_id(input: &str) -> Result<String, Msg> {
     Ok(id.to_string())
 }
 
+/// An excluded app's name and program name for display: direction controls are replaced by
+/// U+FFFD (D-051), so an entry from a hand-edited settings file cannot read differently than it
+/// is. An entry without a name has an empty name.
+pub fn app_display(app: &ExcludedApp) -> (String, String) {
+    let name = app.name.as_deref().map(super::sys::display_name);
+    (
+        name.unwrap_or_default(),
+        super::sys::display_name(&app.app_id),
+    )
+}
+
+/// The confirmation asked before a built-in exclusion goes. Darkshot marks its own copies, so
+/// removing its entry does not make them stored; the password managers' entries are what keeps
+/// their copies out.
+pub fn remove_builtin_msg(app: &ExcludedApp) -> Msg {
+    if app.platform == Platform::Windows && app.app_id.eq_ignore_ascii_case(DARKSHOT_APP_ID) {
+        Msg::SettingsConfirmRemoveDarkshot
+    } else {
+        Msg::SettingsConfirmRemoveBuiltin
+    }
+}
+
+/// The program name of the built-in Darkshot entry (Windows, D-053).
+const DARKSHOT_APP_ID: &str = "darkshot.exe";
+
 /// The platform the excluded-app entries are written for.
 pub fn current_platform() -> Platform {
     if cfg!(windows) {
@@ -160,6 +185,10 @@ pub struct Draft {
     pub shortcut: String,
     pub language: Lang,
     pub launch_at_login: bool,
+    /// What the start-at-login toggle showed when the form was filled. Only a toggle the user
+    /// changed in this form is written; otherwise the worker's current value stays (the welcome
+    /// may have changed it while the form was open, D-056).
+    pub launch_at_login_opened: bool,
     pub popup_position: PopupPosition,
     pub close_on_focus_loss: bool,
     pub enter_pastes: bool,
@@ -197,6 +226,7 @@ impl Draft {
             shortcut: s.shortcuts.toggle_popup.clone(),
             language: s.ui.language,
             launch_at_login: s.startup.launch_at_login,
+            launch_at_login_opened: s.startup.launch_at_login,
             popup_position: s.ui.popup_position,
             close_on_focus_loss: s.ui.close_on_focus_loss,
             enter_pastes: s.ui.enter_pastes,
@@ -255,7 +285,11 @@ impl Draft {
         s.ui.popup_position = self.popup_position;
         s.ui.close_on_focus_loss = self.close_on_focus_loss;
         s.ui.enter_pastes = self.enter_pastes;
-        s.startup.launch_at_login = self.launch_at_login;
+        // Only a toggle the user changed here is written; otherwise the worker's value stays
+        // (the welcome may have answered while the form was open, D-056).
+        if self.launch_at_login != self.launch_at_login_opened {
+            s.startup.launch_at_login = self.launch_at_login;
+        }
         s.privacy.sensitive_handling = self.sensitive;
         s.privacy.capture_kinds = kinds;
         s.privacy.excluded_apps = self.apps.items().to_vec();
@@ -324,6 +358,18 @@ pub fn login_view(stored: bool, live: Option<bool>) -> (bool, bool) {
     match live {
         Some(l) => (l, l != stored),
         None => (stored, false),
+    }
+}
+
+/// The toggle after the live state was read (opening the window, and again after Revert):
+/// `shown` is what the toggle shows now. Returns the toggle and whether stored and live differ.
+/// A toggle the user already changed (it no longer shows the stored choice) is kept.
+pub fn toggle_after_live_read(shown: bool, stored: bool, live: Option<bool>) -> (bool, bool) {
+    let (checked, drift) = login_view(stored, live);
+    if shown == stored {
+        (checked, drift)
+    } else {
+        (shown, drift)
     }
 }
 

@@ -337,6 +337,54 @@ fn duplicates_use_the_same_unicode_lowercase_as_policy_matching() {
 }
 
 #[test]
+fn excluded_apps_are_shown_without_direction_controls() {
+    // A hand-edited settings file can hold anything (F-18).
+    let app = darkclip_core::ExcludedApp {
+        app_id: "invoice\u{202E}fdp.exe".into(),
+        platform: Platform::Windows,
+        name: Some("Pay\u{2066}roll\u{200F}".into()),
+        builtin: false,
+    };
+    let (name, id) = app_display(&app);
+    assert_eq!(id, "invoice\u{FFFD}fdp.exe");
+    assert_eq!(name, "Pay\u{FFFD}roll\u{FFFD}");
+    let plain = darkclip_core::ExcludedApp {
+        name: None,
+        app_id: "keepassxc.exe".into(),
+        ..app
+    };
+    assert_eq!(app_display(&plain), (String::new(), "keepassxc.exe".into()));
+}
+
+#[test]
+fn the_darkshot_entry_has_its_own_removal_question() {
+    let builtins = defaults().privacy.excluded_apps;
+    let find = |id: &str| builtins.iter().find(|a| a.app_id == id).unwrap().clone();
+    assert_eq!(
+        remove_builtin_msg(&find("darkshot.exe")),
+        Msg::SettingsConfirmRemoveDarkshot
+    );
+    for id in ["keepassxc.exe", "1password.exe", "bitwarden.exe"] {
+        assert_eq!(
+            remove_builtin_msg(&find(id)),
+            Msg::SettingsConfirmRemoveBuiltin
+        );
+    }
+    for lang in [Lang::En, Lang::Vi] {
+        let t = |m| darkclip_core::i18n::t(lang, m);
+        assert_ne!(
+            t(Msg::SettingsConfirmRemoveDarkshot),
+            t(Msg::SettingsConfirmRemoveBuiltin)
+        );
+        assert!(t(Msg::SettingsConfirmRemoveDarkshot).contains("Darkshot"));
+    }
+    // The Darkshot text never says its copies will be stored again.
+    let en = darkclip_core::i18n::t(Lang::En, Msg::SettingsConfirmRemoveDarkshot);
+    assert!(!en.contains("stored again"));
+    assert!(en.contains("excluded"));
+}
+
+#[test]
 fn direction_controls_are_refused_in_program_names() {
     let mut list = AppList::default();
     assert_eq!(
@@ -523,6 +571,86 @@ mod login {
         let (r, _) = save(false, &d, &base, Some(&reg), false);
         assert!(matches!(r, SaveResult::Failed));
         assert_eq!(*reg.0.lock().unwrap(), Some(true));
+    }
+
+    #[test]
+    fn a_stale_form_keeps_the_welcomes_start_at_login_answer() {
+        use crate::prefs::welcome::{run_welcome, WelcomeResult};
+        let fake = FakeAutostart::new(false, false);
+        let opened_with = defaults();
+        // The settings form opens with start at login off.
+        let mut d = Draft::from_settings(&opened_with);
+        assert!(!d.launch_at_login);
+        // While it is open, the welcome's Start turns start at login on.
+        let mut after_welcome = None;
+        let r = run_welcome(false, true, true, &opened_with, Some(&fake), |s| {
+            after_welcome = Some(s);
+            true
+        });
+        assert_eq!(r, WelcomeResult::Done);
+        let worker = after_welcome.unwrap();
+        assert!(worker.startup.launch_at_login && fake.enabled());
+        // The form is saved with only the language changed.
+        d.language = Lang::Vi;
+        let (r, w) = save(false, &d, &worker, Some(&fake), true);
+        assert!(matches!(r, SaveResult::Saved));
+        let w = w.unwrap();
+        assert!(w.startup.launch_at_login, "login stays on");
+        assert_eq!(w.ui.language, Lang::Vi);
+        assert!(fake.enabled(), "the registration stays");
+    }
+
+    #[test]
+    fn a_toggle_changed_in_the_form_is_written_over_the_workers_value() {
+        // Opened off, the user turns it on: on is written.
+        let base = defaults();
+        let mut d = Draft::from_settings(&base);
+        d.launch_at_login = true;
+        assert!(d.apply_to(&base).unwrap().startup.launch_at_login);
+        // Opened off, the welcome turned it on meanwhile, the user turns it on and off again:
+        // the toggle shows what it was opened with, so the worker's "on" stays.
+        let mut on = defaults();
+        on.startup.launch_at_login = true;
+        let d = Draft::from_settings(&base);
+        assert!(d.apply_to(&on).unwrap().startup.launch_at_login);
+        // Opened on, the user turns it off: off is written.
+        let fake = FakeAutostart::new(true, false);
+        let mut d = Draft::from_settings(&on);
+        d.launch_at_login = false;
+        let (r, w) = save(false, &d, &on, Some(&fake), true);
+        assert!(matches!(r, SaveResult::Saved));
+        assert!(!w.unwrap().startup.launch_at_login);
+        assert!(!fake.enabled());
+    }
+
+    #[test]
+    fn revert_then_save_never_re_enables_a_disabled_entry() {
+        // Stored "on", entry disabled in Task Manager. Revert refills the form from the stored
+        // choice, then the live state is read again; Save without touching the toggle.
+        let fake = FakeAutostart::new(false, false);
+        let mut base = defaults();
+        base.startup.launch_at_login = true;
+        let mut d = Draft::from_settings(&base);
+        let (toggle, drift) = toggle_after_live_read(d.launch_at_login, true, Some(false));
+        assert!(drift);
+        d.launch_at_login = toggle;
+        let (r, w) = save(false, &d, &base, Some(&fake), true);
+        assert!(matches!(r, SaveResult::Saved));
+        assert!(
+            !fake.enabled(),
+            "never re-enabled without an explicit change"
+        );
+        assert!(!w.unwrap().startup.launch_at_login);
+        // A toggle the user already changed is kept; an unreadable registry changes nothing.
+        assert_eq!(
+            toggle_after_live_read(false, true, Some(true)),
+            (false, false)
+        );
+        assert_eq!(toggle_after_live_read(true, true, None), (true, false));
+        assert_eq!(
+            toggle_after_live_read(true, true, Some(true)),
+            (true, false)
+        );
     }
 
     #[test]

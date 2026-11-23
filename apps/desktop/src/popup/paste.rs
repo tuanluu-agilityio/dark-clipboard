@@ -18,8 +18,8 @@ pub enum AfterCopy {
     Paste,
 }
 
-/// Where the copy came from: Enter (or a double-click, which activates like Enter), or a
-/// button / Alt+1..9 (those always only restore).
+/// Where the copy came from: the Enter key, or a button / Alt+1..9 / a mouse double-click
+/// (those always only restore, D-056).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Via {
     Enter,
@@ -39,6 +39,12 @@ pub fn previous_after_focus_loss(
     } else {
         None
     }
+}
+
+/// What a row activation (mouse double-click) copies, and as what: the original, restore only.
+/// It never pastes, whatever "Enter also pastes" says (D-050, D-056, T-19).
+pub fn row_activation() -> (CopyKind, Via) {
+    (CopyKind::Original, Via::Other)
 }
 
 pub fn after_copy(kind: CopyKind, via: Via, enter_pastes: bool, can_paste: bool) -> AfterCopy {
@@ -127,6 +133,19 @@ mod tests {
             after_copy(CopyKind::Plain, Via::Enter, true, true),
             AfterCopy::Restore
         );
+    }
+
+    #[test]
+    fn a_double_click_never_pastes() {
+        let (kind, via) = row_activation();
+        assert_eq!(kind, CopyKind::Original);
+        assert_eq!(via, Via::Other);
+        for enter_pastes in [false, true] {
+            assert_eq!(
+                after_copy(kind, via, enter_pastes, true),
+                AfterCopy::Restore
+            );
+        }
     }
 
     #[test]

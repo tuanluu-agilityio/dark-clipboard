@@ -343,6 +343,10 @@ messages! {
         "Remove this built-in exclusion? Copies from this password manager will be stored again.",
         "Gỡ loại trừ có sẵn này? Nội dung sao chép từ trình quản lý mật khẩu này sẽ được lưu lại."
     ),
+    SettingsConfirmRemoveDarkshot => (
+        "Remove this built-in exclusion? Darkshot marks its own copies, so they stay excluded; this entry is only an extra safeguard.",
+        "Gỡ loại trừ có sẵn này? Darkshot tự đánh dấu nội dung nó sao chép nên chúng vẫn được loại trừ; mục này chỉ là lớp bảo vệ thêm."
+    ),
     SettingsErrNumber => ("Enter a whole number", "Nhập một số nguyên"),
     SettingsErrRange => (
         "The number is outside the allowed range",
