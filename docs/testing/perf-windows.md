@@ -42,6 +42,8 @@ Date: 2026-11-23. Same machine (Windows 11 Home Single Language 10.0.26300, the 
 
 What is measured: from the moment the running app receives the show request to the first frame rendered after `show()` (Slint rendering notifier, `AfterRendering`). The app logs it content-free as `perf what=popup_shown src=<ipc|hotkey|tray> us=<microseconds>`. For `src=ipc` the clock starts when the IPC thread receives `--toggle`, so the start-up of the `--toggle` client process is not included. No key or mouse input was simulated and the clipboard was never written. Each run used a fresh temp data dir (deleted afterwards) and `--no-global-shortcut`.
 
+(Changed by Task 212, 2026-11-23: the timing now ends at the first winit `RedrawRequested` after the show request, taken on the next event-loop turn, because the software renderer that became the default has no rendering notifier. Same log line; see the Task 212 section.)
+
 Command: `powershell -File scripts/measure-popup.ps1 -Trials 50 [-SeedClips 10000]` (50 × show + hide through `--toggle`, 400 ms shown, 250 ms hidden; the script prints every value and p50/p95 by nearest rank).
 
 | Run | History | min | p50 | p95 | max |
@@ -233,3 +235,59 @@ Pass: 2 to 5 give the expected text; the candidate window appears at the text bo
 | 4 | Screen-reader access to the clip list not achievable | Not decided: accessibility properties are declared in source (list, list-item, count); Narrator itself not run; owner manual row above | source inventory only |
 
 No trigger is hit by a measurement. Separately, and not an ADR trigger: NFR-05 is not met (52 MiB hidden, 72 MiB after use, target 40 MiB) and NFR-04 is not met as measured (0.2 % of one core in A2). Both are linked to the default GPU renderer (E5). These are for the orchestrator to weigh; the ADR was not changed.
+
+# Software renderer by default (Task 212)
+
+Date: 2026-11-23. Same machine (Windows 11 Home Single Language 10.0.26300, the owner's work machine, in use). Branch `task/212-renderer-memory` (uncommitted working tree at the time of the runs, the code as committed), Slint 1.19.0. Binary: `cargo build --release -p dark-clipboard`, 11,061,248 bytes (Task 209: 11,058,176; no Cargo feature changed: Slint's default features already contain `renderer-software` and `renderer-femtovg`, and the fallback needs the latter).
+
+What changed: the app selects Slint's winit backend with the software renderer before any window exists (`slint::BackendSelector`), unless `SLINT_BACKEND` is set; the start line records `renderer=software|default|env`. The NFR-01 timing no longer uses Slint's rendering notifier (the software renderer has none): it is the first winit `RedrawRequested` of the popup window after the show request, taken on the next event-loop turn, so it includes that frame being drawn and presented. Same log line: `perf what=popup_shown src=<ipc|hotkey|tray> us=<microseconds>`.
+
+Method (GC-19): every run used a fresh temp `--data-dir` with a `settings.json` written by the test without a BOM (`[IO.File]::WriteAllText` with `UTF8Encoding($false)`; first bytes `123,13,10`), containing `settings_version: 1`, `onboarding_done: true` and the `privacy-policy.default.json` example with `capture_enabled: false` (so the real clipboard was not even read), then `--seed-demo-clips 10000`, `--no-global-shortcut` and `--exit-after-ms`. The popup was shown only through `--toggle` over IPC (show 400 ms, hide 250 ms). The app's own window list (class, visibility, size; no titles) confirmed no welcome window. Each run quit with `--quit` (exit code 0), had 0 `settings.json.corrupt*` files, and its dir was deleted and the deletion confirmed. No screenshot, no input simulation, the clipboard was never written, no clip content was read. The driver was a throwaway PowerShell script; the latency values were parsed with `scripts/measure-popup.ps1 -LogPath <log> -Source ipc` (the script's own driving mode cannot pre-write `settings.json`, so it would run with the welcome open).
+
+## R1: 5 minutes idle, popup never shown, then 20 shows (software renderer)
+
+Start line: `start version=0.0.1 renderer=software`; no `renderer_fallback`.
+
+| Sample | t (s) | CPU time (s) | Private bytes | Working set | Threads |
+|---|---|---|---|---|---|
+| idle | 9 | 0.65625 | 7,401,472 | 26,398,720 | 20 |
+| idle | 60 | 0.65625 | 7,241,728 | 26,324,992 | 15 |
+| idle | 120 | 0.65625 | 7,241,728 | 26,324,992 | 15 |
+| idle | 180 | 0.65625 | 7,114,752 | 26,259,456 | 11 |
+| idle | 240 | 0.65625 | 7,114,752 | 26,259,456 | 11 |
+| idle | 300 | 0.65625 | 7,389,184 | 26,656,768 | 13 |
+| popup shown (20th show) | 354 | 0.875 | 12,234,752 | 33,570,816 | 14 |
+| hidden, 5 s after 20 shows | 360 | 0.875 | 12,234,752 | 33,574,912 | 14 |
+
+    windows at t=9:   class=Window Class visible=False rect=420x560 | class=tray_icon_app visible=False | class=Winit Thread Event Target visible=True rect=15x15 | class=IME visible=False
+    windows at show 20: class=Window Class visible=True rect=420x560 | ... (same, plus a hidden MSCTFIME UI)
+
+- Idle CPU t = 9 to 300 s: 0 s over 291 s (the process CPU time did not change). NFR-04 met.
+- Private bytes hidden: 7.11 to 7.40 MB = 6.8 to 7.1 MiB. After 20 shows: 12.23 MB = 11.7 MiB, the same shown and hidden. NFR-05 (<= 40 MiB) met with or without use. 20 shows do not prove there is no leak over thousands of shows.
+
+## R2: popup latency, 50 shows (software renderer)
+
+Start line `renderer=software`; 50 `perf what=popup_shown` events for 50 shows.
+
+    raw ms (50 trials, src=ipc): 36.4, 11.7, 11.9, 13.3, 8.9, 12.1, 8.4, 18.4, 11.4, 8.4, 17.4, 13.6, 10.8, 8.3, 13.0, 8.2, 11.2, 26.2, 13.4, 13.6, 14.0, 15.8, 12.0, 12.7, 6.1, 12.7, 11.0, 15.3, 9.6, 16.0, 12.6, 13.2, 14.0, 15.4, 11.3, 9.8, 14.6, 13.5, 13.4, 8.0, 10.1, 12.6, 11.0, 11.8, 13.0, 11.5, 9.1, 15.7, 8.0, 9.5
+    min 6.1 ms  p50 12.1 ms  p95 18.4 ms  max 36.4 ms
+
+The first value (36.4 ms) is the first show after start (the OS window is created then); it is inside the 50. NFR-01 (<= 100 ms p95) met. Process private bytes in this run: 7,294,976 at t=8, 12,353,536 after 50 shows.
+
+## R3: `SLINT_BACKEND=winit-femtovg` set by the user (override check)
+
+Start line: `start version=0.0.1 renderer=env`. Private bytes 54,444,032 (51.9 MiB) at t=8 and 76,726,272 (73.2 MiB) hidden after 20 shows, the Task 209 GPU figures: the variable wins over the app's choice. 20 `popup_shown` events for 20 shows (the new timing also works with the GPU renderer): min 7.0, p50 11.1, p95 28.1, max 72.3 ms (the first show, 72.3 ms, includes creating the GPU surface).
+
+    raw ms (20 trials, src=ipc): 72.3, 18.5, 11.1, 11.5, 9.1, 8.4, 14.7, 23.1, 28.1, 8.8, 8.2, 20.3, 8.4, 7.0, 19.5, 15.0, 10.7, 14.2, 11.0, 10.2
+
+## Search timing in the popup (`perf what=search_done`)
+
+New content-free event `perf what=search_done ms=<n>`: from the moment the 60 ms typing debounce runs the search of a typed query to its results being applied to the list (rows rebuilt, state synced); no query, no counts. It is not measured here: the IPC has only toggle, settings and quit, so nothing can type a query without simulating input (GC-19). 0 events in R1 to R3, as expected. Owner manual row below.
+
+## Not covered (owner manual rows)
+
+1. Look with the software renderer, at 100 %, 150 % and 200 % display scaling (Settings, System, Display, Scale; sign out if Windows asks): open the popup (Ctrl+Shift+V), the history window (tray, History...), Settings (tray, Settings...) and the welcome (tray, Start capturing... while capture is off). Record for each: is text crisp (not blurry or doubled), are icons and chips drawn, are rounded corners and the selection highlight right. Then seed a test profile (`dark-clipboard --seed-demo-clips 10000 --data-dir C:\temp\dc-test`, then `dark-clipboard --data-dir C:\temp\dc-test`), open the popup and the history, and scroll the 10,000 clips with the mouse wheel and with Page Down held: record any tearing, flicker or stutter. Pass: text as sharp as other apps at the same scale, no tearing. Compare once with `set SLINT_BACKEND=winit-femtovg` before starting, if something looks wrong.
+2. Search timing: with the test profile above running, open the popup and type 20 different queries (one word each, pausing after each until the list updates), quit with `dark-clipboard --quit --data-dir C:\temp\dc-test`, then run `Select-String -Path C:\temp\dc-test\logs\dark-clipboard.log -Pattern 'perf what=search_done'` and write down the 20 values. Budget: NFR-02 <= 30 ms p95 per keystroke (the 60 ms debounce is outside this number). Delete `C:\temp\dc-test` afterwards.
+3. The real-shortcut NFR-01 row (Task 204 section) and the IME and Narrator rows (Task 209 section) still apply, now with the software renderer.
+
+Method notes: `--quit` does not stop a `--headless` process (headless has no instance pipe, so there is nothing to receive the command); stop it with Ctrl+C or end the process. A measurement script that starts `--headless` must kill it itself.
