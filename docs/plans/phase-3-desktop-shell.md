@@ -28,6 +28,7 @@
 | 207 | Settings window: general (shortcut, language, autostart, popup position), privacy (pause, private, excluded apps with "pick running app", sensitive handling, capture kinds; OS markers shown as locked "always on"), history (retention, clear, storage stats), about (capabilities report, versions, licences) | 202 | builder / sonnet | security-reviewer / opus (privacy UI copy) | Medium | Saves atomically; invalid input rejected with message | Unit tests for settings view model |
 | 208 | Autostart (`HKCU\...\Run`), first-run welcome (J6) | 207 | builder / sonnet | reviewer / sonnet | Low | Toggle works; welcome shows once | Manual |
 | 209 | ADR-0001 revisit check: idle CPU 10 min, memory hidden/visible, IME, screen reader (Narrator) smoke | 204–208 | platform-verifier / sonnet | reviewer / opus | Medium | Numbers recorded; any trigger hit → stop and escalate to owner | Measurement |
+| 212 | Software renderer default on Windows, settings BOM fix, UI timing events (D-055) | 209 | specialist / opus | reviewer / opus | Medium | NFR-05/NFR-04 re-measured; BOM file loads | Unit + measurement |
 | 210 | README (Windows alpha), CHANGELOG, user docs page, manual checklist; phase review | all | scaffolder / sonnet, reviewer / opus | — | — | 0.1.0-alpha build artifact with SHA-256 | `check.ps1` |
 
 ## Execution order and owner-prompt items (D-044)
