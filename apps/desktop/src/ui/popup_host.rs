@@ -22,8 +22,9 @@
 //! Logging: only the content-free `perf` and `paste` events (timings, a source name, a coarse
 //! outcome). `perf what=popup_shown` (NFR-01) runs from the show request to the first frame
 //! drawn after it; `perf what=search_done` (Task 212) from the debounced search of a typed
-//! query to its results being applied to the list. Neither carries a query or a count. Queries, previews, source names and window titles are never logged or formatted
-//! (GC-06, SR-11).
+//! query to its results being applied to the list. Neither carries a query or a count.
+//! Queries, previews, source names and window titles are never logged or formatted (GC-06,
+//! SR-11).
 
 use super::common::{self, clip_row, Px};
 use super::{Chip, ClipRow, MainWindow, Poster, Strings};
@@ -969,7 +970,9 @@ pub fn hide(w: &MainWindow) {
 ///   the popup visible. Slint draws it (render and present, for the software and the GPU
 ///   renderer alike) right after this filter returns; the timing is taken on the next loop
 ///   turn, so it includes that frame. This replaces Slint's rendering notifier, which the
-///   software renderer does not provide (Task 212).
+///   software renderer does not provide (Task 212). The first `RedrawRequested` after a show
+///   is counted even if Slint's `draw()` then skips it (window occluded or minimised), so in
+///   that rare case the value is the time to that event, not to a frame on screen.
 ///
 /// With a non-winit backend (a user's `SLINT_BACKEND=qt`) this does nothing.
 pub fn watch_window_events(w: &MainWindow) {

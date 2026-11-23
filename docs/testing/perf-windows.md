@@ -238,7 +238,7 @@ No trigger is hit by a measurement. Separately, and not an ADR trigger: NFR-05 i
 
 # Software renderer by default (Task 212)
 
-Date: 2026-11-23. Same machine (Windows 11 Home Single Language 10.0.26300, the owner's work machine, in use). Branch `task/212-renderer-memory` (uncommitted working tree at the time of the runs, the code as committed), Slint 1.19.0. Binary: `cargo build --release -p dark-clipboard`, 11,061,248 bytes (Task 209: 11,058,176; no Cargo feature changed: Slint's default features already contain `renderer-software` and `renderer-femtovg`, and the fallback needs the latter).
+Date: 2026-11-23. Same machine (Windows 11 Home Single Language 10.0.26300, the owner's work machine, in use). Branch `task/212-renderer-memory` (uncommitted working tree at the time of the runs, the code as committed), Slint 1.19.0. Binary: `cargo build --release -p dark-clipboard`, 11,061,248 bytes (Task 209: 11,058,176; no Cargo feature changed: Slint's default features already contain `renderer-software` and `renderer-femtovg`, and the latter stays for a user's `SLINT_BACKEND=winit-femtovg` override and Slint's own internal fallback).
 
 What changed: the app selects Slint's winit backend with the software renderer before any window exists (`slint::BackendSelector`), unless `SLINT_BACKEND` is set; the start line records `renderer=software|default|env`. The NFR-01 timing no longer uses Slint's rendering notifier (the software renderer has none): it is the first winit `RedrawRequested` of the popup window after the show request, taken on the next event-loop turn, so it includes that frame being drawn and presented. Same log line: `perf what=popup_shown src=<ipc|hotkey|tray> us=<microseconds>`.
 

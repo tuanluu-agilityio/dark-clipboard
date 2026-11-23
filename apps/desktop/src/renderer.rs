@@ -3,9 +3,13 @@
 //! On Windows the app asks for Slint's winit backend with the software renderer: Task 209
 //! measured 6.9 MiB private bytes hidden and no idle CPU, against 52 MiB and ~0.2 % of a core
 //! for the default GPU (FemtoVG/OpenGL) renderer. A `SLINT_BACKEND` set by the user always wins
-//! (the app then selects nothing and Slint reads the variable itself). When the software
-//! renderer cannot be selected the app keeps Slint's default backend and logs
-//! `renderer_fallback`. The choice is made once, before any window exists.
+//! (the app then selects nothing and Slint reads the variable itself). The choice is made
+//! once, before any window exists. `renderer=software` in the start log means the software
+//! renderer was requested and the selection call succeeded. If the selection fails the app
+//! logs `renderer_fallback`, but on Windows that failure comes from creating the winit event
+//! loop (the renderer name is not checked there), and winit 0.30 refuses a second event loop,
+//! so Slint may then fail to start as well. A software renderer failure at window creation is
+//! handled inside Slint, not here.
 //!
 //! The winit window accessors used by the popup (`slint::winit_030::WinitWindowAccessor`:
 //! focus-loss events and bring-to-front) work with every renderer of the winit backend: they
@@ -61,8 +65,9 @@ pub fn outcome(plan: Plan, software_selected: bool) -> Chosen {
     Chosen { name, fell_back }
 }
 
-/// Selects the backend for this process. Call once, before the first Slint window or timer;
-/// a failed selection leaves Slint free to pick its default when the first window is created.
+/// Selects the backend for this process. Call once, before the first Slint window or timer.
+/// A failed selection is reported (`fell_back`); Slint then tries its default backend when the
+/// first window is created, which may fail too (see the module doc).
 pub fn select() -> Chosen {
     let env = std::env::var_os("SLINT_BACKEND");
     let p = plan(env.as_deref(), cfg!(windows));
