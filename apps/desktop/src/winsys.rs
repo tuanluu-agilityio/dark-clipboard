@@ -514,19 +514,131 @@ pub fn message_box(title: &str, text: &str, yes_no: bool) -> bool {
     unsafe { MessageBoxW(None, &text, &title, style) == IDYES }
 }
 
-/// The owner of `path` as a full SID string (`S-1-...`, never an SDDL alias). Stub.
+/// The owner of `path` as a full SID string (`S-1-...`, from `ConvertSidToStringSidW`, never
+/// an SDDL alias such as `BA` or `LA`). `None` when it cannot be read.
 pub fn owner_sid(path: &std::path::Path) -> Option<String> {
-    let _ = path;
-    None
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::Foundation::{LocalFree, ERROR_SUCCESS, HLOCAL};
+    use windows::Win32::Security::Authorization::{
+        ConvertSidToStringSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT,
+    };
+    use windows::Win32::Security::{OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID};
+    let wide = wide_path(path);
+    let mut owner = PSID::default();
+    let mut sd = PSECURITY_DESCRIPTOR::default();
+    // SAFETY: `wide` is NUL-terminated and outlives the call; `owner` receives a pointer into
+    // `sd`, which the system allocates and which is released with `LocalFree` below.
+    let got = unsafe {
+        GetNamedSecurityInfoW(
+            PCWSTR(wide.as_ptr()),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            Some(&mut owner),
+            None,
+            None,
+            None,
+            &mut sd,
+        )
+    };
+    if got != ERROR_SUCCESS || sd.0.is_null() {
+        return None;
+    }
+    let mut text = PWSTR::null();
+    // SAFETY: `owner` points into the live `sd`; `text` is allocated by the system, copied and
+    // released with `LocalFree`; `sd` is released last, after `owner` is no longer used.
+    unsafe {
+        let out = if !owner.0.is_null() && ConvertSidToStringSidW(owner, &mut text).is_ok() {
+            text.to_string().ok()
+        } else {
+            None
+        };
+        if !text.is_null() {
+            let _ = LocalFree(Some(HLOCAL(text.0.cast())));
+        }
+        let _ = LocalFree(Some(HLOCAL(sd.0)));
+        out
+    }
 }
 
-/// How SDDL text spells `sid` (an alias such as `LA` for well-known accounts). Stub.
+/// How SDDL text spells `sid`: a round trip of `D:(A;;FA;;;<sid>)` through
+/// `ConvertStringSecurityDescriptorToSecurityDescriptorW` and back, so a well-known account
+/// comes back as its alias (for example `LA` for the built-in Administrator).
 pub fn sddl_spelling_of_sid(sid: &str) -> Option<String> {
-    let _ = sid;
-    None
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Authorization::{
+        ConvertSecurityDescriptorToStringSecurityDescriptorW,
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows::Win32::Security::{DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR};
+    let input: Vec<u16> = format!("D:(A;;FA;;;{sid})")
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let mut sd = PSECURITY_DESCRIPTOR::default();
+    // SAFETY: `input` is NUL-terminated and outlives the call; `sd` is allocated by the system
+    // and released with `LocalFree` below.
+    unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            PCWSTR(input.as_ptr()),
+            SDDL_REVISION_1,
+            &mut sd,
+            None,
+        )
+    }
+    .ok()?;
+    let mut text = PWSTR::null();
+    // SAFETY: `sd` is the valid descriptor from above; `text` is allocated by the system,
+    // copied and released with `LocalFree`; `sd` is released afterwards.
+    let out = unsafe {
+        let converted = ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            sd,
+            SDDL_REVISION_1,
+            DACL_SECURITY_INFORMATION,
+            &mut text,
+            None,
+        );
+        let out = if converted.is_ok() && !text.is_null() {
+            text.to_string().ok()
+        } else {
+            None
+        };
+        if !text.is_null() {
+            let _ = LocalFree(Some(HLOCAL(text.0.cast())));
+        }
+        let _ = LocalFree(Some(HLOCAL(sd.0)));
+        out
+    }?;
+    // `D:(A;;FA;;;<who>)` -> `<who>`
+    let who = out.rsplit(';').next()?.strip_suffix(')')?;
+    (!who.is_empty()).then(|| who.to_string())
 }
 
-/// True when this process's token is an enabled member of `BUILTIN\Administrators`. Stub.
+/// True when this process's token has `BUILTIN\Administrators` enabled
+/// (`CheckTokenMembership` with no token: the thread's or the process's token). A UAC-filtered
+/// token has the group as deny-only and answers false; an elevated one, or any administrator
+/// with UAC off, answers true.
 pub fn is_administrators_member() -> bool {
-    false
+    use windows::core::{BOOL, PCWSTR};
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Authorization::ConvertStringSidToSidW;
+    use windows::Win32::Security::{CheckTokenMembership, PSID};
+    let text: Vec<u16> = crate::hardening::ADMINISTRATORS_SID
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let mut sid = PSID::default();
+    // SAFETY: `text` is NUL-terminated and outlives the call; `sid` is allocated by the system
+    // and released with `LocalFree` below.
+    if unsafe { ConvertStringSidToSidW(PCWSTR(text.as_ptr()), &mut sid) }.is_err() {
+        return false;
+    }
+    let mut member = BOOL::default();
+    // SAFETY: `sid` is the valid SID from above; `member` is a live local; `sid` is released
+    // once, after the call.
+    unsafe {
+        let ok = CheckTokenMembership(None, sid, &mut member).is_ok();
+        let _ = LocalFree(Some(HLOCAL(sid.0)));
+        ok && member.as_bool()
+    }
 }

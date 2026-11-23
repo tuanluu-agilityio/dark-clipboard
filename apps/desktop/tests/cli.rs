@@ -100,7 +100,7 @@ fn headless_with_data_dir_starts_and_stops() {
     assert!(
         lines
             .iter()
-            .any(|l| l.ends_with(" data_dir_acl result=not_ours")),
+            .any(|l| l.contains(" data_dir_acl result=not_ours ms=")),
         "{text}"
     );
     // A fresh data folder: capture is off until Start is pressed in the app (Task 208). The
@@ -289,12 +289,13 @@ fn headless_restricts_a_data_folder_it_creates() {
     );
 }
 
-/// The access list of `dir` as `icacls` prints it (read only).
+/// The access list of `dir` as `icacls` prints it (read only); `None` if `icacls` fails.
 #[cfg(windows)]
-fn acl_listing(dir: &std::path::Path) -> String {
-    let out = Command::new("icacls").arg(dir).output().unwrap();
-    assert!(out.status.success());
-    String::from_utf8_lossy(&out.stdout).into_owned()
+fn acl_listing(dir: &std::path::Path) -> Option<String> {
+    let out = Command::new("icacls").arg(dir).output().ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// Task 413 review B1: a folder the user chose that already holds other files is never given
@@ -308,6 +309,7 @@ fn an_existing_folder_with_other_files_is_never_restricted() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("notes.txt"), b"synthetic, not ours").unwrap();
     let before = acl_listing(&dir);
+    assert!(before.is_some());
     for run in 0..2 {
         let out = bin()
             .arg("--data-dir")

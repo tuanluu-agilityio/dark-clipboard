@@ -185,7 +185,7 @@ pub fn listen_error_from_win32(code: u32) -> ListenError {
 /// How long `listen` waits before trying the first pipe instance again after `Squatted`, per
 /// attempt. A previous instance that has just released the mutex may still hold its pipe for a
 /// moment while its process exits; only a name still taken after these waits is reported.
-pub const SQUAT_RETRY_DELAYS_MS: &[u64] = &[];
+pub const SQUAT_RETRY_DELAYS_MS: &[u64] = &[100; 10];
 
 #[cfg(windows)]
 pub use win::{current_user_sid, ui_language_id, WinTransport};
@@ -405,11 +405,17 @@ mod win {
             log: Arc<Log>,
             on_command: impl Fn(Command) + Send + Sync + 'static,
         ) -> Result<(), ListenError> {
-            // Owned until the thread has it, so a failed spawn closes the pipe.
-            let first = Owned(
-                self.create_instance(true)
-                    .map_err(listen_error_from_win32)?,
-            );
+            // Owned until the thread has it, so a failed spawn closes the pipe. A name that is
+            // taken is tried again for about a second: a previous instance may still be exiting.
+            let mut created = self.create_instance(true).map_err(listen_error_from_win32);
+            for &ms in super::SQUAT_RETRY_DELAYS_MS {
+                if !matches!(created, Err(ListenError::Squatted)) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(ms));
+                created = self.create_instance(true).map_err(listen_error_from_win32);
+            }
+            let first = Owned(created?);
             let server = Server {
                 t: WinTransport {
                     mutex_name: Vec::new(),

@@ -328,17 +328,36 @@ fn dir_origin(data_dir: &std::path::Path) -> DirOrigin {
     }
 }
 
-/// Gives the data folder its private DACL (Windows) and logs the outcome by name. A failure
-/// is a warning; start-up goes on.
+/// Gives the data folder its private DACL (Windows) and logs the outcome by name and how long
+/// it took (the first time on an existing install, Windows also rewrites every file under the
+/// folder, which takes longer with many images). A failure is a warning; start-up goes on.
 #[cfg(windows)]
 fn restrict_data_dir(log: &Log, data_dir: &std::path::Path, origin: &DirOrigin) {
+    let t0 = Instant::now();
     let r = hardening::restrict_data_dir(data_dir, origin.created_now, origin.is_data_folder);
+    let ms = u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX);
     let event = if r.is_warning() {
         "data_dir_acl_failed"
     } else {
         "data_dir_acl"
     };
-    log.event(event, &[("result", Val::Name(r.name()))]);
+    log.event(
+        event,
+        &[("result", Val::Name(r.name())), ("ms", Val::Num(ms))],
+    );
+}
+
+/// Creates the data folder; a folder created now is marked as Dark Clipboard's own
+/// (`hardening::MARKER_FILE`), so later starts keep it private. `false` when it cannot be
+/// created.
+fn create_data_dir(data_dir: &std::path::Path, origin: &DirOrigin) -> bool {
+    if std::fs::create_dir_all(data_dir).is_err() {
+        return false;
+    }
+    if origin.created_now {
+        let _ = hardening::mark_as_ours(data_dir);
+    }
+    true
 }
 
 #[cfg(not(windows))]
@@ -394,7 +413,7 @@ fn run_app(cli: &Cli, lang: Lang, wer: Option<hardening::WerOutcome>) -> ExitCod
         return ExitCode::from(1);
     };
     let origin = dir_origin(&data_dir);
-    if std::fs::create_dir_all(&data_dir).is_err() {
+    if !create_data_dir(&data_dir, &origin) {
         eprintln!("{}", t(lang, Msg::CliStartFailed));
         return ExitCode::from(1);
     }
@@ -488,7 +507,8 @@ fn run_seed(cli: &Cli, lang: Lang) -> ExitCode {
         eprintln!("{}", t(lang, Msg::CliSeedRefused));
         return ExitCode::from(2);
     };
-    if std::fs::create_dir_all(dir).is_err() {
+    let origin = dir_origin(dir);
+    if !create_data_dir(dir, &origin) {
         eprintln!("{}", t(lang, Msg::CliStartFailed));
         return ExitCode::from(1);
     }
@@ -510,7 +530,7 @@ fn run_headless(cli: &Cli, lang: Lang, wer: Option<hardening::WerOutcome>) -> Ex
         return ExitCode::from(1);
     };
     let origin = dir_origin(&data_dir);
-    if std::fs::create_dir_all(&data_dir).is_err() {
+    if !create_data_dir(&data_dir, &origin) {
         eprintln!("{}", t(lang, Msg::CliStartFailed));
         return ExitCode::from(1);
     }

@@ -148,8 +148,8 @@ pub const ADMINISTRATORS_SID: &str = "S-1-5-32-544";
 /// own SID, or `BUILTIN\Administrators` when the process token is an enabled member of that
 /// group (an elevated run). SIDs are compared as full `S-1-...` strings, never SDDL aliases.
 pub fn owner_accepted(owner_sid: &str, user_sid: &str, admin_member: bool) -> bool {
-    let _ = (owner_sid, user_sid, admin_member);
-    false
+    owner_sid.starts_with("S-1-")
+        && (owner_sid == user_sid || (admin_member && owner_sid == ADMINISTRATORS_SID))
 }
 
 /// Only a folder Dark Clipboard created now, or one that already is its data folder (the
@@ -167,15 +167,24 @@ pub const MARKER_FILE: &str = ".dark-clipboard-data";
 /// [`MARKER_FILE`] as a plain file (a link does not count). Checked before the folder is
 /// created.
 pub fn is_data_folder(dir: &Path, default: Option<&Path>) -> bool {
-    let _ = (dir, default);
-    true
+    if !dir.is_dir() {
+        return false;
+    }
+    let is_default =
+        default.is_some() && crate::single_instance::scope_for(Some(dir), default).is_none();
+    // `symlink_metadata`: a link named like the marker does not count.
+    let marked = std::fs::symlink_metadata(dir.join(MARKER_FILE)).is_ok_and(|m| m.is_file());
+    is_default || marked
 }
 
 /// Writes [`MARKER_FILE`] into a folder Dark Clipboard has just created. `false` on failure (the
 /// folder is then restricted this time only).
 pub fn mark_as_ours(dir: &Path) -> bool {
-    let _ = dir;
-    false
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dir.join(MARKER_FILE))
+        .is_ok()
 }
 
 /// Result of [`restrict_data_dir`], logged by name.

@@ -829,8 +829,8 @@ messages! {
     ),
     // Start-up problems shown in a message window (Task 413). `{path}` is the data folder.
     StartDbDamaged => (
-        "Dark Clipboard could not open its history: the database file is damaged.\n\nFolder: {path}\n\nChoose Yes to move the damaged history aside and start with an empty history. Nothing is deleted, and you can then restore a backup in Settings. Choose No to quit.",
-        "Dark Clipboard không mở được lịch sử: tệp cơ sở dữ liệu bị hỏng.\n\nThư mục: {path}\n\nChọn Có để chuyển lịch sử bị hỏng sang một bên và bắt đầu với lịch sử trống. Không có gì bị xóa, và sau đó bạn có thể khôi phục bản sao lưu trong Cài đặt. Chọn Không để thoát."
+        "Dark Clipboard could not open its history: the database file is damaged.\n\nFolder: {path}\n\nChoose Yes to move the damaged history aside and start with an empty history. Nothing is deleted, and you can then restore a backup in Settings. The moved files (history.db.damaged-<time>, blobs.damaged-<time> and their companions in that folder) keep all your old clips, including ones that would have expired; Clear history does not remove them. Delete them yourself when you no longer need them.\n\nChoose No to quit.",
+        "Dark Clipboard không mở được lịch sử: tệp cơ sở dữ liệu bị hỏng.\n\nThư mục: {path}\n\nChọn Có để chuyển lịch sử bị hỏng sang một bên và bắt đầu với lịch sử trống. Không có gì bị xóa, và sau đó bạn có thể khôi phục bản sao lưu trong Cài đặt. Các tệp được chuyển (history.db.damaged-<thời điểm>, blobs.damaged-<thời điểm> và các tệp đi kèm trong thư mục đó) giữ mọi mục cũ, kể cả mục lẽ ra đã hết hạn; Xóa lịch sử không xóa chúng. Hãy tự xóa chúng khi không cần nữa.\n\nChọn Không để thoát."
     ),
     StartDbTooNew => (
         "This history was created by a newer version of Dark Clipboard, so this version cannot open it. Install the newer version. Nothing was changed.\n\nFolder: {path}",
