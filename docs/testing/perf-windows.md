@@ -65,67 +65,117 @@ Not in these numbers:
 
 Date: 2026-11-23. Machine: Windows 11 Home Single Language 10.0.26300, the owner's work machine (in use during all runs). Commit 9322b5e (branch `task/209-adr0001-revisit`), rustc 1.100.0, Slint 1.19.0.
 Binary: `cargo build --release -p dark-clipboard` (11,058,176 bytes, the full UI build; the 1.78 MB figure above is the Task 106 headless-only build).
-Method: every run used a fresh temp `--data-dir` seeded with `--seed-demo-clips 10000`, `--no-global-shortcut` and `--exit-after-ms`; the dir was deleted afterwards and the deletion confirmed. The popup was shown only through `--toggle` over IPC. No screenshot, no input simulation, the real clipboard was never written, no clip content was read.
-Capture state: a fresh dir starts with capture off (D-054). For run A the test setup pre-wrote `settings.json` (`onboarding_done: true`, the `privacy-policy.default.json` example with `capture_enabled: true`). Capture-on is inferred from that file; a 6 s check run on the same settings logged no `capture_off` line, but the UI path has no explicit "capture on" log line, so this is not independently proven. Runs A and B ran at the same time (two processes on the machine).
+Method: every run used a fresh temp `--data-dir` (10,000 clips from `--seed-demo-clips 10000` unless stated), `--no-global-shortcut` and `--exit-after-ms`; the dir was deleted afterwards and the deletion confirmed. The popup was shown only through `--toggle` over IPC. No screenshot, no input simulation, the real clipboard was never written, no clip content was read. The sampler was a throwaway PowerShell script (one `Get-Process -Id <pid>` per 60 s); the window checks only list class, visibility and size of the app's own windows.
 
-## Idle CPU and memory (NFR-04, NFR-05)
+## Correction: the first measurements in this section were invalid
 
-Script: a throwaway PowerShell sampler (not committed) doing one `Get-Process -Id <pid>` per 60 s. Popup hidden for the whole 600 s, then 20 shows (`--toggle` show, 400 ms, hide, 300 ms), then two samples after.
+The first version of this section reported 86 MB private (82 MiB) hidden, 0.17 to 0.23 % idle CPU and "capture on/off" runs A and B. That was wrong:
+- A fresh data dir without `settings.json` starts the first-run welcome (D-054): a 535x497 window is visible and focused, and capture is off. Confirmed in E1 below (the app's own window list shows it).
+- The `settings.json` that the test pre-wrote for the "capture on" run was written with PowerShell 5.1 `Set-Content -Encoding utf8`, which adds a UTF-8 BOM (first bytes 239,187,191). The app treated the file as corrupt, renamed it to `settings.json.corrupt-<ms>` and started fresh. So that run also had the welcome visible and capture OFF, and the "capture on" label was false.
+- The 50-trial latency run below the Task 204 section (p95 21.1 ms) also had the welcome window visible (no settings file). It is still a valid show/hide latency of the popup, but not the representative state; it was not repeated (the script cannot pre-write settings) and is reported as such.
+Those numbers are not used anywhere below. The valid runs write `settings.json` without a BOM, and each shows 0 `settings.json.corrupt*` files and no welcome window (windows line below).
 
-Run A, capture ON:
+## Valid runs
 
-| Sample | t (s) | CPU time (s) | Private bytes | Working set | Threads | Handles |
-|---|---|---|---|---|---|---|
-| idle | 10 | 1.109375 | 86,360,064 | 115,228,672 | 23 | 470 |
-| idle | 60 | 1.140625 | 86,224,896 | 115,167,232 | 19 | 465 |
-| idle | 120 | 1.203125 | 86,224,896 | 115,167,232 | 19 | 465 |
-| idle | 180 | 1.3125 | 86,130,688 | 115,118,080 | 16 | 461 |
-| idle | 240 | 1.375 | 86,130,688 | 115,118,080 | 16 | 461 |
-| idle | 300 | 1.5 | 86,196,224 | 115,449,856 | 18 | 461 |
-| idle | 360 | 1.546875 | 86,196,224 | 115,449,856 | 18 | 461 |
-| idle | 420 | 1.75 | 86,200,320 | 115,535,872 | 18 | 463 |
-| idle | 480 | 1.84375 | 86,130,688 | 115,503,104 | 16 | 457 |
-| idle | 540 | 1.96875 | 86,130,688 | 115,503,104 | 16 | 457 |
-| idle | 600 | 2.0625 | 86,159,360 | 115,535,872 | 17 | 457 |
-| popup shown, 20th show | 655 | 2.671875 | 103,391,232 | 140,169,216 | 17 | 486 |
-| hidden, 5 s after 20 shows | 661 | 2.6875 | 102,866,944 | 139,644,928 | 17 | 486 |
-| hidden, 35 s after 20 shows | 691 | 2.75 | 102,838,272 | 139,628,544 | 16 | 486 |
+Settings written by the test (test setup, not a product bypass): `onboarding_done: true` plus the `privacy-policy.default.json` example; `capture_enabled` true for A2, false for the others. A2 therefore recorded the owner's real clipboard into its temp dir for 11 minutes (never read, deleted). That capture was on is shown only by the file being accepted (no corrupt file, no welcome); the UI path has no explicit "capture on" log line.
 
-Run B, capture OFF:
+### A2: capture ON, 10 minutes idle, popup hidden, then 20 shows
 
-| Sample | t (s) | CPU time (s) | Private bytes | Working set | Threads | Handles |
-|---|---|---|---|---|---|---|
-| idle | 10 | 1.03125 | 86,626,304 | 115,216,384 | 23 | 470 |
-| idle | 60 | 1.25 | 86,495,232 | 115,159,040 | 19 | 463 |
-| idle | 120 | 1.34375 | 86,495,232 | 115,159,040 | 19 | 463 |
-| idle | 180 | 1.453125 | 86,409,216 | 115,109,888 | 16 | 461 |
-| idle | 240 | 1.59375 | 86,409,216 | 115,109,888 | 16 | 461 |
-| idle | 300 | 1.703125 | 86,474,752 | 115,441,664 | 18 | 461 |
-| idle | 360 | 1.828125 | 86,474,752 | 115,441,664 | 18 | 461 |
-| idle | 420 | 2.015625 | 86,503,424 | 115,552,256 | 19 | 463 |
-| idle | 480 | 2.140625 | 86,409,216 | 115,499,008 | 16 | 457 |
-| idle | 540 | 2.390625 | 86,409,216 | 115,499,008 | 16 | 457 |
-| idle | 600 | 2.46875 | 86,437,888 | 115,531,776 | 17 | 457 |
-| popup shown, 20th show | 655 | 3.171875 | 103,608,320 | 140,460,032 | 17 | 486 |
-| hidden, 5 s after 20 shows | 661 | 3.21875 | 103,084,032 | 139,935,744 | 17 | 486 |
-| hidden, 35 s after 20 shows | 691 | 3.265625 | 103,051,264 | 139,919,360 | 16 | 486 |
+| Sample | t (s) | CPU time (s) | Private bytes | Working set | Threads |
+|---|---|---|---|---|---|
+| idle | 8 | 0.828125 | 54,558,720 | 74,272,768 | 22 |
+| idle | 60 | 0.953125 | 54,415,360 | 74,207,232 | 18 |
+| idle | 120 | 1.078125 | 54,415,360 | 74,207,232 | 18 |
+| idle | 180 | 1.1875 | 54,325,248 | 74,153,984 | 15 |
+| idle | 240 | 1.25 | 54,325,248 | 74,153,984 | 15 |
+| idle | 300 | 1.328125 | 54,390,784 | 74,502,144 | 17 |
+| idle | 360 | 1.453125 | 54,390,784 | 74,502,144 | 17 |
+| idle | 420 | 1.578125 | 54,394,880 | 74,567,680 | 17 |
+| idle | 480 | 1.75 | 54,325,248 | 74,530,816 | 15 |
+| idle | 540 | 1.859375 | 54,325,248 | 74,530,816 | 15 |
+| idle | 600 | 2.015625 | 54,358,016 | 74,571,776 | 16 |
+| popup shown (20th show) | 655 | 2.546875 | 76,165,120 | 112,648,192 | 17 |
+| hidden, 5 s after 20 shows | 661 | 2.5625 | 75,616,256 | 112,111,616 | 16 |
 
-Both runs exited with code 0 on `--quit`.
+Own-window list at t = 8 s: only `Winit Thread Event Target` (15x15, visible; this is why `MainWindowHandle` is non-zero even with nothing on screen, so `MainWindowHandle` is not a test for "a window is shown"). Corrupt settings files: 0. Exit code 0.
+- Idle CPU, t = 60 to 600 s: 1.0625 s over 540 s = 0.197 % of one core.
+- Private bytes hidden: 54.3 to 54.6 MB = 51.8 to 52.0 MiB, flat over 10 minutes. After 20 shows: 75.6 MB = 72.1 MiB hidden (76.2 MB = 72.6 MiB while shown), about +21 MiB, not given back on hide. 20 shows do not prove there is no leak over thousands of shows.
+- Working set about 71 MiB hidden, 107 MiB after use.
 
-Reading the numbers:
-- Idle CPU (hidden popup, t = 60 to 600 s, 540 s): run A 0.921875 s = 0.17 % of one core; run B 1.21875 s = 0.23 % of one core. The first 10 s cost about 1.1 s of CPU in both (start-up). This is not zero: a few tenths of a percent from the UI process, versus 0.01 % for the headless build above. The owner was using the machine and both instances ran at once, so treat it as an upper bound, not a clean floor. Capture on or off made no systematic difference (B was higher).
-- Private bytes hidden: 86.1 to 86.6 MB, that is 82.1 to 82.6 MiB (working set about 110 MiB). Flat over 10 minutes (no growth). After 20 popup shows: 102.8 to 103.6 MB = 98.1 to 98.8 MiB, about +16 MiB once the popup has been shown, then flat 35 s later (not given back when the popup hides). 20 shows do not prove there is no leak over thousands of shows; not measured.
-- NFR-05 (<= 40 MiB hidden): not met. The gap is about 42 MiB (82 versus 40) and about 33 MiB above the 49 MiB the Slint spike measured. This build has the full UI and a 10,000-clip history; the spike did not. For comparison the Tauri spike measured 160 MiB private / 372 MiB working set.
+### E1: the welcome is shown on a fresh dir (seeded, no settings.json)
+
+    start  t=8  cpu_s=1.171875  private=86487040  threads=23  MainWindowHandle=1183910
+    windows: class=Window Class visible=True rect=535x497@25,25 | class=Winit Thread Event Target visible=True rect=15x15@0,0
+    corrupt settings files: 0
+
+A separate run listed six windows of the app process: the popup (420x560, hidden), the tray window (hidden), the welcome (535x497, visible) and the winit event target (15x15, visible) plus two hidden IME windows. `MainWindowHandle` is non-zero in every UI run (it points at the 15x15 event window when nothing else is visible), so it does not by itself prove a welcome. The window list does. Private bytes with the welcome open: 86.5 MB (82.5 MiB), versus 54.5 MB (52.0 MiB) without it: the welcome window costs about +32 MiB.
+
+### E2: onboarded, capture OFF, never shown, 240 s (also E6 thread data)
+
+| t (s) | CPU time (s) | Private bytes | Threads |
+|---|---|---|---|
+| 8 | 0.96875 | 54,710,272 | 21 |
+| 60 | 1.0625 | 54,628,352 | 18 |
+| 120 | 1.1875 | 54,628,352 | 18 |
+| 180 | 1.390625 | 54,538,240 | 15 |
+| 240 | 1.515625 | 54,538,240 | 15 |
+
+Idle CPU t = 60 to 240: 0.453125 s over 180 s = 0.25 % of one core. Other runs were going at the same time (A2, E3, E4, E5); another process cannot add to this process's CPU time, and the owner's activity could only add through window messages, so this is this process's own cost, not a clean zero either.
+
+### E3: empty dir versus 10,000 seeded clips (onboarded, capture off, never shown, 120 s)
+
+| Run | Private bytes t=8 | t=60 | t=120 | CPU time t=60 / t=120 (s) |
+|---|---|---|---|---|
+| E3a empty | 51,752,960 | 51,613,696 | 51,613,696 | 0.5625 / 0.6875 |
+| E3b 10,000 clips | 54,530,048 | 54,390,784 | 54,390,784 | 1.078125 / 1.171875 |
+
+The 10,000 clips cost about 2.8 MB (2.65 MiB) private. The 49 to 52 MiB floor is the UI, not the history. (E3a idle CPU t = 60 to 120: 0.125 s per 60 s = 0.21 %; E3b: 0.094 s per 60 s = 0.16 %.)
+
+### E4: `--headless` on the 10,000-clip dir (no Slint, no window)
+
+    start t=8   cpu_s=0.75  private=5492736  ws=17653760  threads=10
+    idle  t=60  cpu_s=0.75  private=5398528  ws=17600512  threads=7
+
+Private 5.4 MB = 5.1 MiB, zero CPU over 52 s. `--quit` does not stop the headless process (exit code empty, it was killed by the script after 10 s). So the UI layer costs about 47 MiB private on top of the core.
+
+### E5: `SLINT_BACKEND=winit-software`, onboarded, capture off
+
+    start  t=8    cpu_s=0.859375  private=7372800   ws=26869760  threads=19
+    idle   t=60   cpu_s=0.859375  private=7229440   ws=26804224  threads=15
+    shown (20th show)  t=114  cpu_s=1.125  private=12279808  ws=33710080
+    hidden after 20 shows t=121 cpu_s=1.125  private=12255232  ws=33697792
+
+Private 7.2 MB (6.9 MiB) hidden, 12.3 MB (11.7 MiB) after 20 shows, zero CPU over the 52 idle seconds. Compared with the default renderer (52 MiB hidden, 72 MiB after shows, about 0.2 % CPU) this is about 7 times less memory and no idle CPU. Not verified for this renderer: how the popup looks (no screenshots allowed), the popup latency, text/image drawing speed. An attempt to run `measure-popup.ps1` with the variable set found 0 `perf` events: the popup timing is taken from Slint's rendering notifier, which the software renderer does not provide, so NFR-01 cannot be measured with it without a different timing source (product change). The software backend also needs checking on the other platforms.
+
+### E6: which thread uses the idle CPU
+
+Thread CPU time (`Process.Threads[].TotalProcessorTime`), onboarded, hidden popup. The thread that starts with the process (earliest start time) is the main thread.
+
+    E2  t=60 : main 22416@55.409 = 0.1875 | 28408@55.586 = 0.7812 | 13256@55.627 = 0.0781 | 30016 = 0.0156
+    E2  t=240: main 22416 = 0.1875 | 28408 = 0.7812 | 13256 = 0.5 | 30016 = 0.0469
+    A2  t=60 : main 41400@53.326 = 0.1875 | 45312@53.429 = 0.6094 | 33920@53.461 = 0.1094 | 39624 = 0.0469
+    A2  t=240: main 41400 = 0.1875 | 45312 = 0.6094 | 33920 = 0.375 | 39624 = 0.0781
+
+Between t = 60 and 240 s the main thread and the big start-up thread (0.78 s / 0.61 s) add nothing; one worker thread started at process start (13256 in E2, +0.42 s of the +0.45 s; 33920 in A2, +0.27 s of the +0.30 s) accumulates about 90 % of the idle CPU, and a second small one adds about 0.03 s. Thread names are not set (`GetThreadDescription` is empty), so the role is not identified from outside. Because E5 (software renderer) shows exactly zero idle CPU, this worker is tied to the default (GPU) renderer path; identifying it needs a profiler or a product-code change.
+
+## Analysis
+
+- NFR-05 (<= 40 MiB private, hidden): not met. Valid figure 51.8 to 52.0 MiB with 10,000 clips (A2), 49.2 MiB with an empty history (E3a); gap about 12 MiB. The earlier "82 MiB" was the welcome window being open.
+- Spike comparison: the Slint spike's 49 MiB was sampled after a show/hide, so the comparable number is the post-show figure: 72.1 MiB (A2, hidden after 20 shows), about +23 MiB over the spike. The hidden-before-first-show figure (52 MiB) is comparable to nothing in the spike. The post-use figure is also what a user has all day, so it is the one to judge NFR-05 against: 72 MiB versus the 40 MiB target. The Tauri spike (160 MiB private) is still about 2 times worse.
+- Where the memory goes: core plus 10,000 clips is 5.4 MB (E4); the history adds 2.8 MB (E3); the UI layer is about 47 MiB (E3b - E4); the first popup shows add about 20 MiB; an open welcome adds about 32 MiB (E1). With the software renderer the same app is 7 MiB hidden and 12 MiB after use (E5), so the bulk of the cost is the GPU renderer state (swap chain and glyph/texture caches), not Slint's widgets or the data.
+- NFR-04 (idle CPU about 0 %): not met as measured (A2: 0.197 % of one core, E2: 0.25 %, E3: 0.16 to 0.21 %). It is a worker thread, not the main thread, and it vanishes with the software renderer (E5: 0). The headless core is 0 (E4).
+- NFR-01: met (p95 21.1 ms), measured with the welcome window visible; see the Correction section.
+- A software-renderer fallback or default (`SLINT_BACKEND=winit-software`, or the `renderer-software` feature selected in the app) would meet NFR-05 and NFR-04 on Windows on these numbers, but costs the NFR-01 measurement method and has unverified visuals and speed. This is for the orchestrator to decide; the ADR was not changed.
 
 ## Popup latency (NFR-01)
 
-Command: `powershell -File scripts/measure-popup.ps1 -Trials 50 -SeedClips 10000` (capture OFF, fresh data dir, 10,000 synthetic clips, 400 ms shown, 250 ms hidden).
+Command: `powershell -File scripts/measure-popup.ps1 -Trials 50 -SeedClips 10000` (no settings file, so the welcome window was visible and capture off; 400 ms shown, 250 ms hidden).
 
     raw ms (50 trials, src=ipc): 14.6, 7.4, 21.1, 17.2, 7.7, 9.0, 14.2, 15.6, 14.7, 11.4, 9.6, 7.7, 7.6, 11.0, 12.6, 13.3, 6.1, 11.0, 12.1, 9.0, 7.0, 11.3, 10.8, 10.6, 10.8, 10.4, 11.6, 13.3, 7.5, 11.1, 22.2, 11.8, 15.2, 11.4, 18.0, 15.5, 13.8, 18.3, 19.2, 12.6, 23.0, 10.6, 10.6, 10.8, 20.6, 16.1, 11.3, 8.5, 15.0, 13.4
     min 6.1 ms  p50 11.4 ms  p95 21.1 ms  max 23.0 ms
     temp data dir deleted
 
-Budget 100 ms p95: met with a wide margin (21.1 ms), consistent with Task 204 (21.9 to 26.7 ms). Same scope limits as the Task 204 section: IPC clock start, warm app, first show after start not in the 50 (225 ms seen once earlier), real shortcut is an owner manual row. Not run with capture on.
+Budget 100 ms p95: met with a wide margin (21.1 ms), consistent with Task 204 (21.9 to 26.7 ms, empty and seeded). Same scope limits as the Task 204 section: IPC clock start, warm app, first show after start not in the 50 (225 ms seen once earlier). The real shortcut is an owner manual row.
 
 ## Search latency (NFR-02)
 
@@ -147,13 +197,39 @@ Not automated and not run: Narrator needs real keyboard focus, which the owner's
 
 Owner manual row (Narrator, Windows): press Win+Ctrl+Enter, open the popup, then check and write down verbatim what Narrator says for: (1) the search box on focus; (2) arrow Down/Up over the list (does it say the clip text, its type, "item N of M"?); (3) each filter chip (name and on/off); (4) Enter on a row; (5) the Settings tabs and each field; (6) the welcome Start / Not now buttons. Pass = every one has a spoken name.
 
+## Owner manual rows: IME (ADR trigger 2)
+
+Not run here (it needs real typing). Do this on the owner's machine, once for the popup search box and once for the history window search box (tray menu, open history). Add the input methods under Windows Settings, Time and language, Language and region (Vietnamese keyboard with "Telex", and Japanese with Microsoft IME). Switch with Win+Space.
+
+Vietnamese Telex (popup, then history window):
+1. Open the popup (Ctrl+Shift+V), click or tab into the search box (it has focus on open).
+2. Type `xin chaof`. Expected: the box shows `xin chào`; while the last word is being composed it is underlined, then commits when you press Space.
+3. Clear (Ctrl+A, Delete). Type `Vieetj Nam`. Expected: `Việt Nam`.
+4. While a syllable is still underlined (for example after typing `chaof` with no space), press Backspace once: the composition shrinks, nothing else happens.
+5. While composing, press Esc once. Record whether it cancels the composition or closes the popup.
+6. While composing, press Enter. Record whether it commits the text only, or also pastes the selected clip.
+7. Type `vie` and look at the result list: with clips containing `Việt`, record whether the list is filtered as you commit.
+Record verbatim: Windows build, keyboard/IME name, what each step showed (the exact text in the box), anything that flickered, duplicated or lost a character.
+Pass: steps 2 and 3 give exactly the expected text with no stray or doubled characters; 4 does not close or change the popup; 5 and 6 do not paste a clip or close the popup while a composition is active (a second Esc/Enter, after the composition has ended, may); the list does not jump selection or lose focus mid-composition.
+
+Japanese Microsoft IME (popup, then history window):
+1. Switch to Japanese, hiragana mode (the IME bar shows `あ`). Click into the search box.
+2. Type `nihongo`. Expected: `にほんご` underlined (composition).
+3. Press Space. Expected: converted to `日本語`, with the candidate window appearing next to the box (record where it appears, at the box or at the screen corner).
+4. Press Space again to cycle candidates, then Enter to commit. Expected: `日本語` committed in the box; the list filters on it.
+5. Type `nihongo`, press F7 (katakana) then Enter: `ニホンゴ`.
+6. While composing, press Esc, then press Down. Record: composition cancelled? Does Down move the clip selection while composing?
+7. Press Enter on a committed text (no composition active): record whether it pastes the selected clip as usual.
+Record verbatim as for Telex, plus the candidate-window position and whether the clip list steals Up/Down/Enter during composition.
+Pass: 2 to 5 give the expected text; the candidate window appears at the text box; while a composition is active Up/Down/Enter/Esc act on the IME, not on the clip list or the popup; once committed, the normal keys work again.
+
 ## ADR-0001 revisit triggers
 
 | # | Trigger | Verdict | Evidence |
 |---|---|---|---|
 | 1 | Popup cannot show in <= 100 ms p95 on any target OS | Not hit on Windows: p95 21.1 ms. macOS and Linux not measured here | measurement above |
-| 2 | IME (Vietnamese Telex, Japanese) fails in `LineEdit` | Not tested here (needs real typing, forbidden on this machine); owner manual row | none |
+| 2 | IME (Vietnamese Telex, Japanese) fails in `LineEdit` | Not tested here (needs real typing, forbidden on this machine); owner manual rows above | none |
 | 3 | Non-activating popup that returns focus is impossible on macOS with winit | Not testable on Windows | none |
 | 4 | Screen-reader access to the clip list not achievable | Not decided: accessibility properties are declared in source (list, list-item, count); Narrator itself not run; owner manual row above | source inventory only |
 
-No trigger is hit by a measurement. Separately, and not an ADR trigger: NFR-05 is not met (82 MiB hidden, 98 MiB after use, target 40 MiB) and idle CPU is 0.17 to 0.23 % of one core rather than about 0 %. These are for the orchestrator to weigh; the ADR was not changed.
+No trigger is hit by a measurement. Separately, and not an ADR trigger: NFR-05 is not met (52 MiB hidden, 72 MiB after use, target 40 MiB) and NFR-04 is not met as measured (0.2 % of one core in A2). Both are linked to the default GPU renderer (E5). These are for the orchestrator to weigh; the ADR was not changed.
