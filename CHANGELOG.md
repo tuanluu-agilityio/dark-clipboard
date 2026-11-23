@@ -4,6 +4,15 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ## [Unreleased]
 
+### Fixed (Task 413, release blockers from the 0.1.0 security review, D-067)
+- F407-01: crash reports no longer carry clip memory to Windows Error Reporting. At every start, in every run mode and before capture starts, the app calls `WerAddExcludedApplication(<exe name>, FALSE)` (per-user exclusion, `HKCU`) and `WerSetFlags(WER_FAULT_REPORTING_FLAG_NOHEAP)`. A failure is logged (`wer_failed excluded=... no_heap=...`) and start-up goes on.
+- F407-02: the data folder (default or `--data-dir`) gets a protected DACL at start: full control for the current user and SYSTEM only, inherited by every file and folder in it. Applied only to a folder the app created or that already is its data folder, and only when the current user owns it; otherwise left alone (`data_dir_acl result=not_ours|not_owner`). A failure is logged and start-up goes on.
+- F407-03: a history that cannot be opened no longer makes the app quit silently. The database is checked at open (`PRAGMA quick_check`, both connections); a damaged file or one that is not a database is reported as damaged. The app shows a message window with the data folder: a newer history is only explained and never touched; a damaged one can be moved aside (renamed with the mark `damaged-<ms>`, together with its `-wal`/`-shm` files, the `blobs` folder and any pre-migration or pre-restore copies; nothing is deleted) and the app starts with an empty history. `--headless` prints the explanation and never moves anything.
+- F407-04: if another program holds the app's connection (named pipe) name, the app says "Dark Clipboard could not start: another program is using its connection." instead of quitting silently.
+- F407-05: Settings and the README say that a backup is a plain, unencrypted zip that keeps every clip except masked and expired ones, including clips apps asked not to sync, and that saving it in a synced folder uploads it.
+- F407-08: KeePass 2 (`keepass.exe`) is a built-in excluded app on Windows (new settings files only; an existing settings file keeps its list). Not yet tested with a real KeePass 2.
+- F407-11: `darkclip-platform`, `darkclip-storage` and `darkclip-app` forbid `unsafe` code; `darkclip-core` denies it outside its zeroing module.
+
 ### Added (Phase 3 Windows desktop shell, 0.1.0-alpha internal)
 - Task 201: `dark-clipboard` with no flag starts the Slint app hidden (always dark, English and Vietnamese; the OS language is used on first run). Single instance per user: a second start forwards its command over a named pipe restricted to the current user and exits 0. New `--toggle` (show or hide the popup), `--quit` and `--help`; `--headless` is unchanged. The licence is GPL-3.0-only (Slint's GPLv3 option).
 - Task 202: tray icon (glyphs generated in code for capturing, paused, private and capture off) with tooltip and menu: Pause (5 minutes, 1 hour, until resumed), Resume, Private mode, History, Settings, Quit. Pause and private mode apply at once.

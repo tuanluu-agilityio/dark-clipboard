@@ -66,6 +66,20 @@ The list is code (one table per adapter) plus tests. Adding to it is a reviewed 
 - Unknown source (no owner, Wayland) cannot be matched; the UI says so on Wayland ("app exclusions are not available on this session").
 - Built-in defaults (editable, marked `builtin`): KeePassXC, KeePass, 1Password, Bitwarden, Dashlane, Enpass, Keychain Access, Proton Pass, plus Darkshot's executable on Windows (belt and braces; its markers already exclude it).
 
+> **Changed by D-067 (2026-11-24, Task 413):** the built-in list as implemented (`PrivacyPolicy::default`). Removing a password-manager entry asks for the same confirmation for each of them; Darkshot has its own question. Markers stay the primary defence (app identity is cooperative, F-09). Tested = a real copy on the owner's machine was not stored (platform checklist).
+>
+> | Platform | `app_id` | Name | Tested |
+> |---|---|---|---|
+> | Windows | `keepassxc.exe` | KeePassXC | yes (2.8.0, Task 107) |
+> | Windows | `keepass.exe` | KeePass (KeePass 2, classic) | no (added by D-067) |
+> | Windows | `1password.exe` | 1Password | no (R-02) |
+> | Windows | `bitwarden.exe` | Bitwarden | no (R-02) |
+> | Windows | `darkshot.exe` | Darkshot | yes (0.6.0, by its markers) |
+> | macOS | `com.1password.1password`, `org.keepassxc.keepassxc`, `com.apple.keychainaccess` | 1Password, KeePassXC, Keychain Access | no (no adapter yet) |
+> | Linux Wayland | `org.keepassxc.KeePassXC` | KeePassXC | no (no adapter yet) |
+>
+> Dashlane, Enpass and Proton Pass are not in the list yet. New settings files get the list above; an existing `settings.json` keeps the list it has.
+
 ## 7. Logging rules
 
 - Levels: `error`, `warn`, `info` (default), `debug` (opt-in via settings, auto-off after 24 h).
