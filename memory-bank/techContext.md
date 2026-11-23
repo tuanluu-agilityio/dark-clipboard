@@ -33,7 +33,7 @@ Updated: 2026-11-22
 | `windows` 0.62.2 (cfg(windows) only, default features off; added Task 101) | darkclip-windows | Win32 clipboard (spike-proven) |
 | `objc2-app-kit` | darkclip-macos | NSPasteboard (Phase 4) |
 | `x11rb`, `wayland-client`, `wayland-protocols(-wlr)` | darkclip-linux | X11/Wayland (Phase 4) |
-| `slint` / `slint-build` **~1.19.0** (pinned: feature `unstable-winit-030` is outside semver, used only for focus loss and bring-to-front in `popup_host.rs`), `global-hotkey` 0.10, `tray-icon` 0.26 (Windows), `ksni` (Linux, later) | apps/desktop | UI shell (ADR-0001) |
+| `slint` / `slint-build` **~1.19.0** (pinned: feature `unstable-winit-030` is outside semver, used only for focus loss, bring-to-front and popup timing in `popup_host.rs`); Windows default renderer: Slint **software** renderer on the winit backend (D-055, Task 212), `SLINT_BACKEND` overrides, `global-hotkey` 0.10, `tray-icon` 0.26 (Windows), `ksni` (Linux, later) | apps/desktop | UI shell (ADR-0001) |
 | `darkclip-storage` (workspace) | apps/desktop | demo seeding and the search cursor type (Task 204) |
 
 ## Constraints

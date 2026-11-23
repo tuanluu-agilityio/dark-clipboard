@@ -556,7 +556,7 @@ pub fn run(args: RunArgs, listen: impl FnOnce(CommandHandler) -> Result<(), ()>)
     settings_host::install(worker.poster(), data_dir.clone());
     // The first-run welcome (Task 208): shown by the first status refresh while unanswered.
     welcome_host::install(worker.poster(), data_dir);
-    popup_host::close_on_focus_loss(&window);
+    popup_host::watch_window_events(&window);
     window.window().on_close_requested(|| {
         popup_host::shutdown_pending();
         slint::CloseRequestResponse::HideWindow

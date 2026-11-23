@@ -20,8 +20,11 @@
 //! waits). A refused paste leaves the clip copied and shows a static toast.
 //!
 //! Logging: only the content-free `perf` and `paste` events (timings, a source name, a coarse
-//! outcome). Queries, previews, source names and window titles are never logged or formatted
-//! (GC-06, SR-11).
+//! outcome). `perf what=popup_shown` (NFR-01) runs from the show request to the first frame
+//! drawn after it; `perf what=search_done` (Task 212) from the debounced search of a typed
+//! query to its results being applied to the list. Neither carries a query or a count.
+//! Queries, previews, source names and window titles are never logged or formatted (GC-06,
+//! SR-11).
 
 use super::common::{self, clip_row, Px};
 use super::{Chip, ClipRow, MainWindow, Poster, Strings};
@@ -111,6 +114,9 @@ struct Host {
     /// The clip the pane wants loaded now. Worker jobs for any other clip are skipped before
     /// they do their work (the selection moved on while they were queued).
     wanted: Arc<Mutex<Option<ClipId>>>,
+    /// The search a typed query started (its generation and when the debounce ran it), for the
+    /// `search_done` timing.
+    typed_search: Option<(u64, Instant)>,
     log: Arc<Log>,
 }
 
@@ -337,13 +343,28 @@ impl Host {
         }
     }
 
-    /// A new search with `f` (new results start at the first row).
-    fn search(&mut self, f: Filters) {
+    /// A new search with `f` (new results start at the first row). Returns its generation.
+    fn search(&mut self, f: Filters) -> u64 {
         self.debounce.stop();
         let (now, off) = now_and_offset();
         let req = self.model.search(f, now, off);
+        let gen = req.gen;
         self.run(req);
         self.rebuild_chips();
+        gen
+    }
+
+    /// Logs `search_done` when the answer of the last typed search was applied.
+    fn log_search_done(&mut self, gen: u64) {
+        if self.typed_search.is_some_and(|(g, _)| g == gen) {
+            if let Some((_, t0)) = self.typed_search.take() {
+                let ms = u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX);
+                self.log.event(
+                    "perf",
+                    &[("what", Val::Name("search_done")), ("ms", Val::Num(ms))],
+                );
+            }
+        }
     }
 
     fn refresh(&mut self) {
@@ -711,6 +732,7 @@ fn on_results(gen: u64, append: bool, result: Result<Page<ClipSummaryView>, &'st
         }
         h.rebuild_chips();
         h.sync_state();
+        h.log_search_done(gen);
         // A short list (e.g. a source filter) keeps loading pages until the view is filled.
         let last_shown = h.model.selected().saturating_add(h.page_rows());
         h.maybe_load_more(last_shown);
@@ -742,6 +764,7 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
         pasting: false,
         detail: DetailModel::default(),
         wanted: Arc::new(Mutex::new(None)),
+        typed_search: None,
         log: Arc::clone(&log),
     };
     host.rebuild_chips();
@@ -757,7 +780,9 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
                     if let Some(w) = h.window() {
                         f.text = w.get_query().to_string();
                     }
-                    h.search(f);
+                    let started = Instant::now();
+                    let gen = h.search(f);
+                    h.typed_search = Some((gen, started));
                 });
             });
         });
@@ -841,28 +866,21 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
     w.on_shown_until(|last| {
         with_host(|h| h.maybe_load_more(usize::try_from(last).unwrap_or(0)));
     });
+}
 
-    // NFR-01: the first frame after a show request is the "popup visible" moment.
-    let perf_log = log;
-    let notifier = w.window().set_rendering_notifier(move |state, _| {
-        if matches!(state, slint::RenderingState::AfterRendering) {
-            if let Some((t0, trigger)) = SHOW_ASKED.take() {
-                let us = u64::try_from(t0.elapsed().as_micros()).unwrap_or(u64::MAX);
-                perf_log.event(
-                    "perf",
-                    &[
-                        ("what", Val::Name("popup_shown")),
-                        ("src", Val::Name(trigger.name())),
-                        ("us", Val::Num(us)),
-                    ],
-                );
-            }
-        }
+/// Logs the NFR-01 `perf what=popup_shown` event for a show request.
+fn log_popup_shown(asked: Instant, trigger: Trigger) {
+    let us = u64::try_from(asked.elapsed().as_micros()).unwrap_or(u64::MAX);
+    with_host(|h| {
+        h.log.event(
+            "perf",
+            &[
+                ("what", Val::Name("popup_shown")),
+                ("src", Val::Name(trigger.name())),
+                ("us", Val::Num(us)),
+            ],
+        );
     });
-    if notifier.is_err() {
-        // A renderer without notifications: the app works, only the measurement is missing.
-        SHOW_ASKED.set(None);
-    }
 }
 
 /// The saved language changed (or a status refresh): relabel chips and rows.
@@ -932,6 +950,8 @@ fn focus_os_window(w: &MainWindow) {
 
 /// Hides the popup; a delete waiting for its undo is sent now.
 pub fn hide(w: &MainWindow) {
+    // A show that never drew a frame is not timed by a later one.
+    SHOW_ASKED.set(None);
     with_host(|h| {
         h.debounce.stop();
         h.commit_delete();
@@ -943,11 +963,27 @@ pub fn hide(w: &MainWindow) {
     let _ = w.hide();
 }
 
-/// Closes the popup when its window loses the focus (the `close_on_focus_loss` setting).
-pub fn close_on_focus_loss(w: &MainWindow) {
+/// Watches the popup's winit window events. Winit keeps one filter per window, so both uses
+/// live here:
+/// - focus loss closes the popup (the `close_on_focus_loss` setting);
+/// - NFR-01 timing: the first `RedrawRequested` after a show request is the frame that makes
+///   the popup visible. Slint draws it (render and present, for the software and the GPU
+///   renderer alike) right after this filter returns; the timing is taken on the next loop
+///   turn, so it includes that frame. This replaces Slint's rendering notifier, which the
+///   software renderer does not provide (Task 212). The first `RedrawRequested` after a show
+///   is counted even if Slint's `draw()` then skips it (window occluded or minimised), so in
+///   that rare case the value is the time to that event, not to a frame on screen.
+///
+/// With a non-winit backend (a user's `SLINT_BACKEND=qt`) this does nothing.
+pub fn watch_window_events(w: &MainWindow) {
     use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
     let ui = w.as_weak();
     w.window().on_winit_window_event(move |_, ev| {
+        if let winit::event::WindowEvent::RedrawRequested = ev {
+            if let Some((asked, trigger)) = SHOW_ASKED.take() {
+                let _ = slint::invoke_from_event_loop(move || log_popup_shown(asked, trigger));
+            }
+        }
         if let winit::event::WindowEvent::Focused(false) = ev {
             let ui = ui.clone();
             // Not inside winit's event dispatch: hop to the next loop turn.

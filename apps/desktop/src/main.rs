@@ -17,6 +17,7 @@ mod history;
 mod log;
 mod popup;
 mod prefs;
+mod renderer;
 mod seed;
 mod shortcut;
 mod single_instance;
@@ -334,9 +335,17 @@ fn run_app(cli: &Cli, lang: Lang) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    // Only the primary instance shows windows; the choice is made before the first one exists.
+    let renderer = renderer::select();
+    if renderer.fell_back {
+        log.event("renderer_fallback", &[]);
+    }
     log.event(
         "start",
-        &[("version", Val::Name(env!("CARGO_PKG_VERSION")))],
+        &[
+            ("version", Val::Name(env!("CARGO_PKG_VERSION"))),
+            ("renderer", Val::Name(renderer.name)),
+        ],
     );
     // `--data-dir` keeps everything (settings and data) in that folder, for tests.
     let settings_path = if cli.data_dir.is_some() {

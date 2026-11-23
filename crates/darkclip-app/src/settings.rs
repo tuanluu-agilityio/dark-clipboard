@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const SETTINGS_VERSION: u32 = 1;
 const OS_MARKERS_PATH: &str = "privacy.respect_os_markers";
+/// The UTF-8 byte order mark some editors put at the start of a text file.
+const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Shortcuts {
@@ -214,7 +216,9 @@ impl Settings {
                 )
             }
         };
-        let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        // A UTF-8 BOM (Notepad, PowerShell 5.1) is not JSON: skip it. `save` never writes one.
+        let json = bytes.strip_prefix(UTF8_BOM).unwrap_or(&bytes);
+        let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(json) else {
             return Self::recover(path, |from, to| std::fs::rename(from, to));
         };
         // Core rejects `respect_os_markers: false`; the app corrects it instead of
@@ -345,6 +349,37 @@ mod tests {
         assert!(s.privacy.capture_enabled && s.onboarding_done);
         s.finish_onboarding(false);
         assert!(s.privacy.capture_enabled);
+    }
+
+    #[test]
+    fn a_file_with_a_utf8_bom_loads_with_its_values() {
+        // Notepad and PowerShell 5.1 write a BOM (Task 209 found it reset all settings).
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        let mut s = Settings::default();
+        s.ui.language = Lang::Vi;
+        s.ui.enter_pastes = true;
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend(serde_json::to_vec_pretty(&s).unwrap());
+        std::fs::write(&p, &bytes).unwrap();
+        let (back, o) = Settings::load(&p);
+        assert_eq!(o, LoadOutcome::Loaded);
+        assert_eq!(back, s);
+        // Not renamed as corrupt, nothing else written.
+        assert_eq!(files(d.path()), vec!["settings.json".to_string()]);
+    }
+
+    #[test]
+    fn save_never_writes_a_bom() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend(serde_json::to_vec_pretty(&Settings::default()).unwrap());
+        std::fs::write(&p, &bytes).unwrap();
+        let (s, _) = Settings::load(&p);
+        s.save(&p).unwrap();
+        let written = std::fs::read(&p).unwrap();
+        assert_eq!(written.first(), Some(&b'{'));
     }
 
     #[test]
