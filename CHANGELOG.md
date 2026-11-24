@@ -4,6 +4,10 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-24
+
+Bug-fix release for Windows x64 (alpha, unsigned). The Known issues of 0.1.0 still apply. Release notes for the 0.1 line: https://github.com/tuanluu-agilityio/dark-clipboard/blob/v0.1.1/docs/user/release-notes-0.1.0.md
+
 ### Fixed
 
 - Task 414: the popup's settings and close buttons (right of the search box) were invisible in 0.1.0 because the gear and cross were font glyphs that the Windows UI font and the software renderer do not draw. They, the favorite star and the lock in Settings > Privacy are now vector icons. The popup footer was cut off in Vietnamese ("Ghi..."); it now uses short labels so every action is visible in English and Vietnamese (full names stay in the accessible labels).
