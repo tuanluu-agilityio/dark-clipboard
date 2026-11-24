@@ -23,6 +23,7 @@ mod prefs;
 mod renderer;
 mod seed;
 mod shortcut;
+mod shortcuts;
 mod single_instance;
 mod start_failure;
 mod theme;

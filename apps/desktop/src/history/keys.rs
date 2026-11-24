@@ -76,6 +76,8 @@ pub enum HistoryAction {
     OpenDrawer,
     /// Left arrow with the drawer open.
     CloseDrawer,
+    /// F1 or Ctrl+/: the shortcuts sheet (Task 706), with the popup's modifier rules.
+    Shortcuts,
 }
 
 /// What else the window shows that changes what a key means (Task 704). `map_key` assumes none.
@@ -166,6 +168,10 @@ pub fn map_key_in(k: Key, m: Mods, ctx: HistoryCtx, layers: Layers) -> Option<Hi
         }
         Key::Char('b' | 'B' | '\u{2}') if chord => return Some(HistoryAction::ToggleSidebar),
         Key::Char(',') if chord => return Some(HistoryAction::OpenSettings),
+        // The shortcuts sheet: like the popup's, F1 or Ctrl+/ (Shift allowed: "/" needs it on
+        // some layouts), from anywhere.
+        Key::F1 if !m.alt && !m.meta => return Some(HistoryAction::Shortcuts),
+        Key::Char('/') if m.ctrl && !m.alt && !m.meta => return Some(HistoryAction::Shortcuts),
         _ => {}
     }
     if ctx.chips_focused && k != Key::Escape {

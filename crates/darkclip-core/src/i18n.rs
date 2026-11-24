@@ -111,10 +111,7 @@ messages! {
     UiFilterPinned => ("Pinned", "Đã ghim"),
     UiFilterToday => ("Today", "Hôm nay"),
     UiFilter7Days => ("7 days", "7 ngày"),
-    UiEmptyHistory => (
-        "Nothing here yet. Copy some text and it will show up here.",
-        "Chưa có gì. Hãy sao chép một đoạn văn bản, nó sẽ hiện ở đây."
-    ),
+    UiEmptyHistory => ("Nothing here yet", "Chưa có gì"),
     UiNoResults => ("No matching clips", "Không có mục nào phù hợp"),
     UiLoading => ("Loading...", "Đang tải..."),
     UiLoadFailed => (
@@ -981,6 +978,32 @@ messages! {
     HistDrawerOpen => ("Show details", "Hiện chi tiết"),
     HistDrawerClose => ("Close details", "Đóng chi tiết"),
     HistCheckLabel => ("Select this clip", "Chọn mục này"),
+    // Secondary surfaces (Task 706): the empty-state hints and the F1 shortcuts sheet.
+    StateHintEmpty => ("Copy something to fill it.", "Hãy sao chép gì đó để bắt đầu."),
+    StateHintNoResults => ("Clear the search or filters.", "Hãy xóa từ khóa hoặc bộ lọc."),
+    StateHintFailed => ("Close the window and reopen it.", "Hãy đóng cửa sổ rồi mở lại."),
+    SheetTitle => ("Keyboard shortcuts", "Phím tắt"),
+    SheetEscCloses => ("Esc closes", "Esc để đóng"),
+    SheetShortcuts => ("Shortcuts", "Phím tắt"),
+    SheetGroupNavigate => ("Navigate", "Di chuyển"),
+    SheetGroupCopy => ("Copy", "Sao chép"),
+    SheetGroupOrganize => ("Organize", "Sắp xếp"),
+    SheetGroupWindow => ("Window", "Cửa sổ"),
+    SheetPrevious => ("Previous clip", "Mục trước"),
+    SheetNext => ("Next clip", "Mục sau"),
+    SheetPageUp => ("Page up", "Lên một trang"),
+    SheetPageDown => ("Page down", "Xuống một trang"),
+    SheetFirst => ("First clip", "Mục đầu"),
+    SheetLast => ("Last clip", "Mục cuối"),
+    SheetOpenPreview => ("Open preview", "Mở xem trước"),
+    SheetClosePreview => ("Close preview", "Đóng xem trước"),
+    SheetCopyNth => ("Copy item 1-9", "Chép mục 1-9"),
+    SheetPinToggle => ("Pin or unpin", "Ghim hoặc bỏ ghim"),
+    SheetFilterTab => ("Filter tab 1-9", "Thẻ lọc 1-9"),
+    SheetExtend => ("Extend selection", "Mở rộng vùng chọn"),
+    SheetNextArea => ("Next area", "Vùng kế tiếp"),
+    SheetSidebar => ("Sidebar", "Thanh bên"),
+    SheetDrawer => ("Details (narrow)", "Chi tiết (hẹp)"),
 }
 
 /// Messages allowed to read the same in both languages.

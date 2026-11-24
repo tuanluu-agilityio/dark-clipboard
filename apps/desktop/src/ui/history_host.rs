@@ -32,6 +32,7 @@ use crate::popup::list::{Applied, Filters, Item, ListModel, Request, View};
 use crate::popup::menu::{self, MenuAction, MenuKey, MenuKind, OpenMenu};
 use crate::popup::row::fill;
 use crate::popup::transform::{self as tf, PanelKey, Session};
+use crate::shortcuts::{sheet_key, SheetKey, Win};
 use darkclip_app::api::{Caller, CopyMode, SaveOutcome};
 use darkclip_app::ApiError;
 use darkclip_app::{ClipApi, ClipSummaryView, Page};
@@ -98,6 +99,8 @@ struct Host {
     select_mode: bool,
     /// The id of the control that reported the keyboard focus last (`filter-focus`).
     focus_id: Option<i32>,
+    /// The F1 shortcuts sheet is open (Task 706). Not persisted; closed when the window hides.
+    sheet: bool,
     /// The open "Copy as..." panel (Task 404), if any.
     tf: Option<Session>,
     detail: DetailModel<Px>,
@@ -134,6 +137,7 @@ fn now_and_offset() -> (darkclip_core::Timestamp, i32) {
 /// Sets the window's strings (creation, language change).
 fn set_strings(w: &HistoryWindow, lang: Lang) {
     common::set_shared_strings(w, lang);
+    common::set_sheet_strings(w, lang);
     let s = w.global::<Strings>();
     s.set_history_title(t(lang, Msg::UiHistoryTitle).into());
     s.set_select_all(t(lang, Msg::UiSelectAll).into());
@@ -932,8 +936,36 @@ impl Host {
             HistoryAction::PrevRegion => self.cycle_region(true),
             HistoryAction::OpenDrawer => self.open_drawer(),
             HistoryAction::CloseDrawer => self.close_drawer(),
+            HistoryAction::Shortcuts => self.show_shortcuts(),
         }
         true
+    }
+
+    /// F1 and Ctrl+/: the shortcuts sheet (Task 706). The key map never gives this action while
+    /// a dialog, the "Copy as..." panel or the editor has the keys.
+    fn show_shortcuts(&mut self) {
+        if self.modal_open() || self.confirming() {
+            return;
+        }
+        self.sheet = true;
+        self.render_sheet();
+    }
+
+    /// Draws the sheet's state: its two columns in the current language and whether it is open.
+    fn render_sheet(&self) {
+        if self.sheet {
+            let (left, right) = common::sheet_columns(Win::History, self.lang);
+            self.win.set_sheet_left(left);
+            self.win.set_sheet_right(right);
+        }
+        self.win.set_sheet_open(self.sheet);
+    }
+
+    fn close_sheet(&mut self) {
+        if self.sheet {
+            self.sheet = false;
+            self.render_sheet();
+        }
     }
 
     fn toggle_filter(&mut self, id: i32) {
@@ -985,6 +1017,7 @@ impl Host {
 
     /// Drops everything the window holds: rows, search text, selection, pane, messages.
     fn leave(&mut self) {
+        self.close_sheet();
         self.date_menu = None;
         self.row_menu = None;
         self.drawer_open = false;
@@ -1586,6 +1619,7 @@ fn create() -> Option<()> {
         drawer_open: false,
         select_mode: false,
         focus_id: None,
+        sheet: false,
         tf: None,
         detail: DetailModel::default(),
         wanted: Arc::new(Mutex::new(None)),
@@ -1670,6 +1704,20 @@ fn connect(w: &HistoryWindow) {
             h.date_menu = None;
             h.row_menu = None;
             let key = hkeys::history_key(&text);
+            // The shortcuts sheet is modal: Esc, F1 and Ctrl+/ close it, every other key is
+            // swallowed (so Esc closes the sheet before the window).
+            if h.sheet {
+                let mods = Mods {
+                    ctrl,
+                    shift,
+                    alt,
+                    meta,
+                };
+                if sheet_key(true, key, mods) == SheetKey::Close {
+                    h.close_sheet();
+                }
+                return true;
+            }
             // The "Copy as..." panel is modal: it takes every key.
             if h.tf.is_some() {
                 h.panel_key(tf::panel_key(key));
@@ -1771,6 +1819,9 @@ fn connect(w: &HistoryWindow) {
     w.on_tf_cancel(|| {
         with_host(|h| h.close_copy_as());
     });
+    w.on_sheet_close(|| {
+        with_host(Host::close_sheet);
+    });
     w.on_edit_save(|| {
         with_host(|h| h.save_edit());
     });
@@ -1825,6 +1876,7 @@ pub fn set_lang(lang: Lang) {
             h.rebuild_filters();
             h.rebuild_rows();
             h.sync();
+            h.render_sheet();
         }
     });
 }
