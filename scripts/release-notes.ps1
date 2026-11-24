@@ -40,3 +40,6 @@ $dir = Split-Path -Parent $Out
 if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
 [System.IO.File]::WriteAllText($Out, ($parts -join "`n") + "`n", (New-Object System.Text.UTF8Encoding($false)))
 Write-Host "wrote $Out"
+# A missing section in a dry run left $LASTEXITCODE = 1 from changelog-section.ps1, and the
+# Actions pwsh step returns $LASTEXITCODE. The notes were written, so succeed explicitly.
+exit 0
