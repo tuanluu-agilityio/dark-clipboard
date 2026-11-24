@@ -110,14 +110,10 @@ impl Storage {
         self.fts_dirty = 0;
         checkpoint(&self.conn);
         // VACUUM must not park its working copy in the system temp folder (a plain copy of the
-        // history outside the data folder): keep temporary files in memory meanwhile.
-        let prev: i64 = self
-            .conn
-            .pragma_query_value(None, "temp_store", |r| r.get(0))?;
-        self.conn.pragma_update(None, "temp_store", "MEMORY")?;
-        let vacuum = self.conn.execute_batch("VACUUM");
-        let _ = self.conn.pragma_update(None, "temp_store", prev);
-        vacuum?;
+        // history outside the data folder). `open` already keeps this connection's temporary
+        // data in memory for its whole life (Task 416); set again so VACUUM never depends on it.
+        db::keep_temp_in_memory(&self.conn)?;
+        self.conn.execute_batch("VACUUM")?;
         checkpoint(&self.conn);
         Ok(CompactReport {
             bytes_before,

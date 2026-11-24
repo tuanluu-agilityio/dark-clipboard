@@ -6,6 +6,7 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ### Fixed
 
+- Task 416: temporary data that SQLite uses for large searches and maintenance no longer goes to the system temp folder; it stays in memory on every connection to the history. The safety copy made before a database upgrade no longer keeps search words of removed items.
 - Task 415: a backup (and the safety copy kept before a restore) made shortly after automatic cleanup or a note or tag change could contain search words of the removed clips or the old notes and tags. Every backup and safety copy now has its search index merged and is compacted, so deleted words are not carried.
 
 ## [0.1.1] - 2026-11-24
