@@ -5,7 +5,8 @@
 
 import { ScrollView } from "std-widgets.slint";
 import { Theme, Strings } from "theme.slint";
-import { ActionButton } from "popup.slint";
+import { Button, ButtonKind } from "kit/button.slint";
+import { IconButton } from "kit/icon_button.slint";
 import { Icon, IconName } from "kit/icon.slint";
 
 export global OrgStrings {
@@ -13,6 +14,7 @@ export global OrgStrings {
     in property <string> no-note;
     in property <string> edit-note;
     in property <string> tags-label;
+    in property <string> collections-label;
     in property <string> no-tags;
     in property <string> edit-tags;
     in property <string> remove-tag;
@@ -43,132 +45,6 @@ export struct OrgDialogState {
     submit-text: string,
     cancel-text: string,
     can-submit: bool,
-}
-
-// The favorite, the note and the tags of the one selected clip.
-export component OrgStrip inherits Rectangle {
-    in property <bool> favorite;
-    in property <string> fav-text;
-    in property <bool> can-favorite;
-    in property <bool> can-edit;
-    in property <string> note;
-    in property <[string]> tags;
-    callback toggle-favorite();
-    callback edit-note();
-    callback edit-tags();
-    callback remove-tag(int);
-
-    height: min(col.preferred-height + 8px, 230px);
-    accessible-role: AccessibleRole.groupbox;
-    accessible-label: OrgStrings.tags-label;
-
-    Rectangle {
-        y: 0px;
-        height: 1px;
-        background: Theme.line;
-    }
-
-    ScrollView {
-        y: 4px;
-        height: parent.height - 4px;
-        col := VerticalLayout {
-            padding: 8px;
-            spacing: 4px;
-
-            HorizontalLayout {
-                spacing: 6px;
-                height: 26px;
-                if root.favorite: VerticalLayout {
-                    width: 14px;
-                    alignment: center;
-                    Icon {
-                        name: IconName.star;
-                        tint: Theme.warning;
-                        size: 14px;
-                    }
-                }
-                ActionButton {
-                    text: root.fav-text;
-                    visible: root.can-favorite;
-                    clicked => {
-                        root.toggle-favorite();
-                    }
-                }
-            }
-
-            Text {
-                text: OrgStrings.note-label;
-                color: Theme.text-muted;
-                font-size: 11px;
-                font-weight: 700;
-            }
-            Text {
-                text: root.note != "" ? root.note : OrgStrings.no-note;
-                color: root.note != "" ? Theme.text : Theme.text-muted;
-                font-size: 12px;
-                wrap: word-wrap;
-                max-height: 54px;
-                overflow: elide;
-                accessible-role: AccessibleRole.text;
-            }
-            HorizontalLayout {
-                height: 26px;
-                alignment: start;
-                ActionButton {
-                    text: OrgStrings.edit-note;
-                    visible: root.can-edit;
-                    clicked => {
-                        root.edit-note();
-                    }
-                }
-            }
-
-            Text {
-                text: OrgStrings.tags-label;
-                color: Theme.text-muted;
-                font-size: 11px;
-                font-weight: 700;
-            }
-            if root.tags.length == 0: Text {
-                text: OrgStrings.no-tags;
-                color: Theme.text-muted;
-                font-size: 12px;
-                accessible-role: AccessibleRole.text;
-            }
-            for tag[i] in root.tags: HorizontalLayout {
-                height: 24px;
-                spacing: 4px;
-                Text {
-                    text: tag;
-                    color: Theme.text;
-                    font-size: 12px;
-                    overflow: elide;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    accessible-role: AccessibleRole.text;
-                }
-                ActionButton {
-                    text: "\u{00d7}";
-                    visible: root.can-edit;
-                    width: 26px;
-                    clicked => {
-                        root.remove-tag(i);
-                    }
-                }
-            }
-            HorizontalLayout {
-                height: 26px;
-                alignment: start;
-                ActionButton {
-                    text: OrgStrings.edit-tags;
-                    visible: root.can-edit;
-                    clicked => {
-                        root.edit-tags();
-                    }
-                }
-            }
-        }
-    }
 }
 
 // The modal dialog. It covers the window and takes every click; keys are routed by Rust.
@@ -225,9 +101,10 @@ export component OrgDialog inherits Rectangle {
                                 horizontal-stretch: 1;
                                 accessible-role: AccessibleRole.text;
                             }
-                            ActionButton {
-                                text: "\u{00d7}";
-                                width: 26px;
+                            IconButton {
+                                name: IconName.x;
+                                label: OrgStrings.remove-tag;
+                                focusable: false;
                                 clicked => {
                                     root.remove-chip(i);
                                 }
@@ -381,14 +258,15 @@ export component OrgDialog inherits Rectangle {
             HorizontalLayout {
                 spacing: 8px;
                 alignment: end;
-                height: 30px;
-                ActionButton {
+                height: 32px;
+                Button {
                     text: root.state.cancel-text;
                     clicked => {
                         root.cancel();
                     }
                 }
-                ActionButton {
+                Button {
+                    kind: ButtonKind.primary;
                     text: root.state.submit-text;
                     visible: root.state.can-submit;
                     clicked => {

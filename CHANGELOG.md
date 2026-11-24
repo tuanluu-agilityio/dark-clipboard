@@ -14,6 +14,11 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 ### Changed
 
 - Task 701: the popup is 440 x 520 (was 420 x 560). The text footer (Copy, Plain text, Copy as..., Pin, Delete) is replaced by the row buttons, the row menu and the keys that already existed (Enter, Shift+Enter, Ctrl+T, Ctrl+P, Del); the status line shows the capture state and at most three key hints.
+- Task 703: the history window has a new layout. A 216 px sidebar groups the filters (Library: All, Pinned, Favorites; Types; Collections with a + button; Tags; Apps, collapsed at first; counts for Favorites, collections and tags); the toolbar has the filter name, the search field, a date menu (Any time, Today, Last 7 days, Last 30 days; it replaces the Date filters of the old left pane) and a select-several toggle; rows are 56 px with a kind icon, two preview lines and source, age and the first tag; a 340 px detail panel has a toolbar (Copy, Copy as plain text, Copy as..., Edit a copy... | Pin, Favorite, Delete), the preview, type, source and time, and Tags, Note and Collections sections that open the existing dialogs. The two rows of footer buttons and the three hint lines are gone; a status line shows the clip count and the Space and Menu keys. Every key keeps its action, and Export stays on Ctrl+Shift+E. The window is at least 876 px wide until the narrow layouts arrive.
+
+### Fixed
+
+- Task 703: a masked clip (a clip that may hold a secret) no longer shows the first characters of the secret in the history list; the row and the detail panel show only the fixed "Hidden" text, and a search never highlights it.
 
 ## [0.1.2] - 2026-11-24
 

@@ -16,9 +16,6 @@ pub const NAV_FAVORITES: i32 = 105;
 pub const NAV_COLLECTION: i32 = 1000;
 /// Tag chips are `NAV_TAG + index` into the tags.
 pub const NAV_TAG: i32 = 2000;
-/// Collections shown as popup chips at most (the popup lists them in "More filters" now).
-#[allow(dead_code)]
-pub const POPUP_MAX_COLLECTIONS: usize = 6;
 
 /// What the list pane knows about the organisation: loaded on the worker, never from clip content.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -50,6 +47,16 @@ impl Nav {
     /// The collections the user made, in list order.
     pub fn user_collections(&self) -> Vec<&CollectionView> {
         self.collections.iter().filter(|c| !c.system).collect()
+    }
+
+    /// Of `names` (the collections a clip is in), the ones the user made, in the same order.
+    /// The system Favorites collection is left out: a clip's favorite state has its own control.
+    pub fn user_names(&self, names: &[String]) -> Vec<String> {
+        names
+            .iter()
+            .filter(|n| self.user_collections().iter().any(|c| &c.name == *n))
+            .cloned()
+            .collect()
     }
 
     /// (id, name) of every collection, for the name check.
@@ -110,32 +117,6 @@ pub fn history_nav_chips(f: &Filters, nav: &Nav, lang: Lang) -> Vec<ChipSpec> {
 
 fn index_id(base: i32, i: usize) -> i32 {
     base + i32::try_from(i).unwrap_or(0)
-}
-
-/// The popup's old chips: Favorites, then at most `POPUP_MAX_COLLECTIONS` user collections.
-#[allow(dead_code)]
-pub fn popup_nav_chips(f: &Filters, nav: &Nav, lang: Lang) -> Vec<ChipSpec> {
-    let mut v = Vec::new();
-    if let Some(fav) = nav.favorites() {
-        v.push(chip(
-            NAV_FAVORITES,
-            t(lang, Msg::OrgFavorites),
-            f.collection == Some(fav.id),
-        ));
-    }
-    for (i, c) in nav
-        .user_collections()
-        .into_iter()
-        .take(POPUP_MAX_COLLECTIONS)
-        .enumerate()
-    {
-        v.push(chip(
-            index_id(NAV_COLLECTION, i),
-            &c.name,
-            f.collection == Some(c.id),
-        ));
-    }
-    v
 }
 
 /// The filters after a click on nav chip `id` (the search text and other filters are kept), or
@@ -267,26 +248,6 @@ mod tests {
     }
 
     #[test]
-    fn the_popup_has_favorites_and_the_collections_without_counts() {
-        let v = popup_nav_chips(&Filters::default(), &nav(), Lang::En);
-        let labels: Vec<&str> = v.iter().map(|c| c.label.as_str()).collect();
-        assert_eq!(labels, ["Favorites", "Work", "Ideas"]);
-        assert!(v.iter().all(|c| !c.header && !c.on));
-        assert_eq!(v[0].id, NAV_FAVORITES);
-        assert_eq!(v[1].id, NAV_COLLECTION);
-    }
-
-    #[test]
-    fn the_popup_shows_at_most_six_collections() {
-        let mut n = nav();
-        for i in 0..10 {
-            n.collections.push(col(20 + i, &format!("c{i}"), false, 1));
-        }
-        let v = popup_nav_chips(&Filters::default(), &n, Lang::En);
-        assert_eq!(v.len(), 1 + POPUP_MAX_COLLECTIONS);
-    }
-
-    #[test]
     fn clicking_favorites_filters_to_the_system_collection_and_again_clears_it() {
         let n = nav();
         let f = toggle_nav(&Filters::default(), NAV_FAVORITES, &n).unwrap();
@@ -370,6 +331,17 @@ mod tests {
         };
         assert!(n.shown_user_collection(&fav).is_none());
         assert!(n.shown_user_collection(&Filters::default()).is_none());
+    }
+
+    #[test]
+    fn a_clips_collection_chips_leave_out_favorites() {
+        let n = nav();
+        let names = vec![
+            "Favorites".to_string(),
+            "Work".to_string(),
+            "Gone".to_string(),
+        ];
+        assert_eq!(n.user_names(&names), ["Work"]);
     }
 
     #[test]
