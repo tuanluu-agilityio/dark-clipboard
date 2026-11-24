@@ -78,6 +78,11 @@ struct Host {
     /// What the start-at-login toggle showed when the form was filled (or last saved): only a
     /// change from this is written (D-056).
     login_opened: bool,
+    /// Counts every edit of the form; a save clears `dirty` only if no edit came after the form
+    /// was read for it.
+    edits: u64,
+    /// `edits` when the running save read the form.
+    edits_at_save: u64,
 }
 
 thread_local! {
@@ -462,6 +467,18 @@ fn set_strings(w: &SettingsWindow, lang: Lang, snap: Option<&Snapshot>) {
 }
 
 impl Host {
+    /// The form changed: the save bar shows.
+    fn clear_dirty_if_unchanged(&self) {
+        if dirty_after_save(self.edits_at_save, self.edits) {
+            self.win.set_dirty(false);
+        }
+    }
+
+    fn mark_dirty(&mut self) {
+        self.edits = self.edits.wrapping_add(1);
+        self.win.set_dirty(true);
+    }
+
     fn refresh_apps(&self) {
         let rows: Vec<AppRow> = self
             .apps
@@ -636,6 +653,12 @@ impl Host {
     }
 }
 
+/// After a save the form is clean only if nothing was edited since the form was read for it; an
+/// edit made while the save was running keeps the save bar.
+fn dirty_after_save(edits_at_save: u64, edits_now: u64) -> bool {
+    edits_at_save == edits_now
+}
+
 /// `login` is the stored start-at-login choice after the save (the real state).
 fn on_save_result(r: SaveResult, login: bool) {
     with_host(|h| {
@@ -645,7 +668,7 @@ fn on_save_result(r: SaveResult, login: bool) {
         match r {
             SaveResult::Saved => {
                 h.clear_errors();
-                h.win.set_dirty(false);
+                h.clear_dirty_if_unchanged();
                 // The toggle shows the stored choice; a later save writes it only when the user
                 // changes it again (D-056).
                 h.win.set_launch_at_login(login);
@@ -662,7 +685,7 @@ fn on_save_result(r: SaveResult, login: bool) {
             }
             SaveResult::SavedLoginFailed => {
                 h.clear_errors();
-                h.win.set_dirty(false);
+                h.clear_dirty_if_unchanged();
                 // The toggle goes back to what is really registered; the failure is shown.
                 h.win.set_launch_at_login(login);
                 h.login_opened = login;
@@ -709,6 +732,7 @@ fn save_now() {
         h.saving = true;
         h.win.set_can_save(false);
         h.set_status(None);
+        h.edits_at_save = h.edits;
         Some((h.collect(), h.poster.clone()))
     })
     .flatten() else {
@@ -861,6 +885,8 @@ fn create() -> Option<()> {
             picker_names: Vec::new(),
             picker_gen: 0,
             login_opened: false,
+            edits: 0,
+            edits_at_save: 0,
         });
     });
     connect(&w);
@@ -873,7 +899,7 @@ fn add_app(text: &str) {
         match h.apps.add(text, model::current_platform()) {
             Ok(_) => {
                 h.win.set_new_app(SharedString::new());
-                h.win.set_dirty(true);
+                h.mark_dirty();
                 h.refresh_apps();
             }
             Err(m) => h.win.set_err_app(t(h.lang, m).into()),
@@ -1266,7 +1292,8 @@ fn key_ctx(h: &Host, nav_focused: bool) -> KeyCtx {
 }
 
 /// Esc: closes the open question or the picker (one layer per press), else hides the window.
-/// Changes that are still pending stay pending (the window keeps its form while hidden).
+/// Hiding keeps the form in memory, but showing the window again fills it from the saved
+/// settings, so pending changes are discarded then (as before the redesign).
 fn escape() {
     let layer = with_host(|h| {
         let layer = settings_keys::escape_layer(key_ctx(h, false));
@@ -1347,7 +1374,7 @@ fn connect(w: &SettingsWindow) {
     });
     w.on_edited(|| {
         with_host(|h| {
-            h.win.set_dirty(true);
+            h.mark_dirty();
             h.set_status(None);
         });
     });
@@ -1371,7 +1398,7 @@ fn connect(w: &SettingsWindow) {
             if let Ok(i) = usize::try_from(i) {
                 // A built-in entry only asks; it goes after `confirm_remove`.
                 if h.apps.request_remove(i) == RemoveOutcome::Removed {
-                    h.win.set_dirty(true);
+                    h.mark_dirty();
                 }
             }
             h.refresh_apps();
@@ -1380,7 +1407,7 @@ fn connect(w: &SettingsWindow) {
     w.on_confirm_remove(|| {
         with_host(|h| {
             if h.apps.confirm_remove() {
-                h.win.set_dirty(true);
+                h.mark_dirty();
             }
             h.refresh_apps();
         });
@@ -1584,4 +1611,17 @@ pub fn hide() {
         return;
     };
     let _ = w.hide();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dirty_after_save;
+
+    #[test]
+    fn a_save_clears_dirty_only_when_nothing_changed_meanwhile() {
+        assert!(dirty_after_save(3, 3));
+        assert!(!dirty_after_save(3, 4));
+        // The counter wraps without a false "clean".
+        assert!(!dirty_after_save(u64::MAX, 0));
+    }
 }
