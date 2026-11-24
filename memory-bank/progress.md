@@ -105,7 +105,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 710 App icon (option A) | task/710-app-icon | builder | sonnet | done (ICO 8 sizes 57 KB; tray RGBA per state via `nearest_tray_size`; `embed-resource` 3.0.12 Windows build-dep) | 124,033 | 41,771 (reviewer sonnet: APPROVED, nits only) | 0 | 165,804 |
 | 701 Popup layout (package: scaffolder sonnet 140,626) | task/701-popup-layout | builder | sonnet | done (440×520, 48 px rows, row actions + kit row menu, filter segment + More filters, status line, floating toast; masked rows show only i18n text; F-31 closed) | 549,290 (incl. package) | 93,271 (reviewer opus: APPROVED, 1 should-fix → F-32) | 0 | 642,561 |
 | 702 Popup preview pane | | builder | sonnet | pending | | | | |
-| 703 History layout | | builder | sonnet | pending | | | | |
+| 703 History layout (package: scaffolder sonnet 100,719) | task/703-history-layout | builder | sonnet | done (sidebar groups, toolbar + date menu, 56 px rows, detail panel with toolbar and sections, status line; footer/org row/hints removed; masked rows and detail show no content; F-32 dead code removed; D-080, D-081) | 500,636 (incl. package) | 126,210 (reviewer opus: APPROVED, 4 should-fix: Favorites chip and collapsed-group title fixed, focus row added, size → 704) | 8,094 | 634,940 |
 | 704 History interaction | | builder | sonnet | pending | | | | |
 | 705 Settings | | builder | sonnet | pending | | | | |
 | 706 Secondary surfaces + F1 sheet | | builder | sonnet | pending | | | | |
@@ -117,7 +117,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 
 | Model | Tokens |
 |---|---|
-| opus | 12,185,612 |
-| sonnet | 6,820,689 |
+| opus | 12,311,822 |
+| sonnet | 7,329,419 |
 | haiku | 0 |
-| **Total** | **19,006,301** (subagents only; orchestrator not measured) |
+| **Total** | **19,641,241** (subagents only; orchestrator not measured) |

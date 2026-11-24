@@ -1,79 +1,29 @@
-// The history window (Task 211): filters on the left, the list in the middle, the details on the
-// right. Data and every decision come from Rust (`src/ui/history_host.rs`, which reuses the
-// popup's view-models); this file only lays things out and forwards input. Every string comes
-// from the `Strings` global (i18n). Dark only (D-037).
+// The history window (Task 211, laid out again in Task 703): sidebar (216 px) | toolbar, list and
+// status line | detail panel (340 px). Data and every decision come from Rust
+// (`src/ui/history_host.rs`, which reuses the popup's view-models and `src/history/sidebar.rs`);
+// this file only lays things out and forwards input. Every string comes from the `Strings` /
+// `OrgStrings` globals (i18n). Dark only (D-037).
+//
+// The panes sit at fixed positions (not in layouts) so the Tab order is: search, date, select
+// toggle, sidebar, list, detail toolbar, tags, note, collections. Narrow layouts are Task 704.
 
-import { ListView, ScrollView, Palette } from "std-widgets.slint";
+import { ListView, Palette } from "std-widgets.slint";
 import { Theme, Strings } from "theme.slint";
-import { ClipRow, ActionButton, RowView, DetailPane, DetailState, RowMetrics } from "popup.slint";
+import { Icon, IconName } from "kit/icon.slint";
+import { IconButton } from "kit/icon_button.slint";
+import { Button, ButtonKind } from "kit/button.slint";
+import { Menu, MenuEntry as KitEntry } from "kit/menu.slint";
+import { TipAlign, TooltipHub, TooltipLayer } from "kit/tooltip.slint";
+import { ClipRow, DetailPane, DetailState, StatusHint } from "popup.slint";
 import { TransformPanel, EditPanel } from "transform.slint";
-import { OrgDialog, OrgDialogState, OrgStrip, OrgStrings } from "organize.slint";
+import { OrgDialog, OrgDialogState, OrgStrings } from "organize.slint";
+import { HistoryRow, HistoryRowMetrics } from "history_row.slint";
+import { FilterItem, SidebarView, DateButton, DetailToolbar, ChipSection, NoteSection, FactLine, HistoryStatus } from "history_panes.slint";
 
-// One line of the left pane: a filter, or a group heading (`header`).
-export struct FilterItem {
-    id: int,
-    label: string,
-    on: bool,
-    header: bool,
-}
-
-// A filter in the left pane (full width, toggles like a chip).
-component FilterButton inherits FocusScope {
-    in property <FilterItem> item;
-    callback toggled();
-    callback focus-report(bool);
-
-    focus-on-click: false;
-    height: 28px;
-    accessible-role: checkbox;
-    accessible-checkable: true;
-    accessible-checked: item.on;
-    accessible-label: item.label;
-    accessible-action-default => {
-        root.toggled();
-    }
-
-    key-pressed(e) => {
-        if (e.text == " " || e.text == Key.Return) {
-            root.toggled();
-            return accept;
-        }
-        reject
-    }
-    focus-gained(reason) => {
-        root.focus-report(true);
-    }
-    focus-lost(reason) => {
-        root.focus-report(false);
-    }
-
-    Rectangle {
-        border-radius: 6px;
-        background: item.on ? Theme.accent.with-alpha(0.25) : (touch.has-hover ? Theme.surface : transparent);
-        border-width: root.has-focus ? 2px : 0px;
-        border-color: Theme.text;
-        Text {
-            x: 10px;
-            width: parent.width - 20px;
-            text: item.label;
-            color: item.on ? Theme.accent : Theme.text;
-            font-weight: item.on ? 700 : 400;
-            font-size: 13px;
-            overflow: elide;
-            vertical-alignment: center;
-        }
-    }
-
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => {
-            root.toggled();
-        }
-    }
-}
+export { FilterItem } from "history_panes.slint";
 
 // One entry of the context menu.
-component MenuEntry inherits Rectangle {
+component CtxEntry inherits Rectangle {
     in property <string> text;
     in property <bool> danger: false;
     in property <bool> enabled: true;
@@ -112,10 +62,11 @@ export component HistoryWindow inherits Window {
     icon: @image-url("../res/window-64.png");
     title: Strings.history-title;
     background: Theme.bg;
-    min-width: 760px;
+    // 216 px sidebar + 320 px list + 340 px panel; narrower layouts come with Task 704.
+    min-width: 876px;
     min-height: 460px;
-    preferred-width: 980px;
-    preferred-height: 640px;
+    preferred-width: 1060px;
+    preferred-height: 660px;
     default-font-size: 13px;
 
     in property <[ClipRow]> rows;
@@ -128,12 +79,16 @@ export component HistoryWindow inherits Window {
     in property <bool> has-selection;
     in property <bool> can-copy;
     in property <bool> will-unpin;
-    // "3 selected" when several are marked; empty otherwise.
+    // "3 clips" when several are marked; empty otherwise.
     in property <string> summary;
     // Details (single clip only). Hidden when `detail-open` is false.
     in property <bool> detail-open;
     in property <DetailState> detail;
     in property <string> detail-text;
+    // Type, source app and time of the single clip (never its content).
+    in property <string> fact-type;
+    in property <string> fact-from;
+    in property <string> fact-copied;
     // Non-empty while the delete confirmation is open (the text it asks).
     in property <string> confirm-text;
     // "Copy as..." and "Edit..." (Task 404). `can-transform`: one text clip, not masked.
@@ -149,8 +104,17 @@ export component HistoryWindow inherits Window {
     in property <string> edit-note;
     in-out property <string> edit-text;
     in-out property <string> query;
+    // Toolbar (Task 703): the current filter's name, the date menu and the select-mode toggle.
+    in property <string> filter-title;
+    in property <string> date-text;
+    in property <[KitEntry]> date-entries;
+    in property <int> date-highlighted;
+    in property <bool> select-mode;
+    // Status line: "128 clips" and at most two key hints.
+    in property <string> status-text;
+    in property <[StatusHint]> status-hints;
     // Organisation (Task 403). `org-*`: what the actions offer for the selection (masked
-    // clips take no add action). The strip shows the one selected clip.
+    // clips take no add action). The sections show the one selected clip.
     in property <bool> org-strip;
     in property <bool> org-favorite;
     in property <string> org-fav-text;
@@ -160,6 +124,7 @@ export component HistoryWindow inherits Window {
     in property <bool> org-can-edit;
     in property <string> org-note;
     in property <[string]> org-tags;
+    in property <[string]> org-collections;
     // A user collection is shown: it can be renamed or deleted.
     in property <bool> col-shown;
     in property <string> confirm-label;
@@ -170,13 +135,17 @@ export component HistoryWindow inherits Window {
     // Where the context menu opens (window coordinates).
     private property <length> menu-x;
     private property <length> menu-y;
-    out property <int> page-rows: max(1, floor(clip-list.visible-height / RowMetrics.height));
+    out property <int> page-rows: max(1, floor(clip-list.visible-height / HistoryRowMetrics.height));
 
     callback query-edited(string);
     // Returns true when the key was handled (the search box does not see it then).
     callback key(string, bool, bool, bool, bool, bool) -> bool;
+    // A control that handles Enter, Space or the arrows itself has (or lost) the focus; Rust's key
+    // map leaves those keys alone then. Ids: -101 date button, -102 select toggle, -50 sidebar,
+    // -110 detail toolbar, -120 tags, -121 note, -122 collections.
     callback filter-focus(int, bool);
     callback filter-toggled(int);
+    callback group-toggled(int);
     // A left click on a row with Ctrl / Shift held; a right click selects the row first.
     callback row-pressed(int, bool, bool);
     callback row-context(int);
@@ -193,7 +162,7 @@ export component HistoryWindow inherits Window {
     callback act-pin();
     callback act-delete();
     callback act-select-all();
-    callback act-clear-selection();
+    callback act-select-mode();
     callback act-confirm();
     callback act-cancel();
     callback load-full-text();
@@ -208,11 +177,17 @@ export component HistoryWindow inherits Window {
     callback act-rename-collection();
     callback act-delete-collection();
     callback org-remove-tag(int);
+    callback org-remove-collection(int);
     callback dlg-edited(string);
     callback dlg-submit();
     callback dlg-cancel();
     callback dlg-choose(int);
     callback dlg-remove-chip(int);
+    // The date menu (an in-window `Menu`: its keys are decided in Rust, D-079).
+    callback date-menu-requested();
+    callback date-menu-key(string) -> bool;
+    callback date-menu-hovered(int);
+    callback date-menu-activated(int);
 
     public function focus-search() {
         search.focus();
@@ -223,22 +198,39 @@ export component HistoryWindow inherits Window {
             clip-list.content-y = 0;
             return;
         }
-        if (i * RowMetrics.height < -clip-list.content-y) {
-            clip-list.content-y = -(i * RowMetrics.height);
-        } else if ((i + 1) * RowMetrics.height > -clip-list.content-y + clip-list.visible-height) {
-            clip-list.content-y = -((i + 1) * RowMetrics.height - clip-list.visible-height);
+        if (i * HistoryRowMetrics.height < -clip-list.content-y) {
+            clip-list.content-y = -(i * HistoryRowMetrics.height);
+        } else if ((i + 1) * HistoryRowMetrics.height > -clip-list.content-y + clip-list.visible-height) {
+            clip-list.content-y = -((i + 1) * HistoryRowMetrics.height - clip-list.visible-height);
         }
     }
 
     // The context menu of the selected row (Menu key).
     public function open-menu-at-selected() {
         root.menu-x = clip-list.absolute-position.x - self.absolute-position.x + 48px;
-        root.menu-y = clip-list.absolute-position.y - self.absolute-position.y + root.selected * RowMetrics.height + clip-list.content-y + 40px;
+        root.menu-y = clip-list.absolute-position.y - self.absolute-position.y + root.selected * HistoryRowMetrics.height + clip-list.content-y + 40px;
         menu.show();
     }
 
+    // Opens the date menu under the date button (Rust filled the entries first).
+    public function open-date-menu() {
+        date-menu.open(date-btn.absolute-position.x - self.absolute-position.x + date-btn.width - date-menu.menu-width,
+            date-btn.absolute-position.y - self.absolute-position.y + date-btn.height + 4px);
+    }
+
+    public function close-date-menu() {
+        date-menu.close();
+    }
+
+    // The window is hidden: no menu, no tooltip stays (the hub is per window).
+    public function reset-ui() {
+        date-menu.close();
+        menu.close();
+        TooltipHub.shown = false;
+    }
+
     function report-shown() {
-        root.shown-until(floor((-clip-list.content-y + clip-list.visible-height) / RowMetrics.height));
+        root.shown-until(floor((-clip-list.content-y + clip-list.visible-height) / HistoryRowMetrics.height));
     }
 
     init => {
@@ -256,368 +248,481 @@ export component HistoryWindow inherits Window {
             reject
         }
 
-        VerticalLayout {
-            padding: 12px;
-            spacing: 10px;
+        // ---- Toolbar (48 px, over the list column) ----
+        toolbar := Rectangle {
+            x: 216px;
+            y: 0px;
+            width: parent.width - 216px - 340px;
+            height: 48px;
 
-            // Search box.
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+                    min-width: 48px;
+                    max-width: 150px;
+                    Text {
+                        text: root.filter-title;
+                        color: Theme.text;
+                        font-size: 15px;
+                        font-weight: 600;
+                        overflow: elide;
+                        vertical-alignment: center;
+                        accessible-role: AccessibleRole.text;
+                    }
+                }
+
+                // Search field (popup style).
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    min-width: 140px;
+                    Rectangle {
+                        height: 32px;
+                        border-radius: 8px;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: search.has-focus ? Theme.focus : Theme.border;
+
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            spacing: 8px;
+                            VerticalLayout {
+                                alignment: center;
+                                Icon {
+                                    name: IconName.search;
+                                    tint: Theme.text-3;
+                                }
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                search := TextInput {
+                                    single-line: true;
+                                    text <=> root.query;
+                                    color: Theme.text;
+                                    selection-background-color: Theme.accent;
+                                    selection-foreground-color: Theme.bg;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                    accessible-label: Strings.search-label;
+                                    accessible-placeholder-text: Strings.search-placeholder;
+                                    accessible-description: Strings.key-hints;
+                                    edited => {
+                                        root.query-edited(self.text);
+                                    }
+                                }
+                                Text {
+                                    visible: root.query == "";
+                                    text: Strings.search-placeholder;
+                                    color: Theme.text-3;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    width: 100%;
+                                    accessible-role: AccessibleRole.none;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+                    date-btn := DateButton {
+                        text: root.date-text;
+                        label: Strings.hist-tip-date;
+                        open-requested => {
+                            root.date-menu-requested();
+                        }
+                        focus-report(on) => {
+                            root.filter-focus(-101, on);
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+                    IconButton {
+                        name: IconName.list-checks;
+                        label: Strings.hist-tip-select;
+                        active: root.select-mode;
+                        tip-align: TipAlign.end;
+                        focus-gained(reason) => {
+                            root.filter-focus(-102, true);
+                        }
+                        focus-lost(reason) => {
+                            root.filter-focus(-102, false);
+                        }
+                        clicked => {
+                            root.act-select-mode();
+                        }
+                    }
+                }
+            }
+
             Rectangle {
-                height: 36px;
-                border-radius: 6px;
-                background: Theme.surface;
-                border-width: 1px;
-                border-color: search.has-focus ? Theme.accent : Theme.line;
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
 
+        // ---- Sidebar (216 px) ----
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: 216px;
+            height: parent.height;
+            background: Theme.surface;
+
+            SidebarView {
+                x: 0px;
+                y: 8px;
+                width: parent.width - 1px;
+                height: parent.height - 16px;
+                items: root.filters;
+                col-shown: root.col-shown;
+                toggled(id) => {
+                    root.filter-toggled(id);
+                }
+                group-toggled(g) => {
+                    root.group-toggled(g);
+                }
+                add-clicked => {
+                    root.act-new-collection();
+                }
+                rename-clicked => {
+                    root.act-rename-collection();
+                }
+                delete-clicked => {
+                    root.act-delete-collection();
+                }
+                focus-report(on) => {
+                    root.filter-focus(-50, on);
+                }
+            }
+
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                background: Theme.border;
+            }
+        }
+
+        // ---- List (flex, min 320 px) ----
+        list-col := Rectangle {
+            x: 216px;
+            y: 48px;
+            width: parent.width - 216px - 340px;
+            height: parent.height - 48px - 28px;
+
+            list-focus := FocusScope {
+                focus-on-click: false;
+                accessible-role: list;
+                accessible-label: Strings.list-label;
+                accessible-item-count: root.rows.length;
+                visible: root.view-state == 0;
+
+                Rectangle {
+                    border-radius: 6px;
+                    border-width: list-focus.has-focus ? 1px : 0px;
+                    border-color: Theme.focus;
+                }
+
+                clip-list := ListView {
+                    x: 8px;
+                    width: parent.width - 16px;
+                    for r[i] in root.rows: HistoryRow {
+                        data: r;
+                        index: i;
+                        selected: i == root.selected;
+                        pressed(ctrl, shift) => {
+                            root.row-pressed(i, ctrl, shift);
+                        }
+                        context(x, y) => {
+                            root.row-context(i);
+                            root.menu-x = x - root.absolute-position.x;
+                            root.menu-y = y - root.absolute-position.y;
+                            menu.show();
+                        }
+                        activated => {
+                            root.row-activated(i);
+                        }
+                    }
+                    changed content-y => {
+                        root.report-shown();
+                    }
+                    changed visible-height => {
+                        root.report-shown();
+                    }
+                }
+            }
+
+            Text {
+                visible: root.view-state != 0;
+                width: parent.width - 40px;
+                x: 20px;
+                text: root.view-state == 1 ? Strings.loading
+                    : root.view-state == 2 ? Strings.empty-history
+                    : root.view-state == 3 ? Strings.no-results
+                    : Strings.load-failed;
+                color: root.view-state == 4 ? Theme.danger : Theme.text-2;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+
+            // The toast floats above the status line and never hides a control.
+            if root.toast != "": Rectangle {
+                x: 12px;
+                y: parent.height - 44px;
+                width: parent.width - 24px;
+                height: 36px;
+                border-radius: 8px;
+                background: Theme.raised;
+                border-width: 1px;
+                border-color: Theme.border-strong;
                 HorizontalLayout {
                     padding-left: 10px;
                     padding-right: 10px;
-                    Rectangle {
-                        search := TextInput {
-                            single-line: true;
-                            text <=> root.query;
-                            color: Theme.text;
-                            selection-background-color: Theme.accent;
-                            selection-foreground-color: Theme.bg;
-                            font-size: 14px;
-                            vertical-alignment: center;
-                            accessible-label: Strings.search-label;
-                            accessible-placeholder-text: Strings.search-placeholder;
-                            accessible-description: Strings.key-hints;
-                            edited => {
-                                root.query-edited(self.text);
-                            }
+                    spacing: 8px;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            name: IconName.info;
+                            tint: Theme.text-2;
                         }
-                        Text {
-                            visible: root.query == "";
-                            text: Strings.search-placeholder;
-                            color: Theme.text-muted;
-                            font-size: 14px;
-                            vertical-alignment: center;
-                            overflow: elide;
-                            width: 100%;
-                            accessible-role: none;
-                        }
+                    }
+                    Text {
+                        text: root.toast;
+                        color: Theme.text;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                        min-width: 0px;
+                        accessible-role: AccessibleRole.text;
+                        accessible-label: root.toast;
                     }
                 }
             }
+        }
 
-            HorizontalLayout {
-                spacing: 10px;
-                vertical-stretch: 1;
+        // ---- Status line (28 px) ----
+        HistoryStatus {
+            x: 216px;
+            y: parent.height - 28px;
+            width: parent.width - 216px - 340px;
+            text: root.status-text;
+            hints: root.status-hints;
+            Rectangle {
+                y: 0px;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
 
-                // Left pane: filters, collections and tags; collection actions below.
-                VerticalLayout {
-                    width: 180px;
-                    spacing: 6px;
-                    ScrollView {
-                        vertical-stretch: 1;
-                        accessible-role: groupbox;
-                        accessible-label: Strings.filters-label;
-                        VerticalLayout {
-                            spacing: 2px;
-                            for f in root.filters: VerticalLayout {
-                                if f.header: Text {
-                                    height: 30px;
-                                    text: f.label;
-                                    color: Theme.text-muted;
-                                    font-size: 11px;
-                                    font-weight: 700;
-                                    vertical-alignment: bottom;
-                                    accessible-role: text;
-                                }
-                                if !f.header: FilterButton {
-                                    item: f;
-                                    toggled => {
-                                        root.filter-toggled(f.id);
-                                    }
-                                    focus-report(on) => {
-                                        root.filter-focus(f.id, on);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    ActionButton {
-                        text: OrgStrings.new-collection;
-                        clicked => {
-                            root.act-new-collection();
-                        }
-                    }
-                    ActionButton {
-                        text: OrgStrings.rename-collection;
-                        visible: root.col-shown;
-                        clicked => {
-                            root.act-rename-collection();
-                        }
-                    }
-                    ActionButton {
-                        text: OrgStrings.delete-collection;
-                        visible: root.col-shown;
-                        clicked => {
-                            root.act-delete-collection();
-                        }
-                    }
+        // ---- Detail panel (340 px) ----
+        Rectangle {
+            x: parent.width - 340px;
+            y: 0px;
+            width: 340px;
+            height: parent.height;
+            background: Theme.bg;
+
+            Rectangle {
+                x: 0px;
+                width: 1px;
+                background: Theme.border;
+            }
+
+            DetailToolbar {
+                x: 12px;
+                y: 10px;
+                width: parent.width - 24px;
+                can-copy: root.can-copy;
+                can-transform: root.can-transform;
+                has-selection: root.has-selection;
+                will-unpin: root.will-unpin;
+                can-favorite: root.org-can-favorite;
+                favorite: root.org-favorite;
+                fav-text: root.org-fav-text;
+                act-copy => {
+                    root.act-copy();
                 }
-
-                Rectangle {
-                    width: 1px;
-                    background: Theme.line;
+                act-copy-plain => {
+                    root.act-copy-plain();
                 }
-
-                // Centre: the list, or a state message in its place.
-                Rectangle {
-                    horizontal-stretch: 3;
-                    min-width: 300px;
-
-                    list-focus := FocusScope {
-                        focus-on-click: false;
-                        accessible-role: list;
-                        accessible-label: Strings.list-label;
-                        accessible-item-count: root.rows.length;
-                        visible: root.view-state == 0;
-
-                        Rectangle {
-                            border-radius: 6px;
-                            border-width: list-focus.has-focus ? 1px : 0px;
-                            border-color: Theme.accent;
-                        }
-
-                        clip-list := ListView {
-                            for r[i] in root.rows: RowView {
-                                data: r;
-                                index: i;
-                                selected: i == root.selected;
-                                pressed(ctrl, shift) => {
-                                    root.row-pressed(i, ctrl, shift);
-                                }
-                                context(x, y) => {
-                                    root.row-context(i);
-                                    root.menu-x = x - root.absolute-position.x;
-                                    root.menu-y = y - root.absolute-position.y;
-                                    menu.show();
-                                }
-                                activated => {
-                                    root.row-activated(i);
-                                }
-                            }
-                            changed content-y => {
-                                root.report-shown();
-                            }
-                            changed visible-height => {
-                                root.report-shown();
-                            }
-                        }
-                    }
-
-                    Text {
-                        visible: root.view-state != 0;
-                        width: parent.width - 40px;
-                        text: root.view-state == 1 ? Strings.loading
-                            : root.view-state == 2 ? Strings.empty-history
-                            : root.view-state == 3 ? Strings.no-results
-                            : Strings.load-failed;
-                        color: root.view-state == 4 ? Theme.danger : Theme.text-muted;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                        wrap: word-wrap;
-                    }
+                act-copy-as => {
+                    root.act-copy-as();
                 }
-
-                Rectangle {
-                    width: 1px;
-                    background: Theme.line;
+                act-edit => {
+                    root.act-edit();
                 }
-
-                // Right pane: the details of one clip, or what is selected.
-                Rectangle {
-                    horizontal-stretch: 2;
-                    min-width: 240px;
-
-                    if root.detail-open: VerticalLayout {
-                        DetailPane {
-                            vertical-stretch: 1;
-                            state: root.detail;
-                            text: root.detail-text;
-                            load-text => {
-                                root.load-full-text();
-                            }
-                            load-image => {
-                                root.load-full-image();
-                            }
-                        }
-                        if root.org-strip: OrgStrip {
-                            favorite: root.org-favorite;
-                            fav-text: root.org-fav-text;
-                            can-favorite: root.org-can-favorite;
-                            can-edit: root.org-can-edit;
-                            note: root.org-note;
-                            tags: root.org-tags;
-                            toggle-favorite => {
-                                root.act-favorite();
-                            }
-                            edit-note => {
-                                root.act-note();
-                            }
-                            edit-tags => {
-                                root.act-tags();
-                            }
-                            remove-tag(i) => {
-                                root.org-remove-tag(i);
-                            }
-                        }
-                    }
-                    if !root.detail-open: Text {
-                        width: parent.width - 24px;
-                        text: root.summary != "" ? root.summary : Strings.history-hint;
-                        color: Theme.text-muted;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                        wrap: word-wrap;
-                        accessible-role: text;
-                    }
+                act-pin => {
+                    root.act-pin();
+                }
+                act-favorite => {
+                    root.act-favorite();
+                }
+                act-delete => {
+                    root.act-delete();
+                }
+                focus-report(on) => {
+                    root.filter-focus(-110, on);
                 }
             }
 
             Rectangle {
+                y: 47px;
                 height: 1px;
-                background: Theme.line;
+                background: Theme.border;
             }
 
-            // Footer: actions for the selection, or a message.
-            HorizontalLayout {
-                height: 28px;
-                spacing: 4px;
+            // One clip: preview box, facts and the inline sections.
+            if root.detail-open: VerticalLayout {
+                y: 48px;
+                height: parent.height - 48px;
+                padding: 12px;
+                spacing: 10px;
 
-                ActionButton {
-                    text: Strings.copy;
-                    visible: root.can-copy;
-                    clicked => {
-                        root.act-copy();
+                // A masked clip has no preview box: only the note.
+                if root.detail.kind == 3: HorizontalLayout {
+                    spacing: 8px;
+                    vertical-stretch: 1;
+                    alignment: start;
+                    VerticalLayout {
+                        alignment: start;
+                        Icon {
+                            name: IconName.eye-off;
+                            tint: Theme.warning;
+                        }
+                    }
+                    Text {
+                        text: root.detail.note;
+                        color: Theme.text-2;
+                        wrap: word-wrap;
+                        horizontal-stretch: 1;
+                        vertical-alignment: top;
+                        accessible-role: AccessibleRole.text;
                     }
                 }
-                ActionButton {
-                    text: Strings.copy-plain;
-                    visible: root.can-copy;
-                    clicked => {
-                        root.act-copy-plain();
+                if root.detail.kind != 3: DetailPane {
+                    vertical-stretch: 1;
+                    state: root.detail;
+                    text: root.detail-text;
+                    load-text => {
+                        root.load-full-text();
+                    }
+                    load-image => {
+                        root.load-full-image();
                     }
                 }
-                ActionButton {
-                    text: Strings.copy-as;
-                    visible: root.can-transform;
-                    clicked => {
-                        root.act-copy-as();
+
+                VerticalLayout {
+                    spacing: 2px;
+                    FactLine {
+                        name: Strings.hist-fact-type;
+                        value: root.fact-type;
+                    }
+                    FactLine {
+                        visible: root.fact-from != "";
+                        height: root.fact-from != "" ? 18px : 0px;
+                        name: Strings.hist-fact-from;
+                        value: root.fact-from;
+                    }
+                    FactLine {
+                        name: Strings.hist-fact-copied;
+                        value: root.fact-copied;
                     }
                 }
-                ActionButton {
-                    text: Strings.edit;
-                    visible: root.can-transform;
-                    clicked => {
-                        root.act-edit();
+
+                if root.org-strip && root.org-can-edit: VerticalLayout {
+                    spacing: 6px;
+                    ChipSection {
+                        title: OrgStrings.tags-label;
+                        chips: root.org-tags;
+                        empty-text: OrgStrings.no-tags;
+                        add-label: OrgStrings.edit-tags;
+                        remove-label: OrgStrings.remove-tag;
+                        add => {
+                            root.act-tags();
+                        }
+                        remove(i) => {
+                            root.org-remove-tag(i);
+                        }
+                        focus-report(on) => {
+                            root.filter-focus(-120, on);
+                        }
                     }
-                }
-                ActionButton {
-                    text: root.will-unpin ? Strings.unpin : Strings.pin;
-                    visible: root.has-selection;
-                    clicked => {
-                        root.act-pin();
+                    NoteSection {
+                        note: root.org-note;
+                        edit => {
+                            root.act-note();
+                        }
+                        focus-report(on) => {
+                            root.filter-focus(-121, on);
+                        }
                     }
-                }
-                ActionButton {
-                    text: Strings.delete;
-                    visible: root.has-selection;
-                    clicked => {
-                        root.act-delete();
-                    }
-                }
-                ActionButton {
-                    text: Strings.select-all;
-                    clicked => {
-                        root.act-select-all();
-                    }
-                }
-                ActionButton {
-                    text: Strings.clear-selection;
-                    visible: root.summary != "";
-                    clicked => {
-                        root.act-clear-selection();
-                    }
-                }
-                Text {
-                    text: root.toast != "" ? root.toast : root.summary;
-                    color: Theme.text;
-                    vertical-alignment: center;
-                    horizontal-alignment: right;
-                    overflow: elide;
-                    horizontal-stretch: 1;
-                    accessible-role: text;
-                }
-            }
-            // Organisation actions for the marked clips (Task 403).
-            HorizontalLayout {
-                height: 26px;
-                spacing: 4px;
-                ActionButton {
-                    text: root.org-fav-text;
-                    visible: root.org-can-favorite;
-                    clicked => {
-                        root.act-favorite();
-                    }
-                }
-                ActionButton {
-                    text: OrgStrings.add-to-collection;
-                    visible: root.org-can-add;
-                    clicked => {
-                        root.act-add-collection();
-                    }
-                }
-                ActionButton {
-                    text: OrgStrings.remove-from-collection;
-                    visible: root.org-can-remove;
-                    clicked => {
-                        root.act-remove-collection();
-                    }
-                }
-                ActionButton {
-                    text: OrgStrings.edit-tags;
-                    visible: root.org-can-add;
-                    clicked => {
-                        root.act-tags();
-                    }
-                }
-                ActionButton {
-                    text: OrgStrings.edit-note;
-                    visible: root.org-can-edit;
-                    clicked => {
-                        root.act-note();
+                    ChipSection {
+                        title: OrgStrings.collections-label;
+                        chips: root.org-collections;
+                        empty-text: Strings.hist-no-collections;
+                        add-label: OrgStrings.add-to-collection;
+                        remove-label: OrgStrings.remove-from-collection;
+                        add => {
+                            root.act-add-collection();
+                        }
+                        remove(i) => {
+                            root.org-remove-collection(i);
+                        }
+                        focus-report(on) => {
+                            root.filter-focus(-122, on);
+                        }
                     }
                 }
             }
-            Text {
-                text: root.confirm-text != "" ? root.confirm-hint : Strings.key-hints;
-                color: Theme.text-muted;
-                font-size: 11px;
-                overflow: elide;
-                accessible-role: none;
-            }
-            Text {
-                text: OrgStrings.org-hints;
-                color: Theme.text-muted;
-                font-size: 11px;
-                overflow: elide;
-                accessible-role: none;
-            }
-            Text {
-                text: OrgStrings.collection-keys;
-                color: Theme.text-muted;
-                font-size: 11px;
-                overflow: elide;
-                accessible-role: none;
+            // Several clips (or none): the count, and the toolbar still acts on the marks.
+            if !root.detail-open: Text {
+                y: 48px;
+                height: parent.height - 48px;
+                x: 12px;
+                width: parent.width - 24px;
+                text: root.summary != "" ? root.summary : Strings.history-hint;
+                color: root.summary != "" ? Theme.text : Theme.text-2;
+                font-size: root.summary != "" ? 18px : 13px;
+                font-weight: root.summary != "" ? 600 : 400;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+                accessible-role: text;
             }
         }
     }
 
-    // The context menu (same actions as the footer; the keyboard keys work too).
+    // The date menu: an in-window `Menu`; its keys are decided in Rust (D-079).
+    date-menu := Menu {
+        entries: root.date-entries;
+        highlighted: root.date-highlighted;
+        key(text) => {
+            return root.date-menu-key(text);
+        }
+        hovered(i) => {
+            root.date-menu-hovered(i);
+        }
+        activated(i) => {
+            root.date-menu-activated(i);
+        }
+    }
+
+    // The context menu (same actions as the detail toolbar; the keyboard keys work too).
     Rectangle {
         x: root.menu-x;
         y: root.menu-y;
@@ -636,7 +741,7 @@ export component HistoryWindow inherits Window {
                 border-color: Theme.line;
                 menu-col := VerticalLayout {
                     padding: 1px;
-                    MenuEntry {
+                    CtxEntry {
                         text: Strings.copy;
                         enabled: root.can-copy;
                         clicked => {
@@ -644,7 +749,7 @@ export component HistoryWindow inherits Window {
                             root.act-copy();
                         }
                     }
-                    MenuEntry {
+                    CtxEntry {
                         text: Strings.copy-plain;
                         enabled: root.can-copy;
                         clicked => {
@@ -652,7 +757,7 @@ export component HistoryWindow inherits Window {
                             root.act-copy-plain();
                         }
                     }
-                    MenuEntry {
+                    CtxEntry {
                         text: Strings.copy-as;
                         enabled: root.can-transform;
                         clicked => {
@@ -660,7 +765,7 @@ export component HistoryWindow inherits Window {
                             root.act-copy-as();
                         }
                     }
-                    MenuEntry {
+                    CtxEntry {
                         text: Strings.edit;
                         enabled: root.can-transform;
                         clicked => {
@@ -668,7 +773,7 @@ export component HistoryWindow inherits Window {
                             root.act-edit();
                         }
                     }
-                    MenuEntry {
+                    CtxEntry {
                         text: root.will-unpin ? Strings.unpin : Strings.pin;
                         enabled: root.has-selection;
                         clicked => {
@@ -676,7 +781,7 @@ export component HistoryWindow inherits Window {
                             root.act-pin();
                         }
                     }
-                    MenuEntry {
+                    CtxEntry {
                         text: Strings.delete;
                         danger: true;
                         enabled: root.has-selection;
@@ -685,7 +790,7 @@ export component HistoryWindow inherits Window {
                             root.act-delete();
                         }
                     }
-                    MenuEntry {
+                    CtxEntry {
                         text: root.org-fav-text;
                         enabled: root.org-can-favorite;
                         clicked => {
@@ -693,7 +798,7 @@ export component HistoryWindow inherits Window {
                             root.act-favorite();
                         }
                     }
-                    MenuEntry {
+                    CtxEntry {
                         text: OrgStrings.add-to-collection;
                         enabled: root.org-can-add;
                         clicked => {
@@ -701,7 +806,7 @@ export component HistoryWindow inherits Window {
                             root.act-add-collection();
                         }
                     }
-                    MenuEntry {
+                    CtxEntry {
                         text: OrgStrings.remove-from-collection;
                         enabled: root.org-can-remove;
                         clicked => {
@@ -709,7 +814,7 @@ export component HistoryWindow inherits Window {
                             root.act-remove-collection();
                         }
                     }
-                    MenuEntry {
+                    CtxEntry {
                         text: OrgStrings.edit-tags;
                         enabled: root.org-can-add;
                         clicked => {
@@ -717,7 +822,7 @@ export component HistoryWindow inherits Window {
                             root.act-tags();
                         }
                     }
-                    MenuEntry {
+                    CtxEntry {
                         text: OrgStrings.edit-note;
                         enabled: root.org-can-edit;
                         clicked => {
@@ -725,7 +830,7 @@ export component HistoryWindow inherits Window {
                             root.act-note();
                         }
                     }
-                    MenuEntry {
+                    CtxEntry {
                         text: Strings.select-all;
                         clicked => {
                             menu.close();
@@ -766,15 +871,16 @@ export component HistoryWindow inherits Window {
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: end;
-                    height: 30px;
-                    ActionButton {
+                    height: 32px;
+                    Button {
                         text: Strings.cancel;
                         clicked => {
                             root.act-cancel();
                         }
                     }
-                    ActionButton {
+                    Button {
                         text: root.confirm-label;
+                        kind: root.confirm-label == Strings.delete ? ButtonKind.danger : ButtonKind.primary;
                         clicked => {
                             root.act-confirm();
                         }
@@ -855,4 +961,7 @@ export component HistoryWindow inherits Window {
             }
         }
     }
+
+    // The tooltip bubble: always the last child, above the menus and dialogs.
+    TooltipLayer { }
 }

@@ -1,0 +1,65 @@
+# Task 703: History layout (sidebar, toolbar, 56 px rows, detail panel, status line)
+
+**Agent:** `builder` · **Model:** sonnet · **Branch:** `task/703-history-layout` (from `task/701-popup-layout` until 701 merges, then rebase on `main`) · **Review:** `reviewer` (**opus**: masked content) · **Risk:** Medium
+**Global Constraints:** GC-03, GC-06, GC-08, GC-11, GC-14, GC-15, GC-17, GC-18, **GC-19**. **Source:** `docs/plans/phase-7-ui-redesign.md` (rows 703, 704), D-078, D-079. **Review Focus:** 1 (no masked content in row, detail panel, tooltip, accessible text), 4 (every existing history key keeps its action), 6 (EN + VI for every new string; glyph scan; width budgets).
+Scope: the history window, **wide layout (>= 1000 px) only**, as `03-wireframes.md` §2. **Task 704** owns: the new row context menu (Menu/Shift+F10, submenus), bulk bar, select-mode behaviour, rail/drawer breakpoints, Ctrl+B, F6, Ctrl+F/K, min width 640 (README resolution 9). In 703 the **existing context menu and all existing keys keep working unchanged** (restyle only if trivial). Popup, settings, welcome untouched.
+
+## Read first
+`CLAUDE.md`, `docs/specs/ui-redesign/README.md` (builder-check 4, 9), `03-wireframes.md` §2, `04-interaction-keyboard.md` §1, §3, `05-acceptance.md` (A3, A6, A7, A9, A10), `01-audit.md` §1.1 (history row), §1.3 (history contract), §3.2, §5 items 3, 9, 10, 16, `mockups/index.html` (sections 3-4), `docs/tasks/701-popup-layout.md` (done: kit `Menu` with Rust key map `src/popup/menu.rs`, `ui/popup_row.slint`, `popup_clip_row`, kind icons in Rust, `popup_budget.rs`), `memory-bank/systemPatterns.md`, D-079, then the code: `ui/{history,organize,popup}.slint`, `ui/kit/*`, `src/ui/{history_host,common}.rs`, `src/ui/history_host/org.rs`, `src/history/*.rs`, `src/organize/*.rs`, `src/popup/{chips,row,menu}.rs`, `tests/{popup_budget,kit,no_font_glyphs}.rs`.
+
+## Requirements
+1. **Layout** (`HistoryWindow`, preferred 1060 x 660; size logic in `history/place.rs` unchanged until 704): sidebar 216 px | list (flex, min 320) | detail 340 px. The 8-button footer, the 5-button org row and the 3 hint lines leave `history.slint`.
+2. **Sidebar.** New pure `src/history/sidebar.rs`: `sidebar_groups(f, nav, sources, counts, collapsed, lang) -> Vec<SidebarRow>` built from today's `history_filters` + `history_nav_chips` output. Groups: **Library** (All, Pinned, Favorites), **Types** (kind chips), **Collections** (user collections + a `+` create row), **Tags**, **Apps** (collapsed by default). The date filters (Today, 7, 30 days) leave the sidebar and become the toolbar date menu (req. 4), same chip ids, same `toggle`. **`Filters`, `chips::toggle` and `nav::toggle_nav` are unchanged**: one item active per group exactly as today; tests assert that toggling through the sidebar equals today's results for every id. Group collapse is UI state only (`collapsed` set, not persisted, reset on hide); on a group header Enter/Left/Right collapse/expand. `FilterItem` gains `count: int`, `icon: IconName`, `group: int`, `collapsed: bool`, `badge: string` (count text). Collections header has a `+` that calls the existing `act-new-collection`; rename/delete of a collection keep today's path (context entry, Ctrl+Shift+R / Del). Sidebar is one Tab stop; Up/Down move, Enter/Space activate.
+3. **Counts (orchestrator decision D-080).** No new storage or `darkclip-app` API in this task. Show a count only where the data already exists today (Favorites, user collections and tags: `CollectionView`/`TagCountView` counts used by `nav.rs`); All, Pinned, Types and Apps show no count. A count API is a follow-up (F-33), not part of Phase 7.
+4. **Toolbar** (48 px): title (current filter name), search field (popup style, existing `query-edited`; no `Ctrl+F` cap until 704 adds the key), **date filter as a kit `Menu`** (Any time, Today, Last 7 days, Last 30 days; the label shows the active one; keys through the Rust menu map in `src/popup/menu.rs`, host owns `OpenMenu`), select-mode toggle `IconButton` (`list-checks`; toggles the existing mark mode; same marks as Space / Ctrl+A). Tooltips and accessible labels from i18n.
+5. **Rows** (new `ui/history_row.slint`, `HistoryRow` global, height 56 px; `scroll-to`, `page-rows`, `shown-until` use it; popup rows untouched): kind icon 16 px (`kind_icon_name`, as 701), two preview lines (13 px, 12 px `text-2`; `segs`, `segs2`), meta 11 px: **source · age · first tag or collection** (tag first, else collection, else none); no `Alt+N`, no kind word; pin/favorite/lock badges are icons with the words in the accessible description; selected = `selected` fill + 3 px accent bar; marked rows keep today's mark style. New `history_clip_row(...)` in `common.rs`; the old `clip_row` is removed only if unused. Search highlight as 701.
+6. **Masked clips (privacy fix, Review Focus 1).** Storage returns a masked preview with the first characters of the secret (e.g. `abc…•••• (Password)`). `history_clip_row`, the detail header, tooltips, `accessible-label/description` and the delete-confirm text show **only** the i18n masked line (`Msg::UiMaskedRowText`; reuse 701's `popup_preview_text`, move it to a shared place if needed). Highlights never run on a masked preview. The detail panel for a masked clip shows the masked note and facts (type, source, time): no preview box, no "load full text".
+7. **Detail panel** (340 px): icon toolbar, one Tab stop, Left/Right between buttons: **Copy, Copy plain, Copy as…, Edit a copy…** | **Pin/Unpin, Favorite, Delete**; enabled states follow today's `can-copy`, `can-transform`, `can-favorite`, `will-unpin`. Then the preview box (text, image, files as today's `DetailPane`, re-coloured), facts (Type, From, Copied, Size), and inline sections **Tags** (chips with remove x, `+` opens the existing tags dialog), **Note** (click opens the note dialog), **Collections** (chips, `+` opens add-to-collection, x removes). The org dialogs (`organize.slint`) are restyled with kit `Button`/`IconButton`; their callbacks and key handling do not change. With several rows marked the panel says "N clips" and the toolbar acts on the marks, as the old footer did.
+8. **Status line** (28 px under the list): `N clips · size` (or `M of N` while filtering) and at most **2** hints (`KeyCap` + label): `Space` Mark, `Menu` Actions (only keys that exist today; Ctrl+F and F1 hints join in 704 and 706). The toast floats above the status line (701 rule). The long hint strings (`UiKeyHintsHistory`, `OrgKeyHints*`, `collection-keys`) stay in i18n as accessible descriptions only.
+9. **Removed actions stay reachable:**
+
+| Old control | Now |
+|---|---|
+| Copy / Copy as plain text / Copy as… / Edit… | detail toolbar, existing context menu; Enter / Shift+Enter / Ctrl+T / Ctrl+E |
+| Pin / Delete / Favorite | detail toolbar, context menu; Ctrl+P / Del / Ctrl+D |
+| Select all / Clear selection | select-mode toggle with Ctrl+A / Esc |
+| Add to / Remove from collection | detail Collections section; Ctrl+L / Ctrl+Shift+L |
+| Edit tags / Edit note | detail Tags / Note sections; Ctrl+G / Ctrl+N |
+| New / Rename / Delete collection | sidebar `+`, collection entry; Ctrl+Shift+N / R / Del |
+| Export | Ctrl+Shift+E (and the context menu entry if one exists today; otherwise keys only, noted for 704's menu) |
+| Date filters | toolbar date menu |
+
+10. **Keys.** `history/keys.rs` is not changed (no new key in 703). The key hook works while the date `Menu` is open (menu keys decided in Rust, D-079). Esc unwinds: open menu first, then as today.
+11. **i18n.** New `Msg` EN + VI: group names, Any time, date-menu names where missing, toolbar and detail-toolbar tooltips (reuse existing action names), section titles, `N clips` summary, status hints, masked detail note. Identical strings go to `SAME_IN_BOTH`. No literal in `.slint`. Icons `plus` and `calendar` are added only if missing (vendored from the pinned Lucide release with its LICENSE, as in 700) and kept in the unused-icon scan.
+12. **Docs.** `docs/testing/platform-checklist.md` owner rows; `CHANGELOG.md` `[Unreleased]` Changed: history layout; Fixed: masked clips no longer show secret characters in history; `README.md` only if it lists the old buttons.
+
+## Files this task may edit
+`apps/desktop/ui/{history,organize,popup,theme}.slint`, `ui/history_row.slint` (new), `ui/kit/{menu,gallery}.slint` (only if the date menu needs it), `ui/icons/*` (at most 2 new), `src/history/{sidebar(new),mod}.rs`, `src/ui/{history_host,common}.rs`, `src/ui/history_host/org.rs`, `src/popup/{chips,row}.rs` and `src/organize/nav.rs` (additive only), `tests/{history_budget(new),kit,no_font_glyphs}.rs`, `crates/darkclip-core/src/i18n.rs`, `docs/testing/platform-checklist.md`, `CHANGELOG.md`, `README.md`. Not touched: `history/keys.rs`, popup window files, settings, capture, policy, `theme.rs` colours.
+
+12b. **F-32.** Remove the dead `popup_chips` (`popup/chips.rs`), `popup_nav_chips` and `POPUP_MAX_COLLECTIONS` (`organize/nav.rs`) and their `#[allow(dead_code)]`, unless the sidebar reuses them.
+
+## Tests (first, seen failing)
+- `sidebar.rs`: group order and members (empty, with collections, sources, tags); counts present; Apps collapsed by default and collapse is not in `Filters`; toggling every sidebar id equals today's `toggle` / `toggle_nav` result (table over all ids); date ids only in the toolbar model.
+- `history_clip_row` / detail: meta = source · age · first tag or collection (no `Alt+`, no kind word); **masked item: `label`, `segs`, `segs2`, `description`, meta, detail header and delete-confirm text contain only the i18n masked line, never storage preview text, in EN and VI** (feed `abc…•••• (Password)` as the stored preview); non-masked rows unchanged; `Debug` of new types hides content.
+- Key regression: a table over every key of `04` §3 row 1 (arrows, Shift/Ctrl ranges, Home/End, Space, Enter, Shift+Enter, Del, Menu, Ctrl+P/T/E/D/N/G/L, Ctrl+Shift+L/N/R/Del/E, Ctrl+A, Esc) mapped to the same action as before; existing `keys.rs` tests unchanged.
+- Reachability: the req. 9 table as data; each old footer/org/hint action has a toolbar id, menu id or key.
+- `tests/history_budget.rs` (like `popup_budget.rs`: 7 px/char, caps 6 px/char + 8): toolbar in the 1000 px layout (list column 1000 - 216 - 340 = 444 px: title + search min + date label + two 28 px buttons), widest sidebar label + count in 216 px minus padding, detail toolbar (7 x 28 px + gaps in 340 px minus padding), status line; EN and VI.
+- i18n completeness, glyph scan, `kit.rs` scans and unused-`IconName` scan pass; no unwrap/expect; never run `#[ignore]` tests.
+
+## Owner checklist rows (add, **untested**)
+History at 100/150/200 % and mixed DPI (crisp icons, 56 px rows, nothing clipped); Tab walk (search, date menu, select toggle, sidebar, list, detail toolbar, tags, note, collections) with focus ring; sidebar counts, collapse, Apps collapsed, collection create/rename/delete; every existing key (`04` §3); date menu by mouse and keys; detail toolbar enabled/disabled states; a masked clip shows no secret characters in row, detail, tooltip, Narrator or delete confirm (EN and VI); Narrator reads rows, sidebar items with counts, toolbar buttons; Vietnamese pass; toast above the status line.
+
+## Known pitfalls
+- **Keys go to an open `PopupWindow`** (D-079): the date `Menu` takes focus in `init` and forwards keys to Rust; the history `key(...)` hook must not also act on them. Tooltips are never `PopupWindow`s; **`TooltipLayer` stays the last child of the window root**, after the menu and dialogs. Elements inside a `PopupWindow` cannot be referenced from outside: drive through properties and `init`.
+- Menu key map lives in Rust (`src/popup/menu.rs`, 701); do not decide keys in Slint. Reset `TooltipHub.shown` and the menu state when the history window hides.
+- Icons only via `Icon`/`IconName`; no symbol glyphs (Task 414). Software renderer (D-055): no blur, shadow, gradient; no timer while hidden.
+- Windows-only code must lint on macOS/Linux (clippy `-D warnings`).
+- Previews, sources, tags, notes and queries are never logged; the stored masked preview must not reach any `Debug`, log, tooltip or accessible string (GC-06).
+- `FilterItem` ids stay the `chips.rs` / `nav.rs` ids; the host's in-place model update keys on `(id, header)`.
+- Run the app only with `--data-dir <temp>` and `--exit-after-ms`; no screenshots, no input simulation, no real clipboard (GC-19).
+
+## Acceptance
+Review Focus 1, 4, 6 proven by the tests; every old action reachable (req. 9); A3, A6 (>= 28 px), A7 (history budgets), A9, A10; `cargo fmt --all`, then `powershell -File scripts/check.ps1` prints `ALL CHECKS PASSED`.
+
+## Not doing
+Row context menu redesign, bulk bar, select-mode behaviour change, rail/drawer, Ctrl+B, F6, Ctrl+F/K, Shift+F10, min width 640 (704); shortcuts sheet and F1 content (706); settings; new filters or changed filter semantics; any key rebinding.

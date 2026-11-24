@@ -11,8 +11,8 @@ copy the new files from the same release (or move the whole folder to a newer re
 - Use: `ui/kit/icon.slint` maps every file to a name with `@image-url` and tints it with `colorize`.
   A test (`tests/kit.rs`) checks that every file here is referenced by the kit and the other way round.
 
-Icons (43): search, settings, x, pin, pin-off, star, lock, shield-check, eye-off, trash-2, copy,
+Icons (45): search, settings, x, pin, pin-off, star, lock, shield-check, eye-off, trash-2, copy,
 clipboard-paste, type, wand-sparkles, pencil, sticky-note, tag, folder, folder-plus, layers,
 file-text, link, code, image, file, clock, history, more-horizontal, check, undo-2, keyboard, pause,
 play, database, hard-drive-download, upload, download, info, refresh-cw, panel-right, list-checks,
-chevron-right, chevron-down.
+chevron-right, chevron-down, plus, calendar (Task 703).

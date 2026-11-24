@@ -49,6 +49,8 @@ export enum IconName {
     list-checks,
     chevron-right,
     chevron-down,
+    plus,
+    calendar,
 }
 
 export component Icon inherits Image {
@@ -103,5 +105,7 @@ export component Icon inherits Image {
         : root.name == IconName.panel-right ? @image-url("../icons/panel-right.svg")
         : root.name == IconName.list-checks ? @image-url("../icons/list-checks.svg")
         : root.name == IconName.chevron-right ? @image-url("../icons/chevron-right.svg")
-        : @image-url("../icons/chevron-down.svg");
+        : root.name == IconName.chevron-down ? @image-url("../icons/chevron-down.svg")
+        : root.name == IconName.plus ? @image-url("../icons/plus.svg")
+        : @image-url("../icons/calendar.svg");
 }
