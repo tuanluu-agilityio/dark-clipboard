@@ -1168,3 +1168,45 @@ fn pre_restore_copy_has_no_pending_tokens() {
     }
     assert!(!contains(&std::fs::read(&path).unwrap(), GONE_TOKEN));
 }
+
+// ---- Task 415 security review: no VACUUM working copy in the system temp folder ----
+
+fn take_vacuum_temp_stores() -> Vec<i64> {
+    crate::backup::VACUUM_TEMP_STORE.with(|v| std::mem::take(&mut *v.borrow_mut()))
+}
+
+#[test]
+fn snapshot_vacuums_keep_temporary_data_in_memory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut s = evicted_store(&tmp.path().join("src"));
+    take_vacuum_temp_stores();
+    s.write_backup(&tmp.path().join("history.dcbackup"), "0.0.1")
+        .unwrap();
+    // 2 = MEMORY: the backup snapshot's VACUUM wrote no temporary file.
+    assert_eq!(take_vacuum_temp_stores(), [2]);
+    let (_t, out, _f) = make_backup();
+    take_vacuum_temp_stores();
+    s.restore_backup(&out, FREE).unwrap();
+    // The pre-restore safety copy.
+    assert_eq!(take_vacuum_temp_stores(), [2]);
+}
+
+#[test]
+fn staged_page_size_conversion_keeps_temporary_data_in_memory() {
+    let (tmp, out, _f) = make_backup();
+    let dst = tmp.path().join("dst");
+    let (mut b, _) = live(&dst);
+    let live_page = pragma_i64(&b, "page_size");
+    let crafted = tmp.path().join("page.dcbackup");
+    let other = if live_page == 8192 { 16384 } else { 8192 };
+    with_db_edit(
+        &out,
+        &crafted,
+        &tmp.path().join("page.db"),
+        &format!("PRAGMA page_size = {other}; VACUUM;"),
+    );
+    take_vacuum_temp_stores();
+    assert_eq!(b.restore_backup(&crafted, FREE).unwrap().clips, 3);
+    // The staged conversion, then the pre-restore copy.
+    assert_eq!(take_vacuum_temp_stores(), [2, 2]);
+}

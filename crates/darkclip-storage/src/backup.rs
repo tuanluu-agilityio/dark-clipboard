@@ -104,6 +104,27 @@ fn hex_len(n: usize) -> u64 {
     u64::try_from(n).unwrap_or(u64::MAX)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// `temp_store` each `private_vacuum` on this thread ran with (tests only).
+    pub(crate) static VACUUM_TEMP_STORE: std::cell::RefCell<Vec<i64>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `VACUUM` on a backup, pre-restore or staged copy, with its working copy kept in memory:
+/// the bundled SQLite is built with `SQLITE_TEMP_STORE=1` (temporary files on disk by
+/// default), and a temporary file would be a plain copy of the history in the system temp
+/// folder (same rule as `Storage::compact`, D-062). The connection is private to the copy.
+fn private_vacuum(c: &Connection) -> Result<(), StorageError> {
+    #[cfg(test)]
+    {
+        let ts: i64 = c.pragma_query_value(None, "temp_store", |r| r.get(0))?;
+        VACUUM_TEMP_STORE.with(|v| v.borrow_mut().push(ts));
+    }
+    c.execute_batch("VACUUM")?;
+    Ok(())
+}
+
 /// A consistent copy of the database at `target` without masked or expired clips and
 /// without free pages (so nothing deleted lingers in it), as a single rollback-journal file.
 /// The FTS index is always merged and the copy always vacuumed: the live index can still
@@ -135,7 +156,7 @@ fn private_snapshot(conn: &Connection, target: &Path, now: Timestamp) -> Result<
         // even when nothing was deleted from the snapshot itself. Unlike the live store's
         // best-effort merge, a failure here fails the snapshot (it is then removed).
         c.execute("INSERT INTO clips_fts(clips_fts) VALUES('optimize')", [])?;
-        c.execute_batch("VACUUM")?;
+        private_vacuum(&c)?;
         Ok(())
     })();
     if result.is_err() {
@@ -419,7 +440,7 @@ fn check_staged(staging: &Path, clock: Arc<dyn Clock>, live: Header) -> Result<u
                 c.pragma_update_and_check(None, "journal_mode", "DELETE", |r| r.get(0))?;
             c.pragma_update(None, "page_size", live.page_size)?;
             c.pragma_update(None, "auto_vacuum", live.auto_vacuum)?;
-            c.execute_batch("VACUUM")?;
+            private_vacuum(c)?;
         }
         if h.application_id != live.application_id {
             c.pragma_update(None, "application_id", live.application_id)?;
