@@ -7,6 +7,8 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
 pub mod keys;
+pub mod layout;
+pub mod menu;
 pub mod place;
 pub mod select;
 pub mod sidebar;
