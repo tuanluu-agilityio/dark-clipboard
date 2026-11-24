@@ -1,6 +1,6 @@
 # Progress and token ledger
 
-Updated: 2026-11-23 (Phase 3 complete)
+Updated: 2026-11-24 (0.1.0 released)
 
 Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers subagents report when they finish. Orchestrator tokens cannot be measured per task.
 
@@ -85,6 +85,8 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 408 Release workflow | task/408-release-workflow | builder | sonnet | done (workflow first runs after merge: dispatch dry run) | 83,653 | 108,640 (reviewer opus ×2: CR (blocking: release.yml invalid YAML) → APPROVED) | 12,141 | 204,434 |
 | 410 0.1.0 docs and version | task/410-docs-0.1.0 | scaffolder | sonnet | done | 103,856 | 115,623 (reviewer opus ×2: CR (blocking: Known issues listed under Added in the release body; unbacked claims) → APPROVED) | 10,855 | 230,334 |
 | Hotfix release-notes exit code | fix/release-notes-exit (PR #32) | orchestrator | opus | done (first release dry run failed on a leaked `$LASTEXITCODE`) | not measured | | | |
+| Hotfix notices fetch | fix/notices-fetch (PR #34) | orchestrator | opus | done (second dry run: offline cargo-about needed all locked crates) | not measured | | | |
+| **Release 0.1.0** | tags `v0.1.0-rc.1`, `v0.1.0` | orchestrator | — | **released 2026-11-24** (D-069) | | | | |
 
 ## Totals by model
 
