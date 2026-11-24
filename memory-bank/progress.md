@@ -110,7 +110,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 705 Settings (package: scaffolder sonnet 83,008) | task/705-settings | builder | sonnet | done (five sections, kit Select/Field/ConfirmDialog, Always-protected card without controls, dirty save bar + Ctrl+S with edit counter, settings key map; D-082) | 357,438 (incl. package) | 77,983 (security-reviewer opus: APPROVED, 2 should-fix (dirty during save, Enter on Switch in dialog) fixed; focus return → 707) | 8,872 | 444,293 |
 | 706 Secondary surfaces + F1 sheet (package: scaffolder sonnet 73,791) | task/706-secondary-surfaces | builder | sonnet | done (F1/Ctrl+/ shortcuts sheet with drift test against the real key maps, EmptyState, welcome, Copy as/Edit panels, org dialogs, delete confirmation restyled; D-084) | 379,484 (incl. package) | 34,284 (reviewer sonnet: APPROVED, nits) | 0 | 413,768 |
 | 707 Accessibility pass (packages 707+708: scaffolder sonnet 74,543) | task/707-accessibility | builder | sonnet | done (A3 role/label scan over 73 instances, A6 hit-target scan, Narrator description tests incl. masked rows in both windows, A7 budgets for welcome/F1 sheet/dialogs, settings focus return to the opener; D-085; nothing needed fixing in labels/targets) | 234,312 (incl. packages) | 43,260 (reviewer sonnet: APPROVED, 1 should-fix → F-36) | 0 | 277,572 |
-| 708 Verification | | platform-verifier | sonnet | pending | | | | |
+| 708 Verification | task/708-verification | platform-verifier | sonnet | in progress | | | | |
 | 709 Phase review | | specialist | opus | pending | | | | |
 
 ## Totals by model
