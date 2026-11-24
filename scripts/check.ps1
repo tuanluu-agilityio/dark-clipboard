@@ -161,6 +161,7 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
         if ($code -ne 0) { Fail 'npm ci in tools/schema-check' }
     }
     Step 'schema validation' { node tools/schema-check/validate.mjs }
+    Step 'workflow YAML parses' { node tools/schema-check/check-workflows.mjs }
 } else {
     Fail 'node not found (required for schema validation)'
 }

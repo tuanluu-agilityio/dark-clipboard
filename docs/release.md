@@ -13,7 +13,9 @@ Decisions: D-058 (the owner authorizes releases and public tags), D-068 (0.1.0 p
 1. Set the workspace `version` in `Cargo.toml` and move the `[Unreleased]` entries of `CHANGELOG.md` under a new `## [X.Y.Z] - date` heading. The release notes are that section.
 2. Merge to `main` through a pull request with green CI.
 3. Optional dry run: GitHub > Actions > Release > Run workflow (`dry_run` is `true` by default). It runs the quality gate, builds, packages and uploads the files as a workflow artifact. It never publishes.
-4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. The workflow then builds, packages and creates the GitHub release with the `gh` CLI. The title is `Dark Clipboard X.Y.Z`.
+4. Tag and push (the tag commit must be on `main`; the workflow fails otherwise): `git tag vX.Y.Z && git push origin vX.Y.Z`. The workflow then builds, packages and creates the GitHub release with the `gh` CLI. The title is `Dark Clipboard X.Y.Z`.
+
+Control the tags with a repository tag ruleset for `v*` (GitHub > Settings > Rules > Rulesets): restrict who can create, update and delete `v*` tags. That ruleset is the real control; the workflow's on-`main` check is a second line. The owner creates it, it is not created by any script.
 
 Tag rules (`scripts/check-release-tag.ps1`): `vX.Y.Z` must equal the workspace version. `vX.Y.Z-<pre>` (for example `v0.1.0-rc.1`) is allowed when `X.Y.Z` matches the workspace version, and is published as a **pre-release**. A pre-release uses the CHANGELOG section of its own full version if there is one, otherwise the section of `X.Y.Z`. The job fails when neither exists.
 
@@ -39,10 +41,16 @@ Get-FileHash .\dark-clipboard-X.Y.Z-windows-x64.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS.txt
 ```
 
-The hash must equal the line for that file. The checksum protects against a damaged or swapped download from another place; it does not prove who built it, because the build is unsigned.
+One-liners: `(Get-FileHash .\<file> -Algorithm SHA256).Hash -eq '<hash from SHA256SUMS.txt>'` in PowerShell (case-insensitive, prints `True`), or `sha256sum -c SHA256SUMS.txt` in a shell that has the files next to it. The hash must equal the line for that file. The checksum protects against a damaged or swapped download from another place; it does not prove who built it, because the build is unsigned.
+
+## If publishing fails half way
+
+`gh release create` can leave a partial or draft release behind. Open GitHub > Releases, delete that release (the tag stays), or run `gh release delete vX.Y.Z` (add `--cleanup-tag` only if the tag itself is wrong). Then fix the cause and re-run the failed workflow run, or push a corrected tag.
+
+The dry run (manual run) also builds `release-notes.md` and uploads it with the artifacts; a missing CHANGELOG section is only a warning there and an error on a tag push.
 
 ## Not done
 
 - Code signing (Authenticode), installers (MSI, winget), auto-update.
 - macOS and Linux artifacts.
-- The release workflow has run only after merge: the first check is the dry run, then the test pre-release tag.
+- The release workflow has not run yet; the first run is the dry run after merge, then the test pre-release tag.

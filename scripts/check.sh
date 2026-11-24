@@ -81,6 +81,7 @@ echo "== JSON schemas and examples"
 command -v node >/dev/null || fail "node not found (required for schema validation)"
 [ -d tools/schema-check/node_modules ] || (cd tools/schema-check && npm ci --silent) || fail "npm ci in tools/schema-check"
 step "schema validation" node tools/schema-check/validate.mjs
+step "workflow YAML parses" node tools/schema-check/check-workflows.mjs
 
 echo "== required Phase 0 documents"
 for p in docs/product/product-vision.md docs/product/feature-matrix.md docs/product/mvp-scope.md docs/product/user-journeys.md \

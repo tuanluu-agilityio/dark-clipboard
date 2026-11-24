@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Build and package only, do not publish'
+        description: 'Always build and package only: a manual run never publishes, whatever this is set to. Only a v* tag push publishes.'
         type: boolean
         default: true
 
@@ -33,6 +33,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
@@ -58,6 +59,27 @@ jobs:
             $m = [regex]::Match((Get-Content -Raw Cargo.toml), '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"')
             ./scripts/check-release-tag.ps1 "v$($m.Groups[1].Value)"
           }
+
+      - name: Tag commit must be on main
+        if: github.event_name == 'push'
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw "tag commit $env:GITHUB_SHA is not on main" }
+
+      - name: Release notes
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          VERSION: ${{ steps.facts.outputs.version }}
+          CORE_VERSION: ${{ steps.facts.outputs.core_version }}
+          PRERELEASE: ${{ steps.facts.outputs.prerelease }}
+        run: |
+          $a = @{ Version = $env:VERSION; CoreVersion = $env:CORE_VERSION; Out = "$env:RUNNER_TEMP/dist/release-notes.md" }
+          if ($env:PRERELEASE -eq 'true') { $a.Prerelease = $true }
+          if ($env:EVENT_NAME -ne 'push') { $a.DryRun = $true }
+          ./scripts/release-notes.ps1 @a
 
       - name: Quality gate
         shell: pwsh
@@ -115,33 +137,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           VERSION: ${{ needs.build.outputs.version }}
-          CORE_VERSION: ${{ needs.build.outputs.core_version }}
           PRERELEASE: ${{ needs.build.outputs.prerelease }}
         run: |
           $ErrorActionPreference = 'Stop'
           $dist = "$env:RUNNER_TEMP/dist"
-          # Release notes: the CHANGELOG section for this version. A pre-release (-rc.N) without
-          # its own section uses the section of the version it prepares (X.Y.Z).
-          $section = ./scripts/changelog-section.ps1 $env:VERSION 2>$null
-          if ($LASTEXITCODE -ne 0) { $section = $null }
-          if (-not $section -and $env:VERSION -ne $env:CORE_VERSION) {
-            $section = ./scripts/changelog-section.ps1 $env:CORE_VERSION 2>$null
-            if ($LASTEXITCODE -ne 0) { $section = $null }
-          }
-          if (-not $section) { throw "CHANGELOG.md has no section for version $env:VERSION" }
-          $notes = ($section -join "`n") + @"
-
-
----
-
-**Unsigned Windows build.** The binary has no Authenticode signature, so Windows SmartScreen may warn. Verify the download with ``SHA256SUMS.txt`` (PowerShell: ``Get-FileHash <file> -Algorithm SHA256`` and compare).
-
-**Platforms:** Windows x64 only, tested by the developer only. macOS and Linux builds are not available yet.
-"@
-          $notesFile = "$env:RUNNER_TEMP/release-notes.md"
-          [System.IO.File]::WriteAllText($notesFile, $notes + "`n", (New-Object System.Text.UTF8Encoding($false)))
           $ghArgs = @('release', 'create', $env:TAG, "$dist/dark-clipboard-$env:VERSION-windows-x64.zip", "$dist/dark-clipboard.exe", "$dist/SHA256SUMS.txt",
-                    '--verify-tag', '--title', "Dark Clipboard $env:VERSION", '--notes-file', $notesFile)
+                      '--verify-tag', '--title', "Dark Clipboard $env:VERSION", '--notes-file', "$dist/release-notes.md")
           if ($env:PRERELEASE -eq 'true') { $ghArgs += '--prerelease' }
           gh @ghArgs
           if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
