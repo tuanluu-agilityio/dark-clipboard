@@ -1,4 +1,4 @@
-# Task 414: Icons that do not depend on font glyphs
+# Task 414: Icons that do not depend on font glyphs; popup footer fits
 
 **Agent:** `builder` · **Model:** sonnet · **Branch:** `task/414-icon-glyphs` (from `main`) · **Review:** `reviewer` (sonnet)
 **Global Constraints:** GC-14, GC-18, **GC-19**. **Source:** owner report 2026-11-24 on 0.1.0: in the popup, the settings and close buttons right of the search box show nothing. A screenshot from the owner shows empty space where the buttons are.
@@ -23,6 +23,17 @@
    - the favorite star shows in rows and in the organize strip;
    - the lock shows in Settings > Privacy.
 5. **CHANGELOG:** add an `[Unreleased]` → Fixed entry for the invisible popup buttons in 0.1.0.
+
+6. **Popup footer must not be cut off (owner request 2026-11-24).**
+   - **Cause.** The footer in `ui/app.slint:287-329` is one `HorizontalLayout` holding Copy, Copy plain, Copy as…, Pin and Delete. Each button's `min-width` equals its label width, and the panel clips. In Vietnamese ("Sao chép", "Sao chép dạng văn bản thuần", "Sao chép dưới dạng…", "Ghim", "Xóa") the row is wider than the popup, so the last buttons are cut off ("Ghi…" in the owner's screenshot). The toast row and Undo need the same care.
+   - **Fix.** Every action stays reachable and visible in both languages at the popup's width:
+     - Use short footer labels: new i18n keys for en and vi (for example "Văn bản thuần", "Chuyển đổi…"). The full text stays in `accessible-label` and in the key hints.
+     - Labels may shrink with `overflow: elide` as a last resort. A button is never pushed out of view.
+     - Pick the smallest change that guarantees this, and say what you chose.
+   - **Test.** Add a test that fails on the current Vietnamese labels. Two acceptable forms:
+     - Slint's headless testing backend, if it is already available as a dev-dependency or cheap to add (no window shown, no screenshot, GC-19), measuring the footer's preferred width against the popup width in both languages.
+     - Otherwise, a measured character budget per footer label, documented in the test.
+   - **Checklist.** Add an owner row: every footer button is fully visible in English and in Vietnamese.
 
 ## Tests
 - All existing tests pass, plus the scan test above, written first and seen failing on the current tree.
