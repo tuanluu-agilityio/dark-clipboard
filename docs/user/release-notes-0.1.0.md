@@ -9,7 +9,7 @@ Assets of the GitHub release: `dark-clipboard-0.1.0-windows-x64.zip` (the exe, `
     Get-FileHash .\dark-clipboard-0.1.0-windows-x64.zip -Algorithm SHA256
     Get-Content .\SHA256SUMS.txt
 
-The hash must equal the line for that file. The file is not code-signed, so Windows SmartScreen may warn; the checksum catches a damaged or swapped download but does not prove who built it. More: [docs/release.md](../release.md).
+The hash must equal the line for that file. The file is not code-signed, so Windows SmartScreen may warn; the checksum catches a damaged download or one swapped somewhere else; it is not a signature and does not prove who built it. More: [docs/release.md](../release.md).
 
 ## What it does
 
@@ -22,6 +22,6 @@ No account, no cloud, no telemetry. Capture is off until you press Start in the 
 ## Read before you rely on it
 
 - Alpha: almost every desktop UI row is untested by hand (owner manual rows in the platform checklist).
-- Verified on a real clipboard: KeePassXC 2.8.0 and Darkshot 0.6.0 clips are not stored. KeePass 2, Bitwarden and 1Password are not verified.
+- Verified on a real clipboard: KeePassXC 2.8.0 and Darkshot 0.6.0 clips are not stored. KeePass 2, Bitwarden and 1Password are not verified. App identity is cooperative (F-09), so the clipboard markers are the main defence.
 - The search benchmark is around its 30 ms budget on a busy machine; libFuzzer was not run.
 - Older `--data-dir` folders do not get the private access list; the KeePass 2 exclusion applies to new settings files only; file dialogs are Windows only.
