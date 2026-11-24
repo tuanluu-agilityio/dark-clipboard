@@ -120,7 +120,11 @@ fn no_ui_source_uses_symbols_the_ui_font_cannot_draw() {
     collect(&manifest.join("ui"), "slint", &mut files);
     collect(&manifest.join("src"), "rs", &mut files);
     files.push(manifest.join("../../crates/darkclip-core/src/i18n.rs"));
-    assert!(files.len() > 10, "scan found too few files: {}", files.len());
+    assert!(
+        files.len() > 10,
+        "scan found too few files: {}",
+        files.len()
+    );
     let mut problems = Vec::new();
     for f in &files {
         let src = fs::read_to_string(f).unwrap_or_else(|e| panic!("read {}: {e}", f.display()));

@@ -6,6 +6,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme, Strings } from "theme.slint";
 import { ActionButton } from "popup.slint";
+import { Icon, IconKind } from "icons.slint";
 
 export global OrgStrings {
     in property <string> note-label;
@@ -77,11 +78,12 @@ export component OrgStrip inherits Rectangle {
             HorizontalLayout {
                 spacing: 6px;
                 height: 26px;
-                if root.favorite: Text {
-                    text: "\u{2605}";
-                    color: Theme.warning;
-                    font-size: 14px;
-                    vertical-alignment: center;
+                if root.favorite: Icon {
+                    kind: IconKind.star;
+                    tint: Theme.warning;
+                    width: 14px;
+                    height: 14px;
+                    y: (parent.height - self.height) / 2;
                     accessible-role: AccessibleRole.none;
                 }
                 ActionButton {

@@ -52,7 +52,7 @@ pub fn clip_row(item: &Item, index: usize, lang: Lang, query: &str) -> ClipRow {
         description: text.description.into(),
         icon: text.icon.into(),
         pin_badge: text.pin_badge.unwrap_or("").into(),
-        favorite_badge: text.favorite_badge.unwrap_or("").into(),
+        favorite: text.favorite,
         masked_badge: text.masked_badge.unwrap_or("").into(),
         mono: text.mono,
         pinned: item.pinned,
@@ -272,6 +272,8 @@ where
     s.set_load_failed(t(lang, Msg::UiLoadFailed).into());
     s.set_copy(t(lang, Msg::UiCopy).into());
     s.set_copy_plain(t(lang, Msg::UiCopyPlain).into());
+    s.set_footer_copy_plain(t(lang, Msg::UiFooterCopyPlain).into());
+    s.set_footer_copy_as(t(lang, Msg::UiFooterCopyAs).into());
     s.set_pin(t(lang, Msg::UiPin).into());
     s.set_unpin(t(lang, Msg::UiUnpin).into());
     s.set_delete(t(lang, Msg::UiDelete).into());

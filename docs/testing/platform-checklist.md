@@ -346,6 +346,10 @@ All rows **untested** until the owner runs them (agents never launch the UI, cha
 | Squatted pipe: from a second local account (or a small tool) create `\\.\pipe\dark-clipboard-<hash>-s<session>` first, then start the app as the first account (the name is in the code; easiest with a `--data-dir` scope and a test tool) | A message says "Dark Clipboard could not start: another program is using its connection."; the log has `start_failed stage=ipc reason=squatted` | **untested** |
 | Install KeePass 2 (classic, `KeePass.exe`), copy a password from an entry with Dark Clipboard capturing | The copy is not stored (excluded app or its marker); on a fresh scratch folder Settings > Privacy lists KeePass as built-in, and removing it asks the password-manager confirmation | **untested** |
 | Settings > History > Backup and transfer, English and Vietnamese | The note says a backup is a plain unencrypted zip that keeps no-sync clips and that a synced folder uploads it; after a backup the message repeats "not encrypted" | **untested** |
+| Popup (Task 414): look at the buttons right of the search box at 100 %, 150 % and 200 % display scaling | The settings (gear) and close (X) icons are visible, clear and centered in each button; they brighten on hover; clicking opens Settings and closes the popup | **untested** |
+| Popup and History (Task 414): favorite a clip (Ctrl+D) | A star icon shows in the row's meta line and in the organize strip of the History window | **untested** |
+| Settings > Privacy (Task 414) | A lock icon shows before the "Privacy markers" label | **untested** |
+| Popup footer (Task 414): select a clip in English, then switch the language to Vietnamese (also a pinned clip and a text clip that allows Copy as...) | Every footer button (Copy, plain text, Copy as..., Pin/Unpin, Delete) is fully visible, none cut off; hovering a button and the screen-reader name still give the full text; the Undo toast row shows its message and the Undo button | **untested** |
 
 ## macOS
 

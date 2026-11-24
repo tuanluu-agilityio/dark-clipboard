@@ -127,6 +127,9 @@ messages! {
     ),
     UiCopy => ("Copy", "Sao chép"),
     UiCopyPlain => ("Copy as plain text", "Sao chép dạng văn bản thuần"),
+    // Short footer labels (Task 414): the full text stays in the accessible label.
+    UiFooterCopyPlain => ("Plain text", "Dạng thuần"),
+    UiFooterCopyAs => ("Copy as...", "Đổi dạng..."),
     UiPin => ("Pin", "Ghim"),
     UiUnpin => ("Unpin", "Bỏ ghim"),
     UiDelete => ("Delete", "Xóa"),

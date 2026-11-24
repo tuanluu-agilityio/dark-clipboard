@@ -8,6 +8,7 @@
 
 import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
+import { Icon, IconKind } from "icons.slint";
 
 export struct AppRow {
     name: string,
@@ -509,11 +510,23 @@ export component SettingsWindow inherits Window {
                                 markers-col := VerticalLayout {
                                     padding: 10px;
                                     spacing: 4px;
-                                    Text {
-                                        text: "🔒 " + SText.markers-label;
-                                        color: Theme.success;
-                                        font-weight: 700;
-                                        wrap: word-wrap;
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        Icon {
+                                            kind: IconKind.lock;
+                                            tint: Theme.success;
+                                            width: 14px;
+                                            height: 14px;
+                                            y: 2px;
+                                            accessible-role: none;
+                                        }
+                                        Text {
+                                            text: SText.markers-label;
+                                            color: Theme.success;
+                                            font-weight: 700;
+                                            wrap: word-wrap;
+                                            horizontal-stretch: 1;
+                                        }
                                     }
                                     Caption {
                                         text: SText.markers-note;

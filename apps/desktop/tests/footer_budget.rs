@@ -21,8 +21,8 @@ const SPACING_PX: f32 = 4.0;
 fn footer_labels(lang: Lang, pinned: bool) -> Vec<&'static str> {
     vec![
         t(lang, Msg::UiCopy),
-        t(lang, Msg::UiCopyPlain),
-        t(lang, Msg::TfCopyAs),
+        t(lang, Msg::UiFooterCopyPlain),
+        t(lang, Msg::UiFooterCopyAs),
         t(lang, if pinned { Msg::UiUnpin } else { Msg::UiPin }),
         t(lang, Msg::UiDelete),
     ]
