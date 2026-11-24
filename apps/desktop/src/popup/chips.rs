@@ -4,6 +4,7 @@
 
 use super::list::{Filters, TimeFilter};
 use super::row::kind_msg;
+use crate::organize::nav::{Nav, NAV_COLLECTION, NAV_FAVORITES};
 use darkclip_core::i18n::{t, Lang, Msg};
 use darkclip_core::ClipType;
 
@@ -73,7 +74,9 @@ fn source_chips(f: &Filters, sources: &[String]) -> Vec<ChipSpec> {
         .collect()
 }
 
-/// The popup's chips: kinds, Pinned, Today, 7 days, then the source apps.
+/// The popup's old chips: kinds, Pinned, Today, 7 days, then the source apps. The popup now
+/// shows the segment (`popup_segment`); this stays, with its tests, for the chip order and ids.
+#[allow(dead_code)]
 pub fn popup_chips(f: &Filters, sources: &[String], lang: Lang) -> Vec<ChipSpec> {
     let mut v = kind_chips(f, lang);
     v.push(chip(
@@ -92,6 +95,275 @@ pub fn popup_chips(f: &Filters, sources: &[String], lang: Lang) -> Vec<ChipSpec>
         f.time == TimeFilter::Week,
     ));
     v.extend(source_chips(f, sources));
+    v
+}
+
+// ---- The popup's filter segment and "More filters" (Task 701) ----------------------------------
+//
+// Same `Filters` and same ids as the chips above: a tab or a menu entry is a different way to
+// click the same chip, so `toggle` and `nav::toggle_nav` stay the only places that change filters.
+
+/// The icon of a segment tab (the host maps it to a kit `IconName`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabIcon {
+    All,
+    Text,
+    Link,
+    Code,
+    Image,
+    Files,
+    Pinned,
+    Favorites,
+}
+
+/// One tab of the filter segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SegmentTab {
+    /// The chip id a click toggles.
+    pub id: i32,
+    /// The tab's name (shown while active, and its accessible label).
+    pub label: String,
+    pub icon: TabIcon,
+    pub on: bool,
+    /// A divider is drawn before this tab.
+    pub divider_before: bool,
+}
+
+/// The chip id of a kind (its index in `KIND_CHIPS`).
+fn kind_id(k: ClipType) -> i32 {
+    let at = KIND_CHIPS.iter().position(|x| *x == k).unwrap_or(0);
+    index_id(0, at)
+}
+
+/// The segment: All, Text, Link, Code, Image, Files, then Pinned and Favorites after a divider.
+/// Rich text and Color live in "More filters".
+pub fn popup_segment(f: &Filters, nav: &Nav, lang: Lang) -> Vec<SegmentTab> {
+    let tab = |id: i32, label: &str, icon: TabIcon, on: bool| SegmentTab {
+        id,
+        label: label.to_string(),
+        icon,
+        on,
+        divider_before: false,
+    };
+    let mut v = vec![tab(
+        CHIP_ALL,
+        t(lang, Msg::UiFilterAll),
+        TabIcon::All,
+        is_all(f),
+    )];
+    for (k, icon) in [
+        (ClipType::Text, TabIcon::Text),
+        (ClipType::Url, TabIcon::Link),
+        (ClipType::Code, TabIcon::Code),
+        (ClipType::Image, TabIcon::Image),
+        (ClipType::Files, TabIcon::Files),
+    ] {
+        v.push(tab(
+            kind_id(k),
+            t(lang, kind_msg(k)),
+            icon,
+            f.kinds.contains(&k),
+        ));
+    }
+    let mut pinned = tab(
+        CHIP_PINNED,
+        t(lang, Msg::UiFilterPinned),
+        TabIcon::Pinned,
+        f.pinned_only,
+    );
+    pinned.divider_before = true;
+    v.push(pinned);
+    let fav_on = nav
+        .favorites_id()
+        .is_some_and(|id| f.collection == Some(id));
+    v.push(tab(
+        NAV_FAVORITES,
+        t(lang, Msg::OrgFavorites),
+        TabIcon::Favorites,
+        fav_on,
+    ));
+    v
+}
+
+/// The chip id behind Ctrl+`n`: 1 = All, 2..=6 the kinds, 7 Pinned, 8 Favorites, 9 nothing.
+pub fn segment_chip(n: u8) -> Option<i32> {
+    Some(match n {
+        1 => CHIP_ALL,
+        2 => kind_id(ClipType::Text),
+        3 => kind_id(ClipType::Url),
+        4 => kind_id(ClipType::Code),
+        5 => kind_id(ClipType::Image),
+        6 => kind_id(ClipType::Files),
+        7 => CHIP_PINNED,
+        8 => NAV_FAVORITES,
+        _ => return None,
+    })
+}
+
+/// Most entries one level of the "More filters" menu lists.
+pub const MORE_MAX: usize = 10;
+
+/// Which list of the "More filters" menu is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoreLevel {
+    Top,
+    Collections,
+    Apps,
+}
+
+/// What a "More filters" entry stands for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoreItem {
+    Today,
+    Week,
+    RichText,
+    Color,
+    /// Opens the collections list.
+    Collections,
+    /// Opens the apps list.
+    Apps,
+    /// The i-th user collection (`nav::toggle_nav` id).
+    Collection(usize),
+    /// The i-th source app of the current list.
+    App(usize),
+}
+
+impl MoreItem {
+    /// The chip id a choice toggles; `None` for the two entries that open a list.
+    pub fn chip_id(self) -> Option<i32> {
+        match self {
+            MoreItem::Today => Some(CHIP_TODAY),
+            MoreItem::Week => Some(CHIP_WEEK),
+            MoreItem::RichText => Some(kind_id(ClipType::RichText)),
+            MoreItem::Color => Some(kind_id(ClipType::Color)),
+            MoreItem::Collection(i) => Some(index_id(NAV_COLLECTION, i)),
+            MoreItem::App(i) => Some(index_id(CHIP_SOURCE, i)),
+            MoreItem::Collections | MoreItem::Apps => None,
+        }
+    }
+}
+
+/// One entry of the "More filters" menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MoreEntry {
+    pub item: MoreItem,
+    pub label: String,
+    /// The filter is on (shown with a check). Entries that open a list are never "on".
+    pub on: bool,
+    /// Right enters a second-level list.
+    pub sub: bool,
+}
+
+/// The entries of one level of "More filters": Today, Last 7 days, Rich text, Color, then the
+/// Collections and Apps lists (left out while they are empty). At most `MORE_MAX` per level.
+pub fn more_filter_items(
+    f: &Filters,
+    nav: &Nav,
+    sources: &[String],
+    lang: Lang,
+    level: MoreLevel,
+) -> Vec<MoreEntry> {
+    let entry = |item: MoreItem, label: &str, on: bool, sub: bool| MoreEntry {
+        item,
+        label: label.to_string(),
+        on,
+        sub,
+    };
+    match level {
+        MoreLevel::Top => {
+            let mut v = vec![
+                entry(
+                    MoreItem::Today,
+                    t(lang, Msg::UiFilterToday),
+                    f.time == TimeFilter::Today,
+                    false,
+                ),
+                entry(
+                    MoreItem::Week,
+                    t(lang, Msg::UiFilterLast7Days),
+                    f.time == TimeFilter::Week,
+                    false,
+                ),
+                entry(
+                    MoreItem::RichText,
+                    t(lang, kind_msg(ClipType::RichText)),
+                    f.kinds.contains(&ClipType::RichText),
+                    false,
+                ),
+                entry(
+                    MoreItem::Color,
+                    t(lang, kind_msg(ClipType::Color)),
+                    f.kinds.contains(&ClipType::Color),
+                    false,
+                ),
+            ];
+            if !nav.user_collections().is_empty() {
+                v.push(entry(
+                    MoreItem::Collections,
+                    t(lang, Msg::OrgGroupCollections),
+                    false,
+                    true,
+                ));
+            }
+            if !sources.is_empty() {
+                v.push(entry(
+                    MoreItem::Apps,
+                    t(lang, Msg::UiFilterApps),
+                    false,
+                    true,
+                ));
+            }
+            v
+        }
+        MoreLevel::Collections => nav
+            .user_collections()
+            .into_iter()
+            .take(MORE_MAX)
+            .enumerate()
+            .map(|(i, c)| {
+                entry(
+                    MoreItem::Collection(i),
+                    &c.name,
+                    f.collection == Some(c.id),
+                    false,
+                )
+            })
+            .collect(),
+        MoreLevel::Apps => sources
+            .iter()
+            .take(MORE_MAX)
+            .enumerate()
+            .map(|(i, s)| entry(MoreItem::App(i), s, f.source.as_ref() == Some(s), false))
+            .collect(),
+    }
+}
+
+/// The extra filters that are on, as removable chips right of the segment: Today, Last 7 days,
+/// Rich text, Color, one user collection, one app. The segment's own filters are not repeated.
+pub fn popup_extras(f: &Filters, nav: &Nav, sources: &[String], lang: Lang) -> Vec<ChipSpec> {
+    let mut v = Vec::new();
+    match f.time {
+        TimeFilter::Today => v.push(chip(CHIP_TODAY, t(lang, Msg::UiFilterToday), true)),
+        TimeFilter::Week => v.push(chip(CHIP_WEEK, t(lang, Msg::UiFilterLast7Days), true)),
+        TimeFilter::Any | TimeFilter::Month => {}
+    }
+    for k in [ClipType::RichText, ClipType::Color] {
+        if f.kinds.contains(&k) {
+            v.push(chip(kind_id(k), t(lang, kind_msg(k)), true));
+        }
+    }
+    if let Some(c) = nav.shown_user_collection(f) {
+        let at = nav
+            .user_collections()
+            .iter()
+            .position(|x| x.id == c.id)
+            .unwrap_or(0);
+        v.push(chip(index_id(NAV_COLLECTION, at), &c.name, true));
+    }
+    if let Some(src) = &f.source {
+        let at = sources.iter().position(|s| s == src).unwrap_or(0);
+        v.push(chip(index_id(CHIP_SOURCE, at), src, true));
+    }
     v
 }
 
@@ -342,7 +614,16 @@ mod tests {
         let labels: Vec<&str> = v.iter().map(|t| t.label.as_str()).collect();
         assert_eq!(
             labels,
-            ["All", "Text", "Link", "Code", "Image", "Files", "Pinned", "Favorites"]
+            [
+                "All",
+                "Text",
+                "Link",
+                "Code",
+                "Image",
+                "Files",
+                "Pinned",
+                "Favorites"
+            ]
         );
         assert_eq!(
             popup_segment(&Filters::default(), &nav(), Lang::Vi)[0].label,
@@ -470,8 +751,7 @@ mod tests {
         );
         assert_eq!(v.len(), 4);
         assert_eq!(
-            more_filter_items(&Filters::default(), &nav(), &[], Lang::Vi, MoreLevel::Top)[1]
-                .label,
+            more_filter_items(&Filters::default(), &nav(), &[], Lang::Vi, MoreLevel::Top)[1].label,
             "7 ngày qua"
         );
     }

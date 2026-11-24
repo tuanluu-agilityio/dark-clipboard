@@ -20,6 +20,8 @@ pub enum Key {
     Tab,
     /// The context-menu key (history window).
     Menu,
+    F1,
+    F10,
     Char(char),
     Other,
 }
@@ -43,6 +45,9 @@ pub struct KeyCtx {
     pub undo_available: bool,
     /// A filter chip has the focus (Enter and Space toggle it; only Esc closes).
     pub chips_focused: bool,
+    /// A header button or the filter segment has the focus (Enter, Space and the arrows stay
+    /// with it, like `chips_focused`; the new Ctrl chords still work).
+    pub control_focused: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +92,18 @@ pub enum Action {
     CopyAs,
     /// Ctrl+D: favorite or unfavorite the selected clip (Task 403).
     ToggleFavorite,
+    /// Ctrl+K: focus the search box and select its text (Task 701).
+    FocusSearch,
+    /// Ctrl+,: open Settings.
+    OpenSettings,
+    /// Shift+F10 or the Menu key: open the row menu at the selected row.
+    RowMenu,
+    /// Ctrl+1..9: the n-th filter segment tab (1-based; `chips::segment_chip` decides).
+    Segment(u8),
+    /// Ctrl+Shift+F: open "More filters".
+    MoreFilters,
+    /// F1 or Ctrl+/: the shortcuts sheet (Task 706; a stub until then).
+    Shortcuts,
 }
 
 /// Which filter chip has the keyboard focus, from per-chip gained/lost reports. The reports of
@@ -138,6 +155,8 @@ pub fn key_from_text(s: &str) -> Key {
         (SlintKey::Delete, Key::Delete),
         (SlintKey::Tab, Key::Tab),
         (SlintKey::Menu, Key::Menu),
+        (SlintKey::F1, Key::F1),
+        (SlintKey::F10, Key::F10),
     ];
     if let Some(&(_, k)) = named.iter().find(|(sk, _)| char::from(*sk) == c) {
         return k;
@@ -148,7 +167,8 @@ pub fn key_from_text(s: &str) -> Key {
     // Other control characters and Slint's private-use codes (arrows, F-keys, ...).
     if c.is_control() || ('\u{F700}'..='\u{F8FF}').contains(&c) {
         // Ctrl+letter may arrive as its control code (Ctrl+P = U+0010, Ctrl+Z = U+001A).
-        if matches!(c, '\u{8}' | '\u{10}' | '\u{1a}') {
+        // Ctrl+K and Ctrl+F (U+000B, U+0006) are the new search and filter chords.
+        if matches!(c, '\u{6}' | '\u{8}' | '\u{b}' | '\u{10}' | '\u{1a}') {
             return Key::Char(c);
         }
         return Key::Other;
@@ -156,9 +176,33 @@ pub fn key_from_text(s: &str) -> Key {
     Key::Char(c)
 }
 
+/// The chords added in Task 701. They never clash with an older key and work whatever has the
+/// focus (the search box, the list, a chip, a header button, the segment): none of them is
+/// typing, and none is Enter, Space or an arrow.
+fn chord_key(k: Key, m: Mods) -> Option<Action> {
+    let ctrl = m.ctrl && !m.alt && !m.meta;
+    match k {
+        Key::Char('k' | 'K' | '\u{b}') if ctrl && !m.shift => Some(Action::FocusSearch),
+        Key::Char(',') if ctrl && !m.shift => Some(Action::OpenSettings),
+        Key::Char('/') if ctrl => Some(Action::Shortcuts),
+        Key::Char('f' | 'F' | '\u{6}') if ctrl && m.shift => Some(Action::MoreFilters),
+        Key::Char(c @ '1'..='9') if ctrl && !m.shift => {
+            let n = u8::try_from(c.to_digit(10)?).ok()?;
+            Some(Action::Segment(n))
+        }
+        Key::F1 if !m.alt && !m.meta => Some(Action::Shortcuts),
+        Key::F10 if m.shift && !m.ctrl && !m.alt && !m.meta => Some(Action::RowMenu),
+        Key::Menu => Some(Action::RowMenu),
+        _ => None,
+    }
+}
+
 /// The popup action for a key, or `None` to let the focused element handle it.
 pub fn map_key(k: Key, m: Mods, ctx: KeyCtx) -> Option<Action> {
-    if ctx.chips_focused && k != Key::Escape {
+    if let Some(a) = chord_key(k, m) {
+        return Some(a);
+    }
+    if (ctx.chips_focused || ctx.control_focused) && k != Key::Escape {
         return None;
     }
     let plain = !m.ctrl && !m.alt && !m.meta;
