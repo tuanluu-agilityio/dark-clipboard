@@ -23,8 +23,9 @@ mod generated {
     slint::include_modules!();
 }
 pub use generated::{
-    AppRow, Chip, ClipRow, DetailState, FileRow, FilterItem, HistoryWindow, KindItem, MainWindow,
-    OrgDialogState, OrgStrings, SText, Seg, SettingsWindow, Strings, Theme, WText, WelcomeWindow,
+    AppRow, Chip, ClipRow, DetailState, FactRow, FileRow, FilterItem, HistoryWindow, KindItem,
+    MainWindow, OrgDialogState, OrgStrings, SText, Seg, SettingsWindow, Strings, Theme, WText,
+    WelcomeWindow,
 };
 
 mod common;

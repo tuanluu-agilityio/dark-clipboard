@@ -1,0 +1,918 @@
+// The history window's panes (Task 703): the sidebar, the date button, the detail toolbar, the
+// inline tag / note / collection sections and the status line. Data and every decision come from
+// Rust (`src/ui/history_host.rs`, `src/history/sidebar.rs`); this file only lays things out and
+// forwards input. Every string comes from the `Strings` / `OrgStrings` globals (i18n). A masked
+// clip never reaches any of these: Rust hands over only fixed texts for it.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Strings } from "theme.slint";
+import { Icon, IconName } from "kit/icon.slint";
+import { IconButton } from "kit/icon_button.slint";
+import { KeyCap } from "kit/key_cap.slint";
+import { Tooltip } from "kit/tooltip.slint";
+import { StatusHint } from "popup.slint";
+import { OrgStrings } from "organize.slint";
+
+// One line of the sidebar: a filter, or a group header (`header`). `id` is the chip / nav id Rust
+// toggles (a header's id is negative). `count < 0` means no count (`badge` is empty then).
+export struct FilterItem {
+    id: int,
+    label: string,
+    on: bool,
+    header: bool,
+    count: int,
+    icon: IconName,
+    group: int,
+    collapsed: bool,
+    badge: string,
+    // A header with a `+` button (Collections).
+    add: bool,
+}
+
+// A group header of the sidebar: chevron, name, and for Collections the `+` (and, while a user
+// collection is shown, rename and delete). The keyboard has Enter, Left and Right on it.
+component SideHeader inherits Rectangle {
+    in property <FilterItem> item;
+    in property <bool> focused;
+    in property <bool> col-shown;
+    callback activated();
+    callback add-clicked();
+    callback rename-clicked();
+    callback delete-clicked();
+
+    height: 28px;
+    border-radius: 6px;
+    accessible-role: button;
+    accessible-label: root.item.label;
+    accessible-description: root.item.collapsed ? Strings.hist-tip-expand : Strings.hist-tip-collapse;
+    accessible-action-default => {
+        root.activated();
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.activated();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 4px;
+        padding-right: 2px;
+        spacing: 4px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                name: root.item.collapsed ? IconName.chevron-right : IconName.chevron-down;
+                size: 14px;
+                tint: Theme.text-3;
+            }
+        }
+        Text {
+            text: root.item.label;
+            color: Theme.text-3;
+            font-size: 11px;
+            font-weight: 700;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            min-width: 0px;
+            overflow: elide;
+            accessible-role: AccessibleRole.none;
+        }
+        if root.item.add && root.col-shown: IconButton {
+            name: IconName.pencil;
+            label: OrgStrings.rename-collection;
+            focusable: false;
+            y: (parent.height - self.height) / 2;
+            clicked => {
+                root.rename-clicked();
+            }
+        }
+        if root.item.add && root.col-shown: IconButton {
+            name: IconName.trash-2;
+            label: OrgStrings.delete-collection;
+            danger: true;
+            focusable: false;
+            y: (parent.height - self.height) / 2;
+            clicked => {
+                root.delete-clicked();
+            }
+        }
+        if root.item.add: IconButton {
+            name: IconName.plus;
+            label: OrgStrings.new-collection;
+            // Mouse only: the keyboard has Ctrl+Shift+N.
+            focusable: false;
+            y: (parent.height - self.height) / 2;
+            clicked => {
+                root.add-clicked();
+            }
+        }
+    }
+
+    // The keyboard cursor: a 2 px focus ring while the sidebar has the focus.
+    Rectangle {
+        visible: root.focused;
+        width: parent.width;
+        height: parent.height;
+        border-radius: 6px;
+        border-width: 2px;
+        border-color: Theme.focus;
+        background: transparent;
+    }
+}
+
+// A filter of the sidebar: icon, name and (where the data exists) a count. One per group is on.
+component SideItem inherits Rectangle {
+    in property <FilterItem> item;
+    in property <bool> focused;
+    callback activated();
+
+    height: 28px;
+    border-radius: 6px;
+    background: root.item.on ? Theme.selected : (touch.has-hover ? Theme.surface : transparent);
+    accessible-role: checkbox;
+    accessible-checkable: true;
+    accessible-checked: root.item.on;
+    accessible-label: root.item.label;
+    accessible-description: root.item.badge;
+    accessible-action-default => {
+        root.activated();
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.activated();
+        }
+    }
+
+    // The active item has a 3 px accent bar (a non-colour cue).
+    Rectangle {
+        visible: root.item.on;
+        x: 0px;
+        y: 6px;
+        width: 3px;
+        height: parent.height - 12px;
+        border-radius: 1.5px;
+        background: Theme.accent;
+    }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 8px;
+        spacing: 8px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                name: root.item.icon;
+                tint: root.item.on ? Theme.accent : Theme.text-2;
+            }
+        }
+        Text {
+            text: root.item.label;
+            color: Theme.text;
+            font-size: 13px;
+            font-weight: root.item.on ? 600 : 400;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            min-width: 0px;
+            overflow: elide;
+            accessible-role: AccessibleRole.none;
+        }
+        if root.item.badge != "": Text {
+            text: root.item.badge;
+            color: Theme.text-3;
+            font-size: 11px;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            accessible-role: AccessibleRole.none;
+        }
+    }
+
+    Rectangle {
+        visible: root.focused;
+        width: parent.width;
+        height: parent.height;
+        border-radius: 6px;
+        border-width: 2px;
+        border-color: Theme.focus;
+        background: transparent;
+    }
+}
+
+// The sidebar: one Tab stop. Up and Down move the cursor, Enter and Space activate the item (or
+// collapse / expand a group header), Left and Right collapse and expand a header. While it has
+// the focus Rust's key map leaves those keys alone (it is reported through `focus-report`).
+export component SidebarView inherits FocusScope {
+    in property <[FilterItem]> items;
+    // A user collection is the active filter: its header also offers rename and delete (mouse).
+    in property <bool> col-shown;
+    callback toggled(int);
+    callback group-toggled(int);
+    callback add-clicked();
+    callback rename-clicked();
+    callback delete-clicked();
+    callback focus-report(bool);
+    property <int> cursor;
+
+    focus-on-click: false;
+    accessible-role: groupbox;
+    accessible-label: Strings.filters-label;
+
+    key-pressed(e) => {
+        if (e.text == Key.UpArrow) {
+            root.cursor = max(0, root.cursor - 1);
+            return accept;
+        }
+        if (e.text == Key.DownArrow) {
+            root.cursor = max(0, min(root.items.length - 1, root.cursor + 1));
+            return accept;
+        }
+        if (e.text == Key.Home) {
+            root.cursor = 0;
+            return accept;
+        }
+        if (e.text == Key.End) {
+            root.cursor = max(0, root.items.length - 1);
+            return accept;
+        }
+        if (root.cursor < 0 || root.cursor >= root.items.length) {
+            return reject;
+        }
+        if (e.text == Key.LeftArrow) {
+            if (root.items[root.cursor].header && !root.items[root.cursor].collapsed) {
+                root.group-toggled(root.items[root.cursor].group);
+            }
+            return accept;
+        }
+        if (e.text == Key.RightArrow) {
+            if (root.items[root.cursor].header && root.items[root.cursor].collapsed) {
+                root.group-toggled(root.items[root.cursor].group);
+            }
+            return accept;
+        }
+        if (e.text == " " || e.text == Key.Return) {
+            if (root.items[root.cursor].header) {
+                root.group-toggled(root.items[root.cursor].group);
+            } else {
+                root.toggled(root.items[root.cursor].id);
+            }
+            return accept;
+        }
+        reject
+    }
+    focus-gained(reason) => {
+        root.focus-report(true);
+    }
+    focus-lost(reason) => {
+        root.focus-report(false);
+    }
+    // Keep the cursor row in view.
+    changed cursor => {
+        if (root.cursor * 28px < -scroll.content-y) {
+            scroll.content-y = -(root.cursor * 28px);
+        } else if ((root.cursor + 1) * 28px > -scroll.content-y + scroll.visible-height) {
+            scroll.content-y = -((root.cursor + 1) * 28px - scroll.visible-height);
+        }
+    }
+
+    scroll := ScrollView {
+        VerticalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            padding-top: 4px;
+            spacing: 0px;
+            for item[i] in root.items: Rectangle {
+                height: 28px;
+                if item.header: SideHeader {
+                    item: item;
+                    focused: root.has-focus && i == root.cursor;
+                    col-shown: root.col-shown;
+                    activated => {
+                        root.cursor = i;
+                        root.group-toggled(item.group);
+                    }
+                    add-clicked => {
+                        root.add-clicked();
+                    }
+                    rename-clicked => {
+                        root.rename-clicked();
+                    }
+                    delete-clicked => {
+                        root.delete-clicked();
+                    }
+                }
+                if !item.header: SideItem {
+                    item: item;
+                    focused: root.has-focus && i == root.cursor;
+                    activated => {
+                        root.cursor = i;
+                        root.toggled(item.id);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The toolbar's date button: calendar icon, the active item's name and a chevron. One Tab stop;
+// Enter, Space and a click ask Rust to open the date menu.
+export component DateButton inherits FocusScope {
+    in property <string> text;
+    in property <string> label;
+    callback open-requested();
+    callback focus-report(bool);
+
+    focus-on-click: false;
+    height: 28px;
+    min-width: 40px;
+    preferred-width: 8px + 16px + 6px + name.preferred-width + 6px + 16px + 8px;
+    accessible-role: button;
+    accessible-label: root.label + ": " + root.text;
+    accessible-action-default => {
+        root.open-requested();
+    }
+    key-pressed(e) => {
+        if (e.text == " " || e.text == Key.Return) {
+            root.open-requested();
+            return accept;
+        }
+        reject
+    }
+    focus-gained(reason) => {
+        root.focus-report(true);
+    }
+    focus-lost(reason) => {
+        root.focus-report(false);
+    }
+
+    Rectangle {
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: touch.pressed ? Theme.raised : (touch.has-hover ? Theme.surface : transparent);
+
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            spacing: 6px;
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    name: IconName.calendar;
+                }
+            }
+            name := Text {
+                text: root.text;
+                color: Theme.text;
+                font-size: 13px;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+                min-width: 0px;
+            }
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    name: IconName.chevron-down;
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        visible: root.has-focus;
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: 8px;
+        border-width: 2px;
+        border-color: Theme.focus;
+        background: transparent;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.open-requested();
+        }
+    }
+}
+
+// One 28 px button of the detail toolbar. It is not focusable itself: the toolbar owns the
+// focus and draws the ring (`focused`). `usable: false` dims it and ignores clicks.
+component ToolBtn inherits Rectangle {
+    in property <IconName> name;
+    in property <string> label;
+    in property <string> shortcut;
+    in property <bool> usable: true;
+    in property <bool> focused;
+    in property <bool> danger;
+    in property <bool> active;
+    callback clicked();
+
+    width: 28px;
+    height: 28px;
+    opacity: root.usable ? 1.0 : 0.4;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.usable;
+    accessible-action-default => {
+        if (root.usable) {
+            root.clicked();
+        }
+    }
+
+    Rectangle {
+        border-radius: 6px;
+        background: root.usable && touch.pressed ? Theme.raised : (root.usable && touch.has-hover ? Theme.surface : transparent);
+        Icon {
+            name: root.name;
+            tint: root.active ? Theme.warning
+                : (root.usable && (touch.has-hover || root.focused) ? (root.danger ? Theme.danger : Theme.text) : Theme.text-2);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+    }
+
+    Rectangle {
+        visible: root.focused;
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: 8px;
+        border-width: 2px;
+        border-color: Theme.focus;
+        background: transparent;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: root.usable ? pointer : default;
+        clicked => {
+            if (root.usable) {
+                root.clicked();
+            }
+        }
+    }
+
+    Tooltip {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        text: root.label;
+        shortcut: root.shortcut;
+        active: touch.has-hover || root.focused;
+    }
+}
+
+// The detail panel's toolbar: Copy, Copy plain, Copy as..., Edit a copy... | Pin, Favorite,
+// Delete. One Tab stop; Left and Right move between the buttons, Enter and Space press one.
+// The enabled states come from Rust (the same ones the old footer used).
+export component DetailToolbar inherits FocusScope {
+    in property <bool> can-copy;
+    in property <bool> can-transform;
+    in property <bool> has-selection;
+    in property <bool> will-unpin;
+    in property <bool> can-favorite;
+    in property <bool> favorite;
+    in property <string> fav-text;
+    callback act-copy();
+    callback act-copy-plain();
+    callback act-copy-as();
+    callback act-edit();
+    callback act-pin();
+    callback act-favorite();
+    callback act-delete();
+    callback focus-report(bool);
+    property <int> cursor;
+
+    focus-on-click: false;
+    height: 28px;
+    accessible-role: groupbox;
+    accessible-label: Strings.detail-label;
+
+    function usable(i: int) -> bool {
+        if (i == 0 || i == 1) {
+            return root.can-copy;
+        }
+        if (i == 2 || i == 3) {
+            return root.can-transform;
+        }
+        if (i == 4 || i == 6) {
+            return root.has-selection;
+        }
+        return root.can-favorite;
+    }
+    function run(i: int) {
+        if (!root.usable(i)) {
+            return;
+        }
+        if (i == 0) {
+            root.act-copy();
+        } else if (i == 1) {
+            root.act-copy-plain();
+        } else if (i == 2) {
+            root.act-copy-as();
+        } else if (i == 3) {
+            root.act-edit();
+        } else if (i == 4) {
+            root.act-pin();
+        } else if (i == 5) {
+            root.act-favorite();
+        } else {
+            root.act-delete();
+        }
+    }
+
+    key-pressed(e) => {
+        if (e.text == Key.LeftArrow) {
+            root.cursor = max(0, root.cursor - 1);
+            return accept;
+        }
+        if (e.text == Key.RightArrow) {
+            root.cursor = min(6, root.cursor + 1);
+            return accept;
+        }
+        if (e.text == " " || e.text == Key.Return) {
+            root.run(root.cursor);
+            return accept;
+        }
+        reject
+    }
+    focus-gained(reason) => {
+        root.focus-report(true);
+    }
+    focus-lost(reason) => {
+        root.focus-report(false);
+    }
+
+    HorizontalLayout {
+        spacing: 4px;
+        alignment: start;
+        ToolBtn {
+            name: IconName.copy;
+            label: Strings.copy;
+            shortcut: Strings.hist-key-enter;
+            usable: root.usable(0);
+            focused: root.has-focus && root.cursor == 0;
+            clicked => {
+                root.cursor = 0;
+                root.run(0);
+            }
+        }
+        ToolBtn {
+            name: IconName.type;
+            label: Strings.copy-plain;
+            shortcut: Strings.hist-key-shift-enter;
+            usable: root.usable(1);
+            focused: root.has-focus && root.cursor == 1;
+            clicked => {
+                root.cursor = 1;
+                root.run(1);
+            }
+        }
+        ToolBtn {
+            name: IconName.wand-sparkles;
+            label: Strings.copy-as;
+            shortcut: Strings.hist-key-ctrl-t;
+            usable: root.usable(2);
+            focused: root.has-focus && root.cursor == 2;
+            clicked => {
+                root.cursor = 2;
+                root.run(2);
+            }
+        }
+        ToolBtn {
+            name: IconName.pencil;
+            label: Strings.hist-tip-edit-copy;
+            shortcut: Strings.hist-key-ctrl-e;
+            usable: root.usable(3);
+            focused: root.has-focus && root.cursor == 3;
+            clicked => {
+                root.cursor = 3;
+                root.run(3);
+            }
+        }
+        Rectangle {
+            width: 9px;
+            Rectangle {
+                x: 4px;
+                y: 5px;
+                width: 1px;
+                height: parent.height - 10px;
+                background: Theme.border-strong;
+            }
+        }
+        ToolBtn {
+            name: root.will-unpin ? IconName.pin-off : IconName.pin;
+            label: root.will-unpin ? Strings.unpin : Strings.pin;
+            shortcut: Strings.hist-key-ctrl-p;
+            usable: root.usable(4);
+            focused: root.has-focus && root.cursor == 4;
+            clicked => {
+                root.cursor = 4;
+                root.run(4);
+            }
+        }
+        ToolBtn {
+            name: IconName.star;
+            label: root.fav-text;
+            shortcut: Strings.key-ctrl-d;
+            usable: root.usable(5);
+            active: root.favorite;
+            focused: root.has-focus && root.cursor == 5;
+            clicked => {
+                root.cursor = 5;
+                root.run(5);
+            }
+        }
+        ToolBtn {
+            name: IconName.trash-2;
+            label: Strings.delete;
+            shortcut: Strings.hist-key-del;
+            danger: true;
+            usable: root.usable(6);
+            focused: root.has-focus && root.cursor == 6;
+            clicked => {
+                root.cursor = 6;
+                root.run(6);
+            }
+        }
+    }
+}
+
+// A removable chip: the text and an x. Mouse only for the x (the keyboard has the dialogs).
+component Chip24 inherits Rectangle {
+    in property <string> text;
+    in property <string> remove-label;
+    in property <bool> removable: true;
+    callback remove();
+
+    height: 24px;
+    width: row.preferred-width;
+    border-radius: 12px;
+    background: Theme.raised;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    row := HorizontalLayout {
+        padding-left: 10px;
+        padding-right: root.removable ? 4px : 10px;
+        spacing: 4px;
+        Text {
+            text: root.text;
+            color: Theme.text;
+            font-size: 12px;
+            vertical-alignment: center;
+            accessible-role: AccessibleRole.text;
+        }
+        if root.removable: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                border-radius: 9px;
+                background: x-touch.has-hover ? Theme.surface : transparent;
+                accessible-role: button;
+                accessible-label: root.remove-label + ": " + root.text;
+                accessible-action-default => {
+                    root.remove();
+                }
+                Icon {
+                    name: IconName.x;
+                    size: 12px;
+                    tint: x-touch.has-hover ? Theme.text : Theme.text-2;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                x-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.remove();
+                    }
+                }
+            }
+        }
+    }
+}
+
+// An inline section of the detail panel with chips (tags, collections): a title, one row of
+// chips that scrolls sideways, and a `+` that opens the existing dialog.
+export component ChipSection inherits Rectangle {
+    in property <string> title;
+    in property <[string]> chips;
+    in property <string> empty-text;
+    in property <string> add-label;
+    in property <string> remove-label;
+    callback add();
+    callback remove(int);
+    callback focus-report(bool);
+
+    height: 52px;
+
+    Text {
+        x: 0px;
+        y: 0px;
+        height: 18px;
+        text: root.title;
+        color: Theme.text-3;
+        font-size: 11px;
+        font-weight: 700;
+        vertical-alignment: center;
+        accessible-role: AccessibleRole.text;
+    }
+
+    HorizontalLayout {
+        y: 20px;
+        height: 28px;
+        spacing: 6px;
+        Flickable {
+            content-width: chip-row.preferred-width;
+            horizontal-stretch: 1;
+            chip-row := HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                if root.chips.length == 0: Text {
+                    text: root.empty-text;
+                    color: Theme.text-3;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    accessible-role: AccessibleRole.text;
+                }
+                for chip[i] in root.chips: VerticalLayout {
+                    alignment: center;
+                    Chip24 {
+                        text: chip;
+                        remove-label: root.remove-label;
+                        remove => {
+                            root.remove(i);
+                        }
+                    }
+                }
+            }
+        }
+        IconButton {
+            name: IconName.plus;
+            label: root.add-label;
+            focus-gained(reason) => {
+                root.focus-report(true);
+            }
+            focus-lost(reason) => {
+                root.focus-report(false);
+            }
+            clicked => {
+                root.add();
+            }
+        }
+    }
+}
+
+// The note section: a title and the note (or "No note"); the whole box opens the note dialog.
+export component NoteSection inherits FocusScope {
+    in property <string> note;
+    in property <bool> can-edit: true;
+    callback edit();
+    callback focus-report(bool);
+
+    focus-on-click: false;
+    focus-on-tab-navigation: root.can-edit;
+    height: 66px;
+    accessible-role: button;
+    accessible-label: OrgStrings.note-label;
+    accessible-description: root.note != "" ? root.note : OrgStrings.no-note;
+    accessible-action-default => {
+        if (root.can-edit) {
+            root.edit();
+        }
+    }
+    key-pressed(e) => {
+        if (root.can-edit && (e.text == " " || e.text == Key.Return)) {
+            root.edit();
+            return accept;
+        }
+        reject
+    }
+    focus-gained(reason) => {
+        root.focus-report(true);
+    }
+    focus-lost(reason) => {
+        root.focus-report(false);
+    }
+
+    Text {
+        x: 0px;
+        y: 0px;
+        height: 18px;
+        text: OrgStrings.note-label;
+        color: Theme.text-3;
+        font-size: 11px;
+        font-weight: 700;
+        vertical-alignment: center;
+        accessible-role: AccessibleRole.none;
+    }
+
+    Rectangle {
+        y: 20px;
+        height: parent.height - 20px;
+        border-radius: 6px;
+        border-width: root.has-focus ? 2px : 1px;
+        border-color: root.has-focus ? Theme.focus : Theme.border;
+        background: touch.has-hover ? Theme.surface : transparent;
+        Text {
+            x: 8px;
+            y: 4px;
+            width: parent.width - 16px;
+            height: parent.height - 8px;
+            text: root.note != "" ? root.note : OrgStrings.no-note;
+            color: root.note != "" ? Theme.text : Theme.text-3;
+            font-size: 12px;
+            wrap: word-wrap;
+            overflow: elide;
+            accessible-role: AccessibleRole.none;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.can-edit;
+        mouse-cursor: root.can-edit ? pointer : default;
+        clicked => {
+            root.edit();
+        }
+    }
+}
+
+// One "Type / From / Copied" line of the facts.
+export component FactLine inherits Rectangle {
+    in property <string> name;
+    in property <string> value;
+
+    height: 18px;
+    accessible-role: text;
+    accessible-label: root.name + ": " + root.value;
+
+    HorizontalLayout {
+        spacing: 8px;
+        Text {
+            width: 64px;
+            text: root.name;
+            color: Theme.text-3;
+            font-size: 12px;
+            vertical-alignment: center;
+            accessible-role: AccessibleRole.none;
+        }
+        Text {
+            text: root.value;
+            color: Theme.text;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+            min-width: 0px;
+            accessible-role: AccessibleRole.none;
+        }
+    }
+}
+
+// The status line (28 px) under the list: the clip count and at most two key hints.
+export component HistoryStatus inherits Rectangle {
+    in property <string> text;
+    in property <[StatusHint]> hints;
+
+    height: 28px;
+    accessible-role: groupbox;
+    accessible-label: root.text;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        Text {
+            text: root.text;
+            color: Theme.text-2;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+            min-width: 0px;
+        }
+        for h in root.hints: HorizontalLayout {
+            spacing: 4px;
+            VerticalLayout {
+                alignment: center;
+                KeyCap {
+                    text: h.key;
+                }
+            }
+            Text {
+                text: h.label;
+                color: Theme.text-2;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

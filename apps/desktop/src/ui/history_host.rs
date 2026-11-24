@@ -17,15 +17,16 @@
 //! previews, source names and paths are never logged or formatted into messages (GC-06).
 //! Delete never runs without the confirmation dialog (`history::select::DeleteFlow`).
 
-use super::common::{self, clip_row, Px};
+use super::common::{self, history_clip_row, Px};
+use super::generated::{IconName, MenuEntry, StatusHint};
 use super::{ClipRow, FilterItem, HistoryWindow, OrgDialogState, OrgStrings, Poster, Strings};
 use crate::history::keys::{self as hkeys, HistoryAction, HistoryCtx};
 use crate::history::select::{can_copy, pin_plan, DeleteFlow, MultiSelect};
-use crate::organize::nav;
-use crate::popup::chips;
+use crate::history::sidebar::{self, Group, SidebarIcon};
 use crate::popup::detail::{DetailModel, DetailRequest};
 use crate::popup::keys::{self, ChipFocus, CopyKind, Mods};
 use crate::popup::list::{Applied, Filters, Item, ListModel, Request, View};
+use crate::popup::menu::{self, MenuAction, MenuKey, MenuKind, OpenMenu};
 use crate::popup::row::fill;
 use crate::popup::transform::{self as tf, PanelKey, Session};
 use darkclip_app::api::{Caller, CopyMode, SaveOutcome};
@@ -36,7 +37,7 @@ use darkclip_core::policy::SkipReason;
 use darkclip_core::ClipId;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -74,6 +75,10 @@ struct Host {
     toast: Timer,
     slow: bool,
     chip_focus: ChipFocus,
+    /// Sidebar groups the user collapsed (UI state only: not a filter, reset on hide).
+    collapsed: BTreeSet<Group>,
+    /// The open date menu, if any. Holds no text.
+    date_menu: Option<OpenMenu>,
     /// The open "Copy as..." panel (Task 404), if any.
     tf: Option<Session>,
     detail: DetailModel<Px>,
@@ -118,7 +123,51 @@ fn set_strings(w: &HistoryWindow, lang: Lang) {
     s.set_history_hint(t(lang, Msg::UiHistoryHint).into());
     s.set_key_hints(t(lang, Msg::UiKeyHintsHistory).into());
     s.set_confirm_hints(t(lang, Msg::UiKeyHintsConfirm).into());
+    s.set_hist_tip_date(t(lang, Msg::UiTipDateFilter).into());
+    s.set_hist_tip_select(t(lang, Msg::UiTipSelectMode).into());
+    s.set_hist_tip_collapse(t(lang, Msg::UiTipGroupCollapse).into());
+    s.set_hist_tip_expand(t(lang, Msg::UiTipGroupExpand).into());
+    s.set_hist_tip_edit_copy(t(lang, Msg::UiTipEditCopy).into());
+    s.set_hist_fact_type(t(lang, Msg::UiGroupType).into());
+    s.set_hist_fact_from(t(lang, Msg::UiFactFrom).into());
+    s.set_hist_fact_copied(t(lang, Msg::UiFactCopied).into());
+    s.set_hist_no_collections(t(lang, Msg::UiNotInCollection).into());
+    s.set_hist_key_enter(t(lang, Msg::UiKeyEnter).into());
+    s.set_hist_key_shift_enter(t(lang, Msg::UiKeyShiftEnter).into());
+    s.set_hist_key_ctrl_t(t(lang, Msg::UiKeyCtrlT).into());
+    s.set_hist_key_ctrl_e(t(lang, Msg::UiKeyCtrlE).into());
+    s.set_hist_key_ctrl_p(t(lang, Msg::UiKeyCtrlP).into());
+    s.set_hist_key_del(t(lang, Msg::UiKeyDel).into());
     org::set_strings(w, lang);
+}
+
+/// The kit icon of a sidebar row.
+fn sidebar_icon(i: SidebarIcon) -> IconName {
+    match i {
+        SidebarIcon::None | SidebarIcon::All => IconName::Layers,
+        SidebarIcon::Pinned => IconName::Pin,
+        SidebarIcon::Favorites => IconName::Star,
+        SidebarIcon::Kind(k) => common::icon_name(k),
+        SidebarIcon::Collection => IconName::Folder,
+        SidebarIcon::Tag => IconName::Tag,
+        SidebarIcon::App => IconName::ClipboardPaste,
+    }
+}
+
+/// One sidebar row as the window's model item. The count is only shown where one exists (D-080).
+fn filter_item(r: sidebar::SidebarRow) -> FilterItem {
+    FilterItem {
+        id: r.id,
+        label: r.label.into(),
+        on: r.on,
+        header: r.header,
+        count: r.count.map_or(-1, |c| i32::try_from(c).unwrap_or(i32::MAX)),
+        icon: sidebar_icon(r.icon),
+        group: r.group.index(),
+        collapsed: r.collapsed,
+        badge: r.count.map(|c| c.to_string()).unwrap_or_default().into(),
+        add: r.add,
+    }
 }
 
 impl Host {
@@ -152,7 +201,7 @@ impl Host {
     }
 
     fn row_for(&self, item: &Item, index: usize, marked: bool) -> ClipRow {
-        let mut r = clip_row(item, index, self.lang, &self.model.filters().text);
+        let mut r = history_clip_row(item, index, self.lang, &self.model.filters().text);
         r.marked = marked;
         r
     }
@@ -185,21 +234,26 @@ impl Host {
 
     fn rebuild_filters(&mut self) {
         self.sources = self.model.sources(MAX_SOURCES);
-        let mut specs = chips::history_filters(self.model.filters(), &self.sources, self.lang);
-        // Favorites, collections and tags come right after "All" and "Pinned".
-        let at = specs.len().min(2);
-        let org_chips = nav::history_nav_chips(self.model.filters(), &self.org.nav, self.lang);
-        specs.splice(at..at, org_chips);
-        let items: Vec<FilterItem> = specs
-            .into_iter()
-            .map(|c| FilterItem {
-                id: c.id,
-                label: c.label.into(),
-                on: c.on,
-                header: c.header,
-            })
-            .collect();
-        // Changed items are updated in place, so a toggled filter keeps the keyboard focus.
+        let rows = sidebar::sidebar_groups(
+            self.model.filters(),
+            &self.org.nav,
+            &self.sources,
+            &self.collapsed,
+            self.lang,
+        );
+        self.win.set_filter_title(
+            sidebar::filter_title(
+                self.model.filters(),
+                &self.org.nav,
+                &self.sources,
+                self.lang,
+            )
+            .into(),
+        );
+        self.win
+            .set_date_text(sidebar::date_label(self.model.filters(), self.lang).into());
+        let items: Vec<FilterItem> = rows.into_iter().map(filter_item).collect();
+        // Changed items are updated in place, so a toggled filter does not rebuild the list.
         let old: Vec<FilterItem> = self.filters.iter().collect();
         match crate::popup::in_place_changes(&old, &items, |c| (c.id, c.header)) {
             Some(changed) => {
@@ -210,8 +264,9 @@ impl Host {
                 }
             }
             None => {
-                self.chip_focus
-                    .retain(|id| items.iter().any(|c| c.id == id && !c.header));
+                // Ids below -10 are the controls that report their focus (sidebar, toolbar,
+                // sections); they are not rows.
+                self.chip_focus.retain(|id| id < -10);
                 self.filters.set_vec(items);
             }
         }
@@ -244,11 +299,13 @@ impl Host {
             .collect();
         w.set_will_unpin(!pinned.is_empty() && !pin_plan(&pinned).0);
         let summary = if targets.len() > 1 {
-            fill(t(self.lang, Msg::UiSelectedCount), targets.len() as u64)
+            common::status_summary(targets.len(), false, self.lang)
         } else {
             String::new()
         };
         w.set_summary(summary.into());
+        w.set_select_mode(!self.multi.is_empty());
+        self.sync_status();
         self.sync_org();
     }
 
@@ -308,15 +365,23 @@ impl Host {
         match subject {
             Some(item) => {
                 self.win.set_detail_open(true);
-                let (state, text) = common::render_state(&item, &mut self.detail, self.lang);
+                let facts = common::history_facts(&item, self.lang, now_and_offset().0);
+                self.win.set_fact_type(facts.kind.into());
+                self.win.set_fact_from(facts.from.into());
+                self.win.set_fact_copied(facts.copied.into());
+                let (state, text) =
+                    common::render_state(&item, &mut self.detail, self.lang, now_and_offset().1);
                 self.win.set_detail(state);
                 if let Some(t) = common::set_text_if_changed(&self.win.get_detail_text(), text) {
                     self.win.set_detail_text(t);
                 }
             }
             None => {
-                // Nothing stays in the pane: no text, picture or file names.
+                // Nothing stays in the pane: no text, picture, file names or facts.
                 self.win.set_detail_open(false);
+                self.win.set_fact_type(SharedString::new());
+                self.win.set_fact_from(SharedString::new());
+                self.win.set_fact_copied(SharedString::new());
                 self.win.set_detail(common::empty_detail());
                 self.win.set_detail_text(SharedString::new());
             }
@@ -771,15 +836,9 @@ impl Host {
     }
 
     fn toggle_filter(&mut self, id: i32) {
-        let mut f = self.model.filters().clone();
         // Typing that has not run yet belongs to this search.
-        f.text = self.win.get_query().to_string();
-        let toggled = if nav::is_nav(id) {
-            nav::toggle_nav(&f, id, &self.org.nav)
-        } else {
-            chips::toggle(&f, id, &self.sources)
-        };
-        let Some(f) = toggled else {
+        let f = self.current_filters();
+        let Some(f) = sidebar::toggle(&f, id, &self.org.nav, &self.sources) else {
             return;
         };
         self.search(f);
@@ -823,6 +882,11 @@ impl Host {
 
     /// Drops everything the window holds: rows, search text, selection, pane, messages.
     fn leave(&mut self) {
+        self.date_menu = None;
+        self.collapsed = sidebar::default_collapsed();
+        self.win.invoke_reset_ui();
+        self.win.set_filter_title(SharedString::new());
+        self.win.set_date_text(SharedString::new());
         self.close_copy_as();
         self.close_edit();
         self.org_leave();
@@ -842,6 +906,9 @@ impl Host {
         self.win.set_detail_open(false);
         self.win.set_detail(common::empty_detail());
         self.win.set_detail_text(SharedString::new());
+        self.win.set_fact_type(SharedString::new());
+        self.win.set_fact_from(SharedString::new());
+        self.win.set_fact_copied(SharedString::new());
         self.filters.set_vec(Vec::new());
         self.sources.clear();
         self.chip_focus = ChipFocus::default();
@@ -884,6 +951,146 @@ impl Host {
                     let _ = app.update_settings(s);
                 });
             }
+        }
+    }
+}
+
+// ---- Status line, date menu and sidebar groups (Task 703) ----
+
+impl Host {
+    /// "128 clips" and at most two key hints (only keys that exist: Space marks, Menu opens the
+    /// context menu).
+    fn sync_status(&self) {
+        let n = self.model.visible().len();
+        self.win
+            .set_status_text(common::status_summary(n, false, self.lang).into());
+        let hint = |key: Msg, label: Msg| StatusHint {
+            key: t(self.lang, key).into(),
+            label: t(self.lang, label).into(),
+        };
+        let hints = vec![
+            hint(Msg::UiKeySpace, Msg::UiHintMark),
+            hint(Msg::UiKeyMenu, Msg::UiHintActions),
+        ];
+        self.win
+            .set_status_hints(ModelRc::new(VecModel::from(hints)));
+    }
+
+    /// A group header was clicked or Enter / Left / Right pressed on it: collapse or expand.
+    fn toggle_group(&mut self, group: i32) {
+        let Some(g) = Group::from_index(group) else {
+            return;
+        };
+        if !self.collapsed.remove(&g) {
+            self.collapsed.insert(g);
+        }
+        self.rebuild_filters();
+    }
+
+    /// The select-mode toggle: marks the clip under the cursor (like Space), or clears the marks.
+    fn toggle_select_mode(&mut self) {
+        if self.confirming() {
+            return;
+        }
+        if self.multi.is_empty() {
+            self.act(HistoryAction::ToggleMark);
+        } else {
+            let id = self.cursor_id();
+            self.multi.plain(id);
+            self.refresh_marks();
+            self.sync();
+        }
+    }
+
+    /// The filters as they are now, with the search text the user has typed so far.
+    fn current_filters(&self) -> Filters {
+        let mut f = self.model.filters().clone();
+        f.text = self.win.get_query().to_string();
+        f
+    }
+
+    // ---- the toolbar's date menu (D-079: the host owns the state, Slint only draws) ----
+
+    fn date_entries(&self) -> Vec<MenuEntry> {
+        let active = sidebar::date_active(self.model.filters());
+        sidebar::DATE_ITEMS
+            .iter()
+            .enumerate()
+            .map(|(i, m)| MenuEntry {
+                label: t(self.lang, *m).into(),
+                icon: IconName::Calendar,
+                shortcut: SharedString::new(),
+                danger: false,
+                submenu: false,
+                checked: i == active,
+            })
+            .collect()
+    }
+
+    fn open_date_menu(&mut self) {
+        if self.confirming() || self.modal_open() {
+            return;
+        }
+        let entries = self.date_entries();
+        let active = sidebar::date_active(self.model.filters());
+        let mut m = OpenMenu::new(MenuKind::More, entries.len());
+        m.highlighted = active;
+        self.date_menu = Some(m);
+        self.win
+            .set_date_entries(ModelRc::new(VecModel::from(entries)));
+        self.win
+            .set_date_highlighted(i32::try_from(active).unwrap_or(0));
+        self.win.invoke_open_date_menu();
+    }
+
+    /// Closes the menu and forgets its state.
+    fn close_date_menu(&mut self) {
+        self.date_menu = None;
+        self.win.invoke_close_date_menu();
+    }
+
+    fn set_date_highlight(&mut self, i: usize) {
+        if let Some(m) = self.date_menu.as_mut() {
+            m.highlighted = i;
+            self.win.set_date_highlighted(i32::try_from(i).unwrap_or(0));
+        }
+    }
+
+    /// One key of the open date menu. True when it was handled.
+    fn date_menu_key(&mut self, text: &str) -> bool {
+        let Some(m) = self.date_menu else {
+            return false;
+        };
+        let action = match menu::menu_key_from_text(text) {
+            MenuKey::Letter(c) => {
+                let labels: Vec<String> = self
+                    .win
+                    .get_date_entries()
+                    .iter()
+                    .map(|e| e.label.to_string())
+                    .collect();
+                let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                menu::letter_jump(&refs, m.highlighted, c)
+                    .map_or(MenuAction::None, MenuAction::Move)
+            }
+            k => menu::menu_key(k, m.highlighted, m.count),
+        };
+        match action {
+            MenuAction::Move(i) => self.set_date_highlight(i),
+            MenuAction::Activate(i) => self.choose_date(i),
+            MenuAction::Close => self.close_date_menu(),
+            // One level only: Left and Right do nothing here, but the menu keeps the key.
+            MenuAction::Back | MenuAction::Submenu(_) => {}
+            MenuAction::None => return false,
+        }
+        true
+    }
+
+    /// An item of the date menu was chosen (key or click): the same toggle as the old chips.
+    fn choose_date(&mut self, i: usize) {
+        self.close_date_menu();
+        if let Some(f) = sidebar::choose_date(&self.current_filters(), i) {
+            self.search(f);
         }
     }
 }
@@ -966,6 +1173,8 @@ fn create() -> Option<()> {
         toast: Timer::default(),
         slow: false,
         chip_focus: ChipFocus::default(),
+        collapsed: sidebar::default_collapsed(),
+        date_menu: None,
         tf: None,
         detail: DetailModel::default(),
         wanted: Arc::new(Mutex::new(None)),
@@ -996,6 +1205,9 @@ fn connect(w: &HistoryWindow) {
     });
     w.on_key(|text, ctrl, shift, alt, meta, search_focused| {
         with_host(|h| {
+            // Keys go to an open menu, never here: a menu still recorded was closed by a click
+            // outside, so forget it.
+            h.date_menu = None;
             let key = keys::key_from_text(&text);
             // The "Copy as..." panel is modal: it takes every key.
             if h.tf.is_some() {
@@ -1038,6 +1250,22 @@ fn connect(w: &HistoryWindow) {
     });
     w.on_filter_toggled(|id| {
         with_host(|h| h.toggle_filter(id));
+    });
+    w.on_group_toggled(|g| {
+        with_host(|h| h.toggle_group(g));
+    });
+    w.on_act_select_mode(|| {
+        with_host(Host::toggle_select_mode);
+    });
+    w.on_date_menu_requested(|| {
+        with_host(Host::open_date_menu);
+    });
+    w.on_date_menu_key(|text| with_host(|h| h.date_menu_key(&text)).unwrap_or(false));
+    w.on_date_menu_hovered(|i| {
+        with_host(|h| h.set_date_highlight(usize::try_from(i).unwrap_or(0)));
+    });
+    w.on_date_menu_activated(|i| {
+        with_host(|h| h.choose_date(usize::try_from(i).unwrap_or(usize::MAX)));
     });
     w.on_row_pressed(|i, ctrl, shift| {
         with_host(|h| {
@@ -1097,14 +1325,6 @@ fn connect(w: &HistoryWindow) {
     w.on_act_select_all(|| {
         with_host(|h| {
             h.act(HistoryAction::SelectAll);
-        });
-    });
-    w.on_act_clear_selection(|| {
-        with_host(|h| {
-            let id = h.cursor_id();
-            h.multi.plain(id);
-            h.refresh_marks();
-            h.sync();
         });
     });
     w.on_act_confirm(|| {

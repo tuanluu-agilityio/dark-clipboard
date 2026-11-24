@@ -1,0 +1,184 @@
+// The history window's 56 px row (Task 703, `02` section 4 and `03` section 2): a 16 px kind icon,
+// two preview lines (13 px and 12 px `text-2`), a meta line (source, age, first tag or collection;
+// 11 px) and badge icons at the end. Everything shown comes from Rust
+// (`src/ui/common.rs::history_clip_row`): a masked clip only ever carries the fixed i18n text, so
+// nothing here can show its content. No Alt+N number and no kind word: the kind is the icon, and
+// the accessible description names it.
+
+import { Theme } from "theme.slint";
+import { Icon, IconName } from "kit/icon.slint";
+import { ClipRow, Seg } from "popup.slint";
+
+export global HistoryRowMetrics {
+    out property <length> height: 56px;
+}
+
+// One preview line: pieces side by side, cut at the right edge.
+component PreviewLine inherits Rectangle {
+    in property <[Seg]> segs;
+    in property <bool> selected;
+    in property <bool> masked;
+    in property <bool> mono;
+    in property <length> font-size: 13px;
+    in property <color> base: Theme.text;
+
+    height: root.font-size + 5px;
+    min-width: 0px;
+    clip: true;
+
+    HorizontalLayout {
+        alignment: start;
+        spacing: 0px;
+        for s in root.segs: Rectangle {
+            width: piece.preferred-width;
+            height: root.height;
+            piece := Text {
+                text: s.text;
+                color: s.hit ? (root.selected ? Theme.text : Theme.accent)
+                    : (root.masked ? Theme.text-3 : root.base);
+                font-weight: s.hit ? 600 : 400;
+                font-italic: root.masked;
+                font-size: root.font-size;
+                font-family: root.mono ? Theme.mono-font : "";
+                vertical-alignment: center;
+            }
+            // A hit on the selected row: `text` colour plus a 2 px accent underline.
+            Rectangle {
+                visible: s.hit && root.selected;
+                y: parent.height - 2px;
+                height: 2px;
+                width: parent.width;
+                background: Theme.accent;
+            }
+        }
+    }
+}
+
+export component HistoryRow inherits Rectangle {
+    in property <ClipRow> data;
+    in property <bool> selected;
+    in property <int> index;
+    callback activated();
+    // A left click with Ctrl / Shift held; a right click (window coordinates of the pointer).
+    callback pressed(bool, bool);
+    callback context(length, length);
+
+    height: HistoryRowMetrics.height;
+    border-radius: 6px;
+    // Marked rows keep the mark style of the old list (accent tint).
+    background: root.data.marked ? Theme.accent.with-alpha(root.selected ? 0.34 : 0.22)
+        : root.selected ? Theme.selected
+        : (touch.has-hover ? Theme.surface : transparent);
+    accessible-role: list-item;
+    accessible-label: root.data.label;
+    accessible-description: root.data.description;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.selected || root.data.marked;
+    accessible-item-index: root.index;
+    accessible-action-default => {
+        root.activated();
+    }
+
+    // Selected row: a 3 px accent bar (a non-colour cue).
+    Rectangle {
+        visible: root.selected;
+        x: 0px;
+        y: 10px;
+        width: 3px;
+        height: parent.height - 20px;
+        border-radius: 1.5px;
+        background: Theme.accent;
+    }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 10px;
+        spacing: 10px;
+
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                name: root.data.kind-icon;
+                tint: root.selected ? Theme.text : Theme.text-2;
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            alignment: center;
+            spacing: 1px;
+
+            PreviewLine {
+                segs: root.data.segs;
+                selected: root.selected;
+                masked: root.data.masked;
+                mono: root.data.mono;
+            }
+            PreviewLine {
+                visible: root.data.segs2.length > 0;
+                height: root.data.segs2.length > 0 ? self.font-size + 5px : 0px;
+                segs: root.data.segs2;
+                selected: root.selected;
+                masked: root.data.masked;
+                mono: root.data.mono;
+                font-size: 12px;
+                base: Theme.text-2;
+            }
+            Text {
+                height: 15px;
+                text: root.data.meta;
+                color: Theme.text-3;
+                font-size: 11px;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+        }
+
+        // Badges: favorite, pinned and masked are icons; their words are in the accessible
+        // description.
+        HorizontalLayout {
+            alignment: end;
+            spacing: 6px;
+            if root.data.favorite: VerticalLayout {
+                alignment: center;
+                Icon {
+                    name: IconName.star;
+                    size: 14px;
+                    tint: Theme.warning;
+                }
+            }
+            if root.data.pinned: VerticalLayout {
+                alignment: center;
+                Icon {
+                    name: IconName.pin;
+                    size: 14px;
+                    tint: Theme.accent;
+                }
+            }
+            if root.data.masked: VerticalLayout {
+                alignment: center;
+                Icon {
+                    name: IconName.eye-off;
+                    size: 14px;
+                    tint: Theme.warning;
+                }
+            }
+        }
+    }
+
+    touch := TouchArea {
+        double-clicked => {
+            root.activated();
+        }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.up) {
+                if (e.button == PointerEventButton.left) {
+                    root.pressed(e.modifiers.control, e.modifiers.shift);
+                } else if (e.button == PointerEventButton.right) {
+                    root.context(root.absolute-position.x + self.mouse-x, root.absolute-position.y + self.mouse-y);
+                }
+            }
+        }
+    }
+}
