@@ -73,7 +73,7 @@ impl Host {
     // ---- state ----
 
     /// What the selected clips are, for the plans.
-    fn target_infos(&self) -> Vec<Target> {
+    pub(super) fn target_infos(&self) -> Vec<Target> {
         self.targets()
             .iter()
             .filter_map(|id| self.item(*id))
@@ -732,17 +732,56 @@ impl Host {
         self.start_plan(plan);
     }
 
+    /// The collections the user made, for the row menu's second level: (id, name).
+    pub(super) fn collection_choices(&self) -> Vec<(darkclip_core::CollectionId, String)> {
+        self.org
+            .nav
+            .user_collections()
+            .into_iter()
+            .map(|c| (c.id, c.name.clone()))
+            .collect()
+    }
+
+    /// The row menu's second level: the same plan the collection picker runs.
+    pub(super) fn add_to_collection_at(&mut self, id: darkclip_core::CollectionId, name: String) {
+        if self.modal_open() || self.confirming() {
+            return;
+        }
+        let targets = self.target_infos();
+        if targets.is_empty() {
+            return;
+        }
+        self.start_plan(BulkPlan::new(
+            BulkOp::AddToCollection { id, name },
+            &targets,
+        ));
+    }
+
     /// Ctrl+Shift+E (Task 405): exports the collection the list is filtered to, or else the
     /// marked clips (or the clip under the cursor). The user picks the file; masked and
     /// sensitive clips are left out and counted in the message.
     pub(super) fn export_ask(&mut self) {
+        self.export_ask_for(false);
+    }
+
+    /// The bulk bar's Export: the marked clips, even while a collection is shown.
+    pub(super) fn export_marked(&mut self) {
+        self.export_ask_for(true);
+    }
+
+    fn export_ask_for(&mut self, marked_only: bool) {
         use crate::prefs::transfer;
         use darkclip_app::api::ExportSelection;
         use darkclip_core::Clock;
         if self.modal_open() || self.confirming() {
             return;
         }
-        let what = match self.model.filters().collection {
+        let collection = if marked_only {
+            None
+        } else {
+            self.model.filters().collection
+        };
+        let what = match collection {
             Some(id) => ExportSelection::Collection(id),
             None => {
                 let ids = self.targets();

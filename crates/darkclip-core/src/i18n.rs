@@ -967,6 +967,20 @@ messages! {
         "Dark Clipboard could not start: another program is using its connection.",
         "Dark Clipboard không khởi động được: một chương trình khác đang dùng kết nối của nó."
     ),
+    // History interaction (Task 704): row menu, bulk bar, rail, drawer, select checkboxes.
+    HistMenuCopyPlain => ("Copy plain text", "Sao chép văn bản thuần"),
+    HistMenuAddToCollection => ("Add to collection", "Thêm vào bộ sưu tập"),
+    HistMenuRemoveFromCollection => ("Remove from collection", "Bỏ khỏi bộ sưu tập"),
+    HistMenuExport => ("Export...", "Xuất..."),
+    HistKeyCtrlN => ("Ctrl+N", "Ctrl+N"),
+    HistKeyCtrlG => ("Ctrl+G", "Ctrl+G"),
+    HistKeyCtrlA => ("Ctrl+A", "Ctrl+A"),
+    HistKeyCtrlShiftE => ("Ctrl+Shift+E", "Ctrl+Shift+E"),
+    HistSelectedCount => ("{n} selected", "Đã chọn {n}"),
+    HistBulkTag => ("Tag", "Gắn thẻ"),
+    HistDrawerOpen => ("Show details", "Hiện chi tiết"),
+    HistDrawerClose => ("Close details", "Đóng chi tiết"),
+    HistCheckLabel => ("Select this clip", "Chọn mục này"),
 }
 
 /// Messages allowed to read the same in both languages.
@@ -990,6 +1004,10 @@ pub const SAME_IN_BOTH: &[Msg] = &[
     Msg::UiKeyMenu,
     Msg::UiKeyCtrlE,
     Msg::SettingsKeyCtrlS,
+    Msg::HistKeyCtrlN,
+    Msg::HistKeyCtrlG,
+    Msg::HistKeyCtrlA,
+    Msg::HistKeyCtrlShiftE,
     Msg::SettingsLangEn,
     Msg::SettingsLangVi,
     Msg::PlatformWindows,

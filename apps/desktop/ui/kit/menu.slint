@@ -31,6 +31,8 @@ export struct MenuEntry {
 export component MenuItem inherits Rectangle {
     in property <MenuEntry> entry;
     in property <bool> highlighted;
+    // A disabled entry stays visible, dimmed; it takes no click (the host also ignores Enter).
+    in property <bool> disabled;
     callback hovered();
     callback activated();
 
@@ -41,8 +43,11 @@ export component MenuItem inherits Rectangle {
     accessible-label: root.entry.label;
     accessible-checkable: root.entry.checked;
     accessible-checked: root.entry.checked;
+    accessible-enabled: !root.disabled;
     accessible-action-default => {
-        root.activated();
+        if (!root.disabled) {
+            root.activated();
+        }
     }
 
     HorizontalLayout {
@@ -52,12 +57,12 @@ export component MenuItem inherits Rectangle {
         Icon {
             name: root.entry.icon;
             size: 16px;
-            tint: root.entry.danger ? Theme.danger : (root.highlighted ? Theme.text : Theme.text-2);
+            tint: root.disabled ? Theme.text-3 : (root.entry.danger ? Theme.danger : (root.highlighted ? Theme.text : Theme.text-2));
             y: (parent.height - self.height) / 2;
         }
         Text {
             text: root.entry.label;
-            color: root.entry.danger ? Theme.danger : Theme.text;
+            color: root.disabled ? Theme.text-3 : (root.entry.danger ? Theme.danger : Theme.text);
             font-size: 13px;
             vertical-alignment: center;
             horizontal-stretch: 1;
@@ -82,18 +87,22 @@ export component MenuItem inherits Rectangle {
     }
 
     TouchArea {
-        mouse-cursor: pointer;
+        mouse-cursor: root.disabled ? MouseCursor.default : MouseCursor.pointer;
         moved => {
             root.hovered();
         }
         clicked => {
-            root.activated();
+            if (!root.disabled) {
+                root.activated();
+            }
         }
     }
 }
 
 export component Menu inherits Rectangle {
     in property <[MenuEntry]> entries;
+    // Entries that are shown but off (same index as `entries`; missing means on).
+    in property <[bool]> disabled-items;
     in property <length> menu-width: 220px;
     // Driven by the host (hover and keys both go through Rust).
     in property <int> highlighted;
@@ -153,11 +162,13 @@ export component Menu inherits Rectangle {
                     padding: 4px;
                     for entry[i] in root.entries: MenuItem {
                         entry: entry;
+                        disabled: root.disabled-items[i];
                         highlighted: root.highlighted == i;
                         hovered => {
                             root.hovered(i);
                         }
                         activated => {
+                            // A submenu entry keeps the menu open (the host swaps the entries).
                             if (!entry.submenu) {
                                 pop.close();
                             }
