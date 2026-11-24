@@ -646,7 +646,7 @@ mod history_row_tests {
             let mut detail = DetailModel::<Px>::default();
             detail.set_open(true, None);
             let _ = detail.sync(Some(&it));
-            let (state, text) = render_state(&it, &mut detail, lang);
+            let (state, text) = render_state(&it, &mut detail, lang, 0);
             assert_eq!(state.kind, 3);
             assert_eq!(state.note.as_str(), t(lang, Msg::UiMaskedDetail));
             assert!(text.is_empty());
