@@ -703,7 +703,10 @@ mod tests {
                     );
                 }
                 for piece in ["•", "(Password)"] {
-                    assert!(!text.contains(piece), "{lang:?}: {text:?} leaks the preview");
+                    assert!(
+                        !text.contains(piece),
+                        "{lang:?}: {text:?} leaks the preview"
+                    );
                 }
             }
         }
