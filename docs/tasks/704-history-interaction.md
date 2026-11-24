@@ -1,0 +1,49 @@
+# Task 704: History interaction (keyboard menu, bulk bar, select mode, responsive, F6, min 640)
+
+**Agent:** `builder` · **Model:** sonnet · **Branch:** `task/704-history-interaction` (from `task/703-history-layout` until 703 merges, then rebase on `main`) · **Review:** `reviewer` (sonnet) · **Risk:** Medium
+**Global Constraints:** GC-03, GC-06, GC-08, GC-11, GC-14, GC-15, GC-17, GC-18, **GC-19**. **Source:** `docs/plans/phase-7-ui-redesign.md` (row 704), README resolutions 2, 3, 7, 9, D-078, D-079, D-081. **Review Focus:** 1 (masked rules from 703 unchanged in menu, bulk bar, tooltips), 4 (every existing history key keeps its action), 6 (EN + VI, glyph scan, width budgets).
+Scope: history window interaction and narrow layouts. Popup, settings, welcome untouched. No new paste path; no change to `Filters`, `chips::toggle`, `nav::toggle_nav`, existing `HistoryAction` meanings, or storage/app APIs (D-080).
+
+## Read first
+`CLAUDE.md`, `docs/specs/ui-redesign/README.md` (resolutions 2, 3, 7, 9), `03-wireframes.md` §2 (context menu, bulk, Narrow table), `04-interaction-keyboard.md` §1, §3, `05-acceptance.md` (A4, A7), `mockups/index.html` sections 3-4, `docs/tasks/703-history-layout.md`, D-079, D-081, `memory-bank/activeContext.md` F-34, `systemPatterns.md`, then code: `ui/{history,history_panes,history_row}.slint`, `ui/kit/menu.slint`, `src/ui/history_host.rs`, `src/ui/history_host/org.rs`, `src/history/{keys,place,sidebar,mod}.rs`, `src/popup/menu.rs` (key map, `OpenMenu`, `MenuKind`), `tests/{history_budget,kit,no_font_glyphs}.rs`.
+
+## Requirements
+1. **Row context menu.** Replace the mouse-only `PopupWindow` of `CtxEntry`s in `history.slint` with the kit `Menu`; the host owns an `OpenMenu` (add `MenuKind::Row` if needed, additive in `popup/menu.rs`). Opens by right-click, Menu key (existing `HistoryAction::OpenMenu`) and **Shift+F10** (new in `keys.rs`, same action). Keys are decided in Rust through `menu_key`, `letter_jump`, `menu_key_from_text`: Up/Down, Home/End, Enter/Space, Esc, letter jump, **right arrow opens the submenu "Add to collection"** (one entry per collection, existing add plan), left arrow or Esc goes back. Entries come from a pure `history_menu_items(...)` in new `src/history/menu.rs`: today's actions with today's enabled rules (Copy, Copy plain, Copy as…, Edit a copy…, Pin/Unpin, Delete: `can-copy`, `can-transform`, `has-selection`, `will-unpin`), plus Favorite, Add to collection ›, Remove from collection, Tags…, Note…, and **Export** (new entry; same action as Ctrl+Shift+E, collection or marks). Disabled entries stay visible (04 §1.8). Masked clips: 703 rules unchanged; menu text never shows preview content.
+2. **Bulk bar** (above the list, accent outline, 36 px), shown when **>= 2 rows are marked**: "N selected" + Pin, Favorite, Add to collection, Tag, Export, Delete, Clear (`Button`/`IconButton`), calling the **existing** bulk callbacks (`act-pin`, `act-favorite`, `act-add-collection`, `act-tags`, export, `act-delete`, clear marks as Esc does). No new bulk logic. Pure `bulk_bar(marked) -> Option<BulkBar>` lists buttons and enabled states.
+3. **Select mode.** The 703 toolbar toggle now also shows a checkbox column in `HistoryRow` while on, and automatically once a second row is marked. A checkbox click toggles that row's mark (same as Space). Marks, Ctrl+A and Esc behave as today.
+4. **Responsive.** Pure `layout_mode(width)` in new `src/history/layout.rs`, thresholds 1000 / 820 / 640. **Wide** (>= 1000): sidebar 216 + detail 340 (as 703). **Medium** (820-999): sidebar becomes a 52 px icon rail (name + count as tooltip and accessible label), detail 300. **Narrow** (640-819): rail 52, detail is a **drawer over the list from the right**; right arrow or Enter on the selected row opens it, Esc or left arrow closes it. **Esc layering**: menu, then drawer, then marks, then close window; one layer per press. **Ctrl+B** toggles rail and full sidebar; at rail widths the full sidebar opens as an overlay over the list. **F6 / Shift+F6** cycle only visible regions (README 7): sidebar/rail, list, detail (or drawer when open; Narrow: rail, list, drawer). **Ctrl+F and Ctrl+K** focus search (also with the search box focused); **Ctrl+,** opens Settings. New `HistoryAction` variants (additive): `ToggleSidebar`, `FocusSearch`, `OpenSettings`, `NextRegion`, `PrevRegion`, `OpenDrawer`, `CloseDrawer`. Status-line Ctrl+F hint only if the width budget allows; F1 content stays Task 706.
+5. **F-34, `history/place.rs`.** `MIN_LOGICAL = (640, 460)`; `DEFAULT_LOGICAL` width >= 1000 (1060 x 660, as 703 markup); saved sizes below the minimum are clamped up in `initial` and `to_saved`; `history.slint` `min-width` becomes 640 px (replaces D-081's 876).
+6. **Keys.** Every existing key keeps its action. 703's key-regression table test stays and is only extended with the new keys. The `key(...)` hook does not act on keys while the menu, rail overlay or drawer owns them (D-079).
+7. **i18n** EN + VI for new `Msg` (Favorite, Add to collection, Remove from collection, Tags, Note, Export where missing; "N selected"; bulk tooltips; rail tooltips; drawer open/close; select checkbox label). No literal in `.slint`. Icons only from `ui/icons/*` (at most 2 new, vendored as in 700, kept in the unused-icon scan).
+8. **Docs.** `docs/testing/platform-checklist.md` owner rows; `CHANGELOG.md` `[Unreleased]` Changed: history keyboard menu with Export, bulk bar, narrow layouts, minimum 640 x 460, Ctrl+B / F6 / Ctrl+F / Ctrl+K / Ctrl+,; `README.md` only if it lists history keys.
+
+## Files this task may edit
+`apps/desktop/ui/{history,history_panes,history_row,organize,theme}.slint`, `ui/kit/{menu,gallery}.slint` (only if submenu or bar needs it), `ui/icons/*` (at most 2), `src/history/{keys,place,sidebar,mod,layout(new),menu(new)}.rs`, `src/popup/menu.rs` (additive), `src/ui/{history_host,common}.rs`, `src/ui/history_host/org.rs`, `tests/{history_budget,kit,no_font_glyphs}.rs`, `crates/darkclip-core/src/i18n.rs`, `docs/testing/platform-checklist.md`, `CHANGELOG.md`, `README.md`. Not touched: popup, settings, welcome, capture, policy, storage, `theme.rs` colours, `Filters`.
+
+## Tests (first, seen failing)
+- `menu.rs`: `history_menu_items` order and enabled rules per state (no selection, masked, can-transform false, pinned), Export present; key walk through `menu_key` incl. letter jump, right arrow into "Add to collection", left arrow back, disabled entries not activated by Enter.
+- `keys.rs`: Shift+F10 = OpenMenu; Ctrl+F, Ctrl+K, Ctrl+B, Ctrl+, F6, Shift+F6 map as listed, also with the search box focused; **the 703 regression table passes unchanged**; Esc layering table (menu, drawer, marks, close), one layer per press.
+- `layout.rs`: `layout_mode` at 639, 640, 819, 820, 999, 1000; region cycle per mode (Wide 3 regions; Narrow rail, list, drawer only when open).
+- `bulk_bar`: absent for 0 and 1 marks, present from 2; button ids equal the old footer's action ids; acts on all marks.
+- `place.rs`: default width >= 1000; saved 500 x 300 clamps to 640 x 460; sizes above the minimum kept; work-area limit still wins.
+- `tests/history_budget.rs` extended (7 px/char, caps 6 px/char + 8; EN and VI): bulk bar at 640 and 1000 px (N selected + 7 controls), rail tooltips, row menu 230 px for the longest label + key cap.
+- i18n completeness, glyph scan, kit scans, unused-`IconName` scan; no unwrap/expect; never run `#[ignore]` tests.
+
+## Owner checklist rows (add, **untested**)
+History at 640, 820, 1000 px and 100/150/200 %: rail, drawer, nothing clipped (EN and VI); row menu by right-click, Menu key and Shift+F10 with arrows, Enter, Esc, right-arrow submenu, letter jump, Export; bulk bar with 2+ marks and each button; select-mode checkboxes; Ctrl+B overlay, F6 / Shift+F6, Ctrl+F / K, Ctrl+,; Esc layering; a saved small size reopens at the 640 x 460 minimum; Tab walk; Narrator reads menu, bulk bar and rail items.
+
+## Known pitfalls
+- **Keys go to an open `PopupWindow`** (D-079): the kit `Menu` takes focus in `init` and forwards keys to Rust; the history `key(...)` hook must not also act on them. Elements inside a `PopupWindow` cannot be referenced from outside: drive through properties and `init`. Drawer and rail overlay are in-tree layers, not `PopupWindow`s (they must not swallow search typing).
+- **`TooltipLayer` stays the last child of the window root**, after menu, drawer, overlay and dialogs. Reset `TooltipHub.shown`, menu, drawer and overlay state when the window hides.
+- Menu key map lives in Rust (`popup/menu.rs`); no key decisions in Slint.
+- 703's `ChipFocus` all-or-nothing rule: controls that handle Enter/Space/arrows report `filter-focus` with negative ids (-50 to -122); new focusable controls (bulk buttons, rail, drawer, checkboxes) get their own ids and make the key map leave those keys alone entirely; never claim half.
+- Panes sit at fixed positions (D-081 4): keep Tab order toolbar, sidebar/rail, list, panel; rail versus full must not reorder it.
+- Software renderer (D-055): no blur, shadow, gradient; no timer while hidden. Icons via `Icon`/`IconName` only (Task 414). Windows-only code must lint on macOS/Linux (clippy `-D warnings`).
+- Previews, sources, tags, notes, queries are never logged; the 703 masked rule holds for menu, bulk bar, tooltips and accessible strings.
+- Run the app only with `--data-dir <temp>` and `--exit-after-ms`; no screenshots, input simulation or real clipboard (GC-19).
+
+## Acceptance
+Review Focus 1, 4, 6 proven by tests; A4 (key-map tests for the new keys) and A7 (bulk bar and rail budgets, EN + VI); F-34 closed; `cargo fmt --all`, then `powershell -File scripts/check.ps1` prints `ALL CHECKS PASSED`.
+
+## Not doing
+Shortcuts sheet and F1 content (706); settings; sidebar content changes; new filters; key rebinding; new paste path; counts API (F-33).
