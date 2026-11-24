@@ -220,9 +220,64 @@ fn the_sources_of_the_budget_match_the_code() {
         "popup_host.rs must set the row menu width this budget assumes"
     );
     let app = fs::read_to_string(manifest().join("ui/app.slint")).unwrap_or_default();
-    assert!(app.contains("width: 440px;"), "popup width");
+    assert!(
+        app.contains("width: root.detail-open && !root.pane-overlay ? 760px : 440px;"),
+        "popup width (440 px, 760 px with the preview pane)"
+    );
     assert!(app.contains("height: 520px;"), "popup height");
     // The default width of the kit menu is the More filters menu's width.
     let menu = fs::read_to_string(manifest().join("ui/kit/menu.slint")).unwrap_or_default();
     assert!(menu.contains("menu-width: 220px;"));
+}
+
+/// Inner width of the 320 px preview pane (Task 702): 12 px padding on each side.
+const PANE_INNER_PX: f32 = 320.0 - 24.0;
+/// The facts label column (`ui/popup.slint`, `PreviewPane`) and the gap after it.
+const FACT_LABEL_PX: f32 = 72.0;
+
+#[test]
+fn the_preview_pane_header_fits_in_both_languages() {
+    // Kind icon 16, title (at least 120 px), the plain and Copy as buttons, 8 px gaps; the header
+    // pads 12 on the left and 8 on the right, so it has 320 - 20 px.
+    let header = 16.0 + GAP_PX * 2.0 + 120.0 + GAP_PX * 2.0 + 2.0 * BUTTON_PX + 4.0 * GAP_PX;
+    assert!(header <= 320.0 - 20.0, "pane header needs {header} px");
+}
+
+#[test]
+fn the_preview_pane_facts_fit_in_both_languages() {
+    let value_px = PANE_INNER_PX - FACT_LABEL_PX - 8.0;
+    for lang in [Lang::En, Lang::Vi] {
+        for label in [
+            Msg::UiFactKind,
+            Msg::UiFactSource,
+            Msg::UiFactTime,
+            Msg::UiFactSize,
+        ] {
+            let px = text_px(t(lang, label));
+            assert!(
+                px <= FACT_LABEL_PX,
+                "{lang:?} fact label {label:?} needs {px} px of {FACT_LABEL_PX}"
+            );
+        }
+        // Fixed-format values: the date-time, the size strings with 7 digits, a pixel size.
+        let datetime = text_px("2026-11-22 04:00");
+        let chars = text_px(&t(lang, Msg::UiSizeChars).replace("{n}", "1000000"));
+        let files = text_px(&t(lang, Msg::UiFilesCount).replace("{n}", "1000000"));
+        let pixels = text_px(
+            &t(lang, Msg::UiSizePixels)
+                .replace("{w}", "10000")
+                .replace("{h}", "10000"),
+        );
+        for (what, px) in [
+            ("date-time", datetime),
+            ("characters", chars),
+            ("files", files),
+            ("pixels", pixels),
+        ] {
+            assert!(
+                px <= value_px,
+                "{lang:?} fact value {what} needs {px} px of {value_px}"
+            );
+        }
+    }
 }

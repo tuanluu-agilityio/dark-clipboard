@@ -95,6 +95,8 @@ pub fn set_strings(w: &MainWindow, lang: Lang) {
     let s = w.global::<Strings>();
     s.set_search_hint(t(lang, Msg::UiPopupSearchHint).into());
     s.set_tip_preview(t(lang, Msg::UiTipPreview).into());
+    s.set_key_shift_enter(t(lang, Msg::UiKeyShiftEnter).into());
+    s.set_key_ctrl_t(t(lang, Msg::UiKeyCtrlT).into());
     s.set_tip_history(t(lang, Msg::UiTipHistory).into());
     s.set_more_filters(t(lang, Msg::UiMoreFilters).into());
     s.set_row_more(t(lang, Msg::UiRowMore).into());
@@ -157,6 +159,8 @@ struct Host {
     tf: Option<Session>,
     /// The detail pane's state and its decoded-image cache.
     detail: DetailModel<Px>,
+    /// The window is at the wide (760 px) size for the side pane (Task 702).
+    pane_wide: bool,
     /// The clip the pane wants loaded now. Worker jobs for any other clip are skipped before
     /// they do their work (the selection moved on while they were queued).
     wanted: Arc<Mutex<Option<ClipId>>>,
@@ -512,6 +516,53 @@ impl Host {
         });
     }
 
+    /// Grows or shrinks the frameless window for the side pane (Task 702). No hide, show or
+    /// focus call: the window keeps the keyboard focus, so the focus-loss timer sees nothing
+    /// and the search box is never touched. Opening may shift the window left (once) so it stays
+    /// on its monitor; closing restores the width but not the position. The monitor and its
+    /// DPI come from the window's own position, not the cursor. Where the monitor is narrower
+    /// than 760 logical px, or off Windows, the window keeps its width and the pane overlays.
+    fn apply_pane(&mut self, w: &MainWindow, open: bool) {
+        if self.pane_wide == open {
+            return;
+        }
+        self.pane_wide = open;
+        #[cfg(windows)]
+        {
+            use crate::popup::place::{
+                scale, widen, PaneMode, POPUP_LOGICAL, PREVIEW_LOGICAL_WIDTH,
+            };
+            let pos = w.window().position();
+            if let Some(m) = crate::winsys::monitor_at(pos.x, pos.y) {
+                let to_i32 = |v: u32| i32::try_from(v).unwrap_or(i32::MAX);
+                let list_w = scale(to_i32(POPUP_LOGICAL.0), m.dpi);
+                let wide_w = scale(to_i32(PREVIEW_LOGICAL_WIDTH), m.dpi);
+                let h = scale(to_i32(POPUP_LOGICAL.1), m.dpi);
+                let px = |v: i32| u32::try_from(v).unwrap_or(0);
+                if open {
+                    let (origin, mode) = widen((pos.x, pos.y), list_w, wide_w, m.work);
+                    w.set_pane_overlay(mode == PaneMode::Overlay);
+                    // Position first: no frame shows the wide window at the old origin.
+                    if origin != (pos.x, pos.y) {
+                        w.window()
+                            .set_position(slint::PhysicalPosition::new(origin.0, origin.1));
+                    }
+                    if mode == PaneMode::Side {
+                        w.window()
+                            .set_size(slint::PhysicalSize::new(px(wide_w), px(h)));
+                    }
+                } else {
+                    w.set_pane_overlay(false);
+                    w.window()
+                        .set_size(slint::PhysicalSize::new(px(list_w), px(h)));
+                }
+                return;
+            }
+        }
+        // Not Windows, or the monitor is unknown: only the Slint width changes.
+        w.set_pane_overlay(false);
+    }
+
     /// Mirrors the detail model into the window's properties.
     fn render_detail(&mut self) {
         let Some(w) = self.window() else {
@@ -519,6 +570,7 @@ impl Host {
         };
         let item = self.model.selected_item().cloned();
         let open = self.detail.is_open() && item.is_some();
+        self.apply_pane(&w, open);
         w.set_detail_open(open);
         if let Ok(mut wanted) = self.wanted.lock() {
             *wanted = item.as_ref().filter(|_| open).map(|i| i.id);
@@ -529,7 +581,12 @@ impl Host {
             w.set_detail_text(SharedString::new());
             return;
         };
-        let (state, text) = common::render_state(&item, &mut self.detail, self.lang);
+        let (state, text) = common::render_state(
+            &item,
+            &mut self.detail,
+            self.lang,
+            super::tray_host::local_utc_offset_minutes(),
+        );
         w.set_detail(state);
         if let Some(t) = common::set_text_if_changed(&w.get_detail_text(), text) {
             w.set_detail_text(t);
@@ -1476,6 +1533,7 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
         pasting: false,
         tf: None,
         detail: DetailModel::default(),
+        pane_wide: false,
         wanted: Arc::new(Mutex::new(None)),
         typed_search: None,
         log: Arc::clone(&log),
@@ -1501,6 +1559,12 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
             });
         });
     });
+    w.on_act_plain(|| {
+        with_host(|h| h.act(Action::Copy(CopyKind::Plain)));
+    });
+    w.on_act_transform(|| {
+        with_host(|h| h.act(Action::CopyAs));
+    });
     w.on_chip_focus(|id, on| {
         with_host(|h| h.chip_focus.report(id, on));
     });
@@ -1522,6 +1586,7 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
                 undo_available: h.pending_delete.is_some(),
                 chips_focused: held,
                 control_focused: held,
+                detail_open: h.detail.is_open() && h.model.selected_item().is_some(),
             };
             let mods = Mods {
                 ctrl,

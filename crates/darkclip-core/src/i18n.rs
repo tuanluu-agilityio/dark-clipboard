@@ -209,6 +209,13 @@ messages! {
     UiLoadLargerImage => ("Load larger preview", "Tải ảnh xem trước lớn hơn"),
     UiNoImagePreview => ("No preview image stored", "Không có ảnh xem trước"),
     UiFilesCount => ("{n} files", "{n} tệp"),
+    // The preview pane's facts (Task 702).
+    UiFactKind => ("Type", "Loại"),
+    UiFactSource => ("Source", "Nguồn"),
+    UiFactTime => ("Time", "Thời gian"),
+    UiFactSize => ("Size", "Kích thước"),
+    UiSizeChars => ("{n} characters", "{n} ký tự"),
+    UiSizePixels => ("{w} x {h} px", "{w} x {h} px"),
     UiFilesMore => ("and {n} more", "và {n} tệp khác"),
     // History window (Task 211)
     UiHistoryTitle => ("Dark Clipboard - History", "Dark Clipboard - Lịch sử"),
@@ -928,6 +935,7 @@ pub const SAME_IN_BOTH: &[Msg] = &[
     Msg::UiKeyCtrlH,
     Msg::UiKeyCtrlZ,
     Msg::UiKeyCtrlComma,
+    Msg::UiSizePixels,
     Msg::UiKeyMenu,
     Msg::UiKeyCtrlE,
     Msg::SettingsLangEn,

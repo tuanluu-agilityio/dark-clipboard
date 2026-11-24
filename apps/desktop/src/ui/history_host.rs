@@ -369,7 +369,8 @@ impl Host {
                 self.win.set_fact_type(facts.kind.into());
                 self.win.set_fact_from(facts.from.into());
                 self.win.set_fact_copied(facts.copied.into());
-                let (state, text) = common::render_state(&item, &mut self.detail, self.lang);
+                let (state, text) =
+                    common::render_state(&item, &mut self.detail, self.lang, now_and_offset().1);
                 self.win.set_detail(state);
                 if let Some(t) = common::set_text_if_changed(&self.win.get_detail_text(), text) {
                     self.win.set_detail_text(t);
