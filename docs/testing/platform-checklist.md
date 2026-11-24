@@ -488,3 +488,13 @@ All rows **untested** (no hardware, Q-04).
 | Known limit: close Copy as, Edit, a history dialog or a row menu | The focus is in the search box (dialogs) or where it was (menus), not necessarily on the opener (D-085) | **untested** |
 | Narrator on buttons, switches, a row (label and description), a masked row, the sheet and dialogs | Names and states are read; a masked row says "Hidden" and "Masked" and never the content | **untested** |
 | Vietnamese pass of welcome, F1 and the dialogs at 100, 150 and 200 % | No text is cut off | **untested** |
+
+## Task 711: menu anchors and mode cards (Windows)
+
+| Check | Expect | Status |
+|---|---|---|
+| Popup: click a row's "..." button | The row menu opens under that row, not at the window's bottom-right | **untested** |
+| Popup: right-click a row | The row menu opens at the pointer | **untested** |
+| History: right-click a row, then press the Menu key and Shift+F10 on a selected row | The row menu opens at the pointer / under the row | **untested** |
+| History: click the date button | The date menu opens under the button | **untested** |
+| Settings, Capture and Privacy, English and Vietnamese at 100 % and 150 % | The three mode cards share the row equally; titles and lines are not cut off and do not overflow the card or the note below | **untested** |

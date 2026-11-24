@@ -6,7 +6,9 @@
 // state, moves the highlight through the `highlighted` property and closes the menu with
 // `close()`. Labels and key caps come from i18n.
 //
-// Use: `menu.open(x, y)` with a position in the host window. Slint moves a `PopupWindow` that
+// Use: `menu.open(x, y)` with a position in the host window. These are window positions because
+// every instance sets `x: 0px; y: 0px;` (Task 711): Slint centres a child of the `Window` that has
+// no x/y, which shifted every menu by half the window size. Slint moves a `PopupWindow` that
 // would cross the window edge back inside it (checked in the Task 700 investigation, D-079), so
 // the host needs no edge logic. While the menu is open Slint sends every key to it, so the
 // menu's own `FocusScope` takes the focus when it opens (`init`).
