@@ -650,4 +650,62 @@ mod tests {
         let s = format!("{:?}", history_text(&i, Lang::En, NOW));
         assert!(!s.contains("PrivateApp") && !s.contains("hidden-tag"));
     }
+
+    /// Task 707: the Narrator text of both windows' rows (description) in both languages.
+    #[test]
+    fn narrator_description_has_kind_age_source_and_every_badge_in_both_languages() {
+        let mut i = item(ClipType::Url);
+        i.source = Some("Edge".into());
+        i.pinned = true;
+        i.favorite = true;
+        i.masked = true;
+        for lang in [Lang::En, Lang::Vi] {
+            let age = relative_time(lang, NOW, i.at);
+            let want = [
+                t(lang, kind_msg(ClipType::Url)),
+                "Edge",
+                t(lang, Msg::UiFilterPinned),
+                t(lang, Msg::OrgFavoriteBadge),
+                t(lang, Msg::UiMaskedBadge),
+                age.as_str(),
+            ];
+            let popup = popup_text(&i, 0, lang, NOW).description;
+            let history = history_text(&i, lang, NOW).description;
+            for d in [&popup, &history] {
+                for w in want {
+                    assert!(d.contains(w), "{lang:?}: {d:?} lacks {w:?}");
+                }
+            }
+        }
+    }
+
+    /// Review Focus 1: neither the label's source (the masked line) nor the description of a
+    /// masked clip holds any piece of the content or of its stored preview, in either window.
+    #[test]
+    fn a_masked_row_label_and_description_never_hold_the_secret_in_either_window() {
+        let secret = format!("{}{}", "hunter", "2-zebra-quartz");
+        let mut i = item(ClipType::Text);
+        i.masked = true;
+        i.source = Some("Vault".into());
+        i.tags = vec!["work".into()];
+        i.preview = format!("{}…•••• (Password)", &secret[..4]);
+        for lang in [Lang::En, Lang::Vi] {
+            let p = popup_text(&i, 0, lang, NOW);
+            let h = history_text(&i, lang, NOW);
+            // The row label is the masked line from i18n (what `ui/common.rs` binds).
+            let label = popup_preview_text(&i, lang).unwrap_or_default();
+            assert_eq!(label, t(lang, Msg::UiMaskedRowText));
+            for text in [label, &p.meta, &p.description, &h.meta, &h.description] {
+                for n in 3..=secret.len() {
+                    assert!(
+                        !text.contains(&secret[..n]),
+                        "{lang:?}: {text:?} leaks the content"
+                    );
+                }
+                for piece in ["•", "(Password)"] {
+                    assert!(!text.contains(piece), "{lang:?}: {text:?} leaks the preview");
+                }
+            }
+        }
+    }
 }
