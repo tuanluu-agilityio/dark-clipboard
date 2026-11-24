@@ -412,3 +412,46 @@ fn the_scan_detects_a_missing_or_literal_name() {
     assert!(is_bound_label(v[2].prop("label").unwrap_or_default()));
     assert_eq!(v[1].line, 2);
 }
+
+// ---- Focus return (D-082) ---------------------------------------------------------------------
+
+/// Every control of the settings window that opens a dialog or the picker records itself in
+/// `opener` right before it asks, and closing the layer hands the focus back through
+/// `return-to` (each opener has a `changed` handler that focuses it). Slint 1.19 cannot name the
+/// element that had the focus, so the openers say who they are.
+#[test]
+fn settings_openers_record_themselves_and_get_the_focus_back() {
+    let src = strip_comments(&read(&manifest().join("ui/settings.slint")));
+    let lines: Vec<&str> = src.lines().map(str::trim).collect();
+    for call in [
+        "root.open-picker();",
+        "root.orphans-ask();",
+        "root.compact-ask();",
+        "root.clear-ask();",
+        "root.restore-ask();",
+        "root.remove-app(i);",
+        "root.save();",
+    ] {
+        let at = lines
+            .iter()
+            .position(|l| *l == call)
+            .unwrap_or_else(|| panic!("settings.slint: {call} not found"));
+        assert!(
+            lines[at - 1].starts_with("root.opener = "),
+            "settings.slint: {call} must be preceded by `root.opener = ...;`"
+        );
+    }
+    let closed = src
+        .find("changed layer-open")
+        .map(|p| &src[p..p + 400])
+        .unwrap_or_default();
+    assert!(
+        closed.contains("root.return-to = root.opener;"),
+        "closing a layer must hand the focus back through return-to"
+    );
+    // One `changed` handler per opener kind that focuses itself.
+    assert!(
+        src.matches("root.return-to == ").count() >= 7,
+        "each opener needs a `want` property on return-to"
+    );
+}
