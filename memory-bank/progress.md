@@ -92,14 +92,14 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | Phase 5 review | — | specialist | opus | **CHANGES REQUIRED** (D-072): 1 blocking (B1: backup snapshot skips FTS merge/VACUUM unless masked/expired clips were purged, so evicted clips' and replaced notes' words can leave in a `.dcbackup`); 7 non-blocking. Gate: ALL CHECKS PASSED (1000 tests, 0 failed, 32 ignored) | 162,582 | | | 162,582 |
 | 415 Phase 5 review fixes | task/415-phase5-review-fixes | specialist | opus | done | 101,451 | 77,853 (security-reviewer opus ×2: CR (blocking: the now-unconditional snapshot VACUUM ran without temp_store=MEMORY; this SQLite is built TEMP_STORE=1, so >2 MiB histories spill a copy to %TEMP%) → APPROVED) | 11,441 | 190,745 |
 | Phase 5 re-review | — | specialist | opus | **APPROVED** (D-074); gate ALL CHECKS PASSED (1006 passed, 0 failed, 32 ignored). **Phase 5 complete** | 19,518 | | | 19,518 |
-| 416 temp_store=MEMORY on every connection; migration copy merged (F-29, F-30) | task/416-temp-store-memory | specialist | opus | in progress | | | | |
+| 416 temp_store=MEMORY on every connection; migration copy merged (F-29, F-30) | task/416-temp-store-memory | specialist | opus | done | 87,219 | 46,556 (security-reviewer opus: APPROVED, 2 nits) | | 133,775 |
 | Release 0.1.2 (B1 + F-29/F-30; owner approved, D-075) | tag `v0.1.2` | orchestrator | — | pending | | | | |
 
 ## Totals by model
 
 | Model | Tokens |
 |---|---|
-| opus | 11,958,566 |
+| opus | 12,092,341 |
 | sonnet | 5,426,410 |
 | haiku | 0 |
-| **Total** | **17,384,976** (subagents only; orchestrator not measured) |
+| **Total** | **17,518,751** (subagents only; orchestrator not measured) |

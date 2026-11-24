@@ -30,3 +30,4 @@ Portable crates (core, platform, storage, app) have no OS, UI or async dependenc
 
 ## Reused from Darkshot (practices only)
 Banned-crate check in the gate; single privacy choke point plus a static sink check; no logging in privacy modules; manual `Debug`; small task packages with an independent reviewer; memory-bank; token ledger; PR-only `main`.
+- **SQLite temporary data stays in memory** (Task 416, D-073): the bundled SQLite is built with `SQLITE_TEMP_STORE=1` (temp files on disk by default). Every non-test connection on user data calls `db::keep_temp_in_memory` right after opening, before any other statement; in-memory connections are exempt.
