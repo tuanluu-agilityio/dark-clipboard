@@ -17,7 +17,9 @@ import { Button, ButtonKind } from "kit/button.slint";
 import { Menu, MenuEntry as KitEntry } from "kit/menu.slint";
 import { TipAlign, TooltipHub, TooltipLayer } from "kit/tooltip.slint";
 import { ClipRow, DetailPane, DetailState, StatusHint } from "popup.slint";
-import { TransformPanel, EditPanel } from "transform.slint";
+import { TransformPanel, EditPanel, ShortcutSheet, SheetLine, SheetStrings } from "transform.slint";
+import { EmptyState } from "kit/empty_state.slint";
+import { DialogScrim } from "kit/confirm_dialog.slint";
 import { OrgDialog, OrgDialogState, OrgStrings } from "organize.slint";
 import { HistoryRow, HistoryRowMetrics } from "history_row.slint";
 import { FilterItem, SidebarView, DateButton, DetailToolbar, ChipSection, NoteSection, FactLine, HistoryStatus, BulkBar } from "history_panes.slint";
@@ -70,6 +72,10 @@ export component HistoryWindow inherits Window {
     in property <string> edit-note;
     in-out property <string> edit-text;
     in-out property <string> query;
+    // The F1 shortcuts sheet (Task 706): open state and the two columns of lines, from Rust.
+    in property <bool> sheet-open;
+    in property <[SheetLine]> sheet-left;
+    in property <[SheetLine]> sheet-right;
     // Toolbar (Task 703): the current filter's name, the date menu and the select-mode toggle.
     in property <string> filter-title;
     in property <string> date-text;
@@ -142,6 +148,7 @@ export component HistoryWindow inherits Window {
     callback tf-chosen(int);
     callback tf-copy();
     callback tf-cancel();
+    callback sheet-close();
     callback edit-save();
     callback edit-cancel();
     callback act-pin();
@@ -550,18 +557,29 @@ export component HistoryWindow inherits Window {
                 }
             }
 
-            Text {
-                visible: root.view-state != 0;
+            if root.view-state == 1: Text {
                 width: parent.width - 40px;
                 x: 20px;
-                text: root.view-state == 1 ? Strings.loading
-                    : root.view-state == 2 ? Strings.empty-history
-                    : root.view-state == 3 ? Strings.no-results
-                    : Strings.load-failed;
-                color: root.view-state == 4 ? Theme.danger : Theme.text-2;
+                text: Strings.loading;
+                color: Theme.text-2;
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 wrap: word-wrap;
+            }
+            // Empty history, no results, load error (Task 706).
+            if root.view-state >= 2: EmptyState {
+                width: parent.width;
+                height: parent.height;
+                icon: root.view-state == 2 ? IconName.clipboard-paste
+                    : root.view-state == 3 ? IconName.search
+                    : IconName.info;
+                text: root.view-state == 2 ? Strings.empty-history
+                    : root.view-state == 3 ? Strings.no-results
+                    : Strings.load-failed;
+                hint: root.view-state == 2 ? SheetStrings.hint-empty
+                    : root.view-state == 3 ? SheetStrings.hint-no-results
+                    : SheetStrings.hint-failed;
+                danger: root.view-state == 4;
             }
 
             // The toast floats above the status line and never hides a control.
@@ -607,6 +625,8 @@ export component HistoryWindow inherits Window {
             width: parent.width - root.sidebar-w - (root.drawer-mode ? 0px : root.detail-w);
             text: root.status-text;
             hints: root.status-hints;
+            tip: SheetStrings.tip;
+            tip-key: SheetStrings.tip-key;
             Rectangle {
                 y: 0px;
                 height: 1px;
@@ -898,20 +918,21 @@ export component HistoryWindow inherits Window {
     }
 
     // The delete confirmation: modal (it covers the window and takes every click).
-    if root.confirm-text != "": Rectangle {
-        background: #000000a0;
+    // Task 706: the kit scrim and panel; the keys stay Rust's (Enter confirms, Esc cancels).
+    if root.confirm-text != "": DialogScrim {
+        open: true;
         accessible-role: groupbox;
         accessible-label: root.confirm-text;
-
-        TouchArea {}
 
         Rectangle {
             width: min(420px, parent.width - 40px);
             height: dialog-col.preferred-height + 32px;
-            background: Theme.surface;
-            border-radius: 8px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Theme.canvas;
+            border-radius: 10px;
             border-width: 1px;
-            border-color: Theme.line;
+            border-color: root.confirm-label == Strings.delete ? Theme.danger : Theme.border-strong;
 
             dialog-col := VerticalLayout {
                 padding: 16px;
@@ -1014,6 +1035,19 @@ export component HistoryWindow inherits Window {
             cancel => {
                 root.edit-cancel();
             }
+        }
+    }
+
+    // The F1 shortcuts sheet (Task 706): above the panels and dialogs, below the tooltip. Rust
+    // owns its open state and its keys (`src/shortcuts.rs`).
+    ShortcutSheet {
+        open: root.sheet-open;
+        title: SheetStrings.title;
+        footer: SheetStrings.footer;
+        left: root.sheet-left;
+        right: root.sheet-right;
+        closed => {
+            root.sheet-close();
         }
     }
 

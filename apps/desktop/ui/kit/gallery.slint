@@ -12,6 +12,7 @@ import { Switch } from "switch.slint";
 import { Select } from "select.slint";
 import { Field } from "field.slint";
 import { ConfirmDialog } from "confirm_dialog.slint";
+import { EmptyState } from "empty_state.slint";
 import { Menu, MenuEntry } from "menu.slint";
 import { TipAlign, TooltipLayer } from "tooltip.slint";
 
@@ -107,6 +108,18 @@ export component KitGallery inherits Window {
                 error: root.flag ? "error" : "";
             }
         }
+    }
+
+    // Task 706: what a list shows instead of its rows.
+    EmptyState {
+        x: 240px;
+        y: 150px;
+        width: 200px;
+        height: 120px;
+        icon: IconName.search;
+        text: "state";
+        hint: "hint";
+        danger: root.flag;
     }
 
     ConfirmDialog {

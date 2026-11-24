@@ -3,19 +3,21 @@
 //! here: the decisions are in `crate::popup` (pure view-models). Nothing is logged; previews,
 //! queries and paths are never formatted into messages (GC-06, SR-11).
 
-use super::generated::IconName;
+use super::generated::{IconName, SheetLine, SheetStrings};
 use super::{ClipRow, DetailState, FactRow, FileRow, Poster, Seg, Strings};
 use crate::popup::detail::{
     facts, file_entries, pixels_text, props, DetailData, DetailModel, DetailProps, DetailRequest,
     Pic, Want, FULL_IMAGE_SIDE, TEXT_DISPLAY_CAP,
 };
 use crate::popup::highlight::{row_segments, Segment};
+use crate::popup::keys::{Key, Mods};
 use crate::popup::list::Item;
 use crate::popup::row::{
     fill, history_text, kind_msg, popup_preview_text, popup_text, relative_time, split_two_lines,
     KindIcon, LINE_CHARS, MONO_LINE_CHARS,
 };
 use crate::popup::transform::can_transform;
+use crate::shortcuts::{columns, key_label, rows, SheetRow, Win};
 use darkclip_app::api::Caller;
 use darkclip_app::{ClipDetailView, PixelsView};
 use darkclip_core::i18n::{t, Lang, Msg};
@@ -445,6 +447,39 @@ where
     s.set_edit(t(lang, Msg::TfEdit).into());
     s.set_edit_hint(t(lang, Msg::TfEditHint).into());
     s.set_save_new(t(lang, Msg::TfSaveNew).into());
+}
+
+/// The strings of the shortcuts sheet and of the empty states (Task 706), for either window.
+pub fn set_sheet_strings<'a, C: ComponentHandle>(w: &'a C, lang: Lang)
+where
+    SheetStrings<'a>: slint::Global<'a, C>,
+{
+    let s = w.global::<SheetStrings>();
+    s.set_title(t(lang, Msg::SheetTitle).into());
+    s.set_footer(t(lang, Msg::SheetEscCloses).into());
+    s.set_tip(t(lang, Msg::SheetShortcuts).into());
+    s.set_tip_key(key_label(Key::F1, Mods::default()).into());
+    s.set_hint_empty(t(lang, Msg::StateHintEmpty).into());
+    s.set_hint_no_results(t(lang, Msg::StateHintNoResults).into());
+    s.set_hint_failed(t(lang, Msg::StateHintFailed).into());
+}
+
+/// The two columns of a window's sheet, from the tables in `crate::shortcuts`.
+pub fn sheet_columns(win: Win, lang: Lang) -> (ModelRc<SheetLine>, ModelRc<SheetLine>) {
+    let line = |r: SheetRow| SheetLine {
+        header: r.header,
+        key: r.key.into(),
+        label: r.label.into(),
+    };
+    let (left, right) = columns(rows(win, lang));
+    (
+        ModelRc::new(VecModel::from(
+            left.into_iter().map(line).collect::<Vec<_>>(),
+        )),
+        ModelRc::new(VecModel::from(
+            right.into_iter().map(line).collect::<Vec<_>>(),
+        )),
+    )
 }
 
 /// The "Copy as..." panel's result area, from the worker's answer (Task 404).

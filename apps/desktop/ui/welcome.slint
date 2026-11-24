@@ -1,10 +1,15 @@
-// The first-run welcome (Task 208): one screen with what the app does, what it never captures
-// and where the data lives, then Start or Not now. Every string comes from the `WText` global
-// (i18n); every decision is made in Rust (`src/ui/welcome_host.rs`, `src/prefs/welcome.rs`).
-// Dark only (D-037).
+// The first-run welcome (Task 208, restyled in Task 706): one card with what the app does, what it
+// never captures and where the data lives, then Start or Not now. Every string comes from the
+// `WText` global (i18n); every decision is made in Rust (`src/ui/welcome_host.rs`,
+// `src/prefs/welcome.rs`). Nothing here turns capture on: only Start does. Dark only (D-037).
+// Keys: Esc = Not now (or Close once finished), Enter presses the focused button (Start has the
+// focus when the window opens), the window's close button counts as Esc.
 
-import { Button, CheckBox, Palette } from "std-widgets.slint";
+import { Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
+import { Button, ButtonKind } from "kit/button.slint";
+import { Icon, IconName } from "kit/icon.slint";
+import { Switch } from "kit/switch.slint";
 
 export global WText {
     in property <string> title;
@@ -26,11 +31,11 @@ export component WelcomeWindow inherits Window {
     background: Theme.bg;
     min-width: 480px;
     preferred-width: 520px;
-    min-height: 420px;
-    preferred-height: 460px;
+    min-height: 460px;
+    preferred-height: 500px;
     default-font-size: 13px;
 
-    // The "Start with Windows" checkbox; hidden when the platform cannot register.
+    // The "Start with Windows" switch; hidden when the platform cannot register.
     in-out property <bool> login;
     in property <bool> can-login;
     // False for a custom data folder: the login entry would start the default profile.
@@ -63,58 +68,115 @@ export component WelcomeWindow inherits Window {
 
         VerticalLayout {
             padding: 24px;
-            spacing: 12px;
+            spacing: 16px;
             alignment: start;
 
-            Text {
-                text: WText.title;
-                color: Theme.text;
-                font-size: 20px;
-                font-weight: 700;
-                wrap: word-wrap;
-                accessible-role: text;
+            Rectangle {
+                height: card.preferred-height;
+                background: Theme.surface;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: Theme.border;
+                accessible-role: none;
+
+                card := VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        VerticalLayout {
+                            alignment: start;
+                            Icon {
+                                name: IconName.clipboard-paste;
+                                size: 28px;
+                                tint: Theme.accent;
+                            }
+                        }
+                        Text {
+                            text: WText.title;
+                            color: Theme.text;
+                            font-size: 20px;
+                            font-weight: 700;
+                            wrap: word-wrap;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                            accessible-role: text;
+                        }
+                    }
+
+                    // Two short paragraphs: how to open it, then what it keeps and where.
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: WText.shortcut;
+                            color: Theme.text;
+                            wrap: word-wrap;
+                            accessible-role: text;
+                        }
+                        Text {
+                            text: WText.never;
+                            color: Theme.text-2;
+                            wrap: word-wrap;
+                            accessible-role: text;
+                        }
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: WText.data;
+                            color: Theme.text-2;
+                            wrap: word-wrap;
+                            accessible-role: text;
+                        }
+                        Text {
+                            text: WText.no-cloud;
+                            color: Theme.text-2;
+                            wrap: word-wrap;
+                            accessible-role: text;
+                        }
+                    }
+
+                    if root.can-login && !root.finished: Rectangle {
+                        height: 1px;
+                        background: Theme.border;
+                    }
+                    if root.can-login && !root.finished: HorizontalLayout {
+                        spacing: 12px;
+                        Text {
+                            text: WText.login;
+                            color: Theme.text;
+                            wrap: word-wrap;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            accessible-role: none;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Switch {
+                                label: WText.login;
+                                checked <=> root.login;
+                                enabled: !root.busy && root.login-enabled;
+                            }
+                        }
+                    }
+                    if root.can-login && !root.login-enabled && !root.finished: Text {
+                        text: WText.login-note;
+                        color: Theme.text-3;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        accessible-role: text;
+                    }
+                    if !root.finished && root.show-capture-off: Text {
+                        text: WText.capture-off;
+                        color: Theme.text-3;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        accessible-role: text;
+                    }
+                }
             }
-            Text {
-                text: WText.shortcut;
-                color: Theme.text;
-                wrap: word-wrap;
-                accessible-role: text;
-            }
-            Text {
-                text: WText.never;
-                color: Theme.text;
-                wrap: word-wrap;
-                accessible-role: text;
-            }
-            Text {
-                text: WText.data;
-                color: Theme.text;
-                wrap: word-wrap;
-                accessible-role: text;
-            }
-            Text {
-                text: WText.no-cloud;
-                color: Theme.text;
-                wrap: word-wrap;
-                accessible-role: text;
-            }
-            if !root.finished && root.show-capture-off: Text {
-                text: WText.capture-off;
-                color: Theme.text-muted;
-                wrap: word-wrap;
-                accessible-role: text;
-            }
-            if root.can-login && !root.finished: CheckBox {
-                text: WText.login;
-                checked <=> root.login;
-                enabled: !root.busy && root.login-enabled;
-            }
-            if root.can-login && !root.login-enabled && !root.finished: Text {
-                text: WText.login-note;
-                color: Theme.text-muted;
-                wrap: word-wrap;
-                accessible-role: text;
-            }
+
             if root.error != "": Text {
                 text: root.error;
                 color: Theme.danger;
@@ -131,17 +193,24 @@ export component WelcomeWindow inherits Window {
                         root.not-now();
                     }
                 }
+                // Start has the focus when the window opens, so Enter starts.
                 if !root.finished: Button {
                     text: WText.start;
-                    primary: true;
+                    kind: ButtonKind.primary;
                     enabled: !root.busy;
+                    init => {
+                        self.focus();
+                    }
                     clicked => {
                         root.begin();
                     }
                 }
                 if root.finished: Button {
                     text: WText.close;
-                    primary: true;
+                    kind: ButtonKind.primary;
+                    init => {
+                        self.focus();
+                    }
                     clicked => {
                         root.dismiss();
                     }

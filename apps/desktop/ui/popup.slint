@@ -835,10 +835,25 @@ export component StatusLine inherits Rectangle {
     in property <int> tone;
     in property <string> text;
     in property <[StatusHint]> hints;
+    // The tooltip of the line names the shortcuts sheet and its key (F1): the line has no room
+    // for a hint of its own (Task 706, D-084).
+    in property <string> tip;
+    in property <string> tip-key;
 
     height: 30px;
     accessible-role: groupbox;
     accessible-label: root.text;
+
+    hover := TouchArea { }
+
+    Tooltip {
+        width: parent.width;
+        height: parent.height;
+        text: root.tip;
+        shortcut: root.tip-key;
+        align: TipAlign.end;
+        active: hover.has-hover;
+    }
 
     HorizontalLayout {
         padding-left: 12px;
