@@ -305,7 +305,11 @@ fn every_setting_is_in_the_table_exactly_once() {
     let t = table();
     assert!(t.len() >= 25, "the table has only {} entries", t.len());
     let ids: BTreeSet<&str> = t.iter().map(|(_, id)| id.as_str()).collect();
-    assert_eq!(ids.len(), t.len(), "an id is listed twice in SETTING_SECTIONS");
+    assert_eq!(
+        ids.len(),
+        t.len(),
+        "an id is listed twice in SETTING_SECTIONS"
+    );
     for (n, id) in &t {
         assert!(*n <= 4, "{id}: section {n} does not exist");
     }
@@ -368,18 +372,17 @@ fn the_markers_in_the_window_match_the_table() {
 fn history_has_no_transfer_and_data_and_transfer_has_them() {
     let t = table();
     for id in ["backup", "restore", "import", "export", "data-folder"] {
-        let places: Vec<u8> = t
-            .iter()
-            .filter(|(_, i)| i == id)
-            .map(|(n, _)| *n)
-            .collect();
+        let places: Vec<u8> = t.iter().filter(|(_, i)| i == id).map(|(n, _)| *n).collect();
         assert!(
             places.iter().all(|n| *n == 3),
             "{id} must only be in Data and Transfer (3), found {places:?}"
         );
     }
     for id in ["backup", "restore", "import", "data-folder"] {
-        assert!(t.iter().any(|(n, i)| *n == 3 && i == id), "{id} missing in 3");
+        assert!(
+            t.iter().any(|(n, i)| *n == 3 && i == id),
+            "{id} missing in 3"
+        );
     }
     for (n, id) in &t {
         if *n == 2 {
@@ -442,18 +445,28 @@ fn always_protected_has_no_control_no_callback_and_no_writable_property() {
             "ProtectedRow contains `{word}`: it must be decoration"
         );
     }
-    // No property on the window that Rust could write for the markers.
-    for line in slint.lines().filter(|l| l.contains("property <")) {
+    // No property on the window itself that Rust could write for the markers (the `SText` labels
+    // above it are fixed texts that existed before the redesign).
+    let window_src = &slint[slint.find("export component SettingsWindow").unwrap_or(0)..];
+    for line in window_src.lines().filter(|l| l.contains("property <")) {
         let l = line.to_ascii_lowercase();
         assert!(
             !(l.contains("protect") || l.contains("marker")),
             "a window property is about the markers: {line}"
         );
     }
-    // Nothing in the host writes a marker setting either.
+    // Nothing in the host writes a marker setting to the window either (the labels are fixed
+    // texts set on the `SText` global, `s.set_protected_os(..)`).
     let host = read("src/ui/settings_host.rs");
-    for w in ["set_protected", "set_marker"] {
-        assert!(!host.contains(w), "settings_host.rs writes `{w}`");
+    for w in [
+        "w.set_protected",
+        "win.set_protected",
+        "w.set_marker",
+        "win.set_marker",
+        "w.get_protected",
+        "win.get_protected",
+    ] {
+        assert!(!host.contains(w), "settings_host.rs uses `{w}`");
     }
 }
 

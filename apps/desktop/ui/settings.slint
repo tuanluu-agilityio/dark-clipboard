@@ -1,14 +1,22 @@
-// The settings window (Task 207): General, Privacy, History and About. Every value and every
+// The settings window (Task 207, redesigned in Task 705): General, Capture and Privacy, History
+// and Storage, Data and Transfer, About. Every value and every
 // decision comes from Rust (`src/ui/settings_host.rs`, with the pure rules in `src/prefs`);
 // this file lays things out and forwards input. Every string comes from the `SText` global
 // (i18n), never from here. Dark only (D-037).
 //
-// The OS and Darkshot privacy markers row is plain text: there is no control for it in this
-// file, and none can be added without changing the Rust side (GC-07).
+// The OS and Darkshot privacy markers card is only drawn: there is no control for it in this
+// file, and none can be added without changing the Rust side (GC-07). Each setting carries a
+// `// section:N id` marker that `tests/settings_sections.rs` checks against `SETTING_SECTIONS`.
 
-import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Palette } from "std-widgets.slint";
+import { ScrollView, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { Icon, IconName } from "kit/icon.slint";
+import { Button, ButtonKind } from "kit/button.slint";
+import { Switch } from "kit/switch.slint";
+import { Select } from "kit/select.slint";
+import { Field } from "kit/field.slint";
+import { ConfirmDialog, DialogScrim } from "kit/confirm_dialog.slint";
+import { NavItem, Card, SettingRow, InfoRow, ModeCard, SaveButton, ProtectedRow } from "settings_parts.slint";
 
 export struct AppRow {
     name: string,
@@ -116,77 +124,75 @@ export global SText {
     in property <string> update-auto;
     in property <string> update-note;
     in property <string> update-open;
+    // Redesign (Task 705): nav names, section descriptions, card titles, capture-mode cards,
+    // the Always protected card, the save bar and the dialog titles.
+    in property <string> nav-capture;
+    in property <string> nav-storage;
+    in property <string> nav-data;
+    in property <string> desc-general;
+    in property <string> desc-capture;
+    in property <string> desc-storage;
+    in property <string> desc-data;
+    in property <string> desc-about;
+    in property <string> card-popup;
+    in property <string> card-app;
+    in property <string> card-sensitive;
+    in property <string> card-limits;
+    in property <string> enter-pastes-note;
+    in property <string> card-recording;
+    in property <string> card-private;
+    in property <string> card-paused;
+    in property <string> card-recording-line;
+    in property <string> card-private-line;
+    in property <string> card-paused-line;
+    in property <string> always-protected;
+    in property <string> protected-os;
+    in property <string> protected-darkshot;
+    in property <string> unsaved;
+    in property <string> key-ctrl-s;
+    in property <string> dlg-remove;
+    in property <string> dlg-limits;
+    in property <string> dlg-clear;
+    in property <string> dlg-restore;
+    in property <string> clear-row;
 }
 
-// A caption above a control.
-component Caption inherits Text {
-    color: Theme.text-muted;
-    font-size: 12px;
-    wrap: word-wrap;
-}
-
-// An error line under a field (empty: nothing shown).
-component FieldError inherits Text {
-    color: Theme.danger;
-    font-size: 12px;
-    wrap: word-wrap;
-    visible: self.text != "";
-    height: self.text == "" ? 0px : self.preferred-height;
-}
-
-component SectionTab inherits Rectangle {
+// A one-line explanation under a heading.
+component Note inherits Rectangle {
     in property <string> text;
-    in property <bool> active;
-    callback clicked();
-    height: 36px;
-    border-radius: 6px;
-    background: root.active ? Theme.accent.with-alpha(0.25) : (touch.has-hover ? Theme.surface : transparent);
-    accessible-role: tab;
-    accessible-label: root.text;
-    accessible-checkable: true;
-    accessible-checked: root.active;
-    accessible-action-default => {
-        root.clicked();
-    }
-    Text {
-        x: 12px;
-        width: parent.width - 24px;
-        text: root.text;
-        color: root.active ? Theme.accent : Theme.text;
-        font-weight: root.active ? 700 : 400;
-        vertical-alignment: center;
-        overflow: elide;
-    }
-    touch := TouchArea {
-        clicked => {
-            root.clicked();
-        }
-    }
-}
+    in property <color> tone: Theme.text-3;
+    in property <length> pad-top;
+    in property <length> pad-bottom;
 
-// A modal question over the window.
-component Overlay inherits Rectangle {
-    in property <bool> open;
-    visible: root.open;
-    background: #000000A0;
-    // Swallows clicks so nothing behind the question can be pressed.
-    TouchArea {}
-    @children
+    height: txt.preferred-height + root.pad-top + root.pad-bottom;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.text;
+
+    txt := Text {
+        y: root.pad-top;
+        width: parent.width;
+        text: root.text;
+        color: root.tone;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
 }
 
 export component SettingsWindow inherits Window {
     icon: @image-url("../res/window-64.png");
     title: SText.title;
     background: Theme.bg;
-    min-width: 640px;
+    min-width: 680px;
     min-height: 480px;
-    preferred-width: 780px;
-    preferred-height: 600px;
+    preferred-width: 860px;
+    preferred-height: 640px;
     default-font-size: 13px;
 
-    // 0 General, 1 Privacy, 2 History, 3 About.
+    // 0 General, 1 Capture and Privacy, 2 History and Storage, 3 Data and Transfer, 4 About.
     in-out property <int> section: 0;
     in property <bool> can-save: true;
+    // Something was changed since the last save, revert or open: the save bar shows (Rust owns it).
+    in property <bool> dirty;
     // Capture is switched off (before the first-run Start): the Privacy section says so.
     in property <bool> capture-off;
     // False when start at login cannot be changed from this process (custom data folder).
@@ -214,7 +220,7 @@ export component SettingsWindow inherits Window {
     in property <string> err-app;
     in property <string> status;
     in property <bool> status-error;
-    // The capture mode buttons: 0 capturing, 1 private, 2 paused.
+    // The capture mode cards: 0 capturing, 1 private, 2 paused.
     in property <int> mode;
     // Non-empty while the built-in exclusion removal asks for confirmation.
     in property <string> confirm-remove-text;
@@ -224,7 +230,7 @@ export component SettingsWindow inherits Window {
     in property <bool> clear-open;
     in property <bool> limits-open;
     in-out property <bool> clear-keep-pinned: true;
-    // The question of the clear dialog (it names the count for the checkbox state).
+    // The question of the clear dialog (it names the count for the switch state).
     in property <string> clear-question;
     in property <bool> cleanup-open;
     // A backup, restore or import is running, or its file dialog is open.
@@ -281,12 +287,56 @@ export component SettingsWindow inherits Window {
     callback auto-update-toggled(bool);
     callback open-release();
     callback escape();
+    // Every key before the focused element: text, Ctrl, Shift, Alt, Meta, a nav item has the
+    // focus. True when the host handled it (Task 705: the meaning of a key is decided in Rust).
+    callback key(string, bool, bool, bool, bool, bool) -> bool;
+    // What a key does to a `Select`: text, Alt, list open -> code (see `kit/select.slint`).
+    callback select-key(string, bool, bool) -> int;
+
+    // A nav item has the keyboard focus (Up and Down then move between sections).
+    property <bool> nav-focus: nav0.has-focus || nav1.has-focus || nav2.has-focus || nav3.has-focus || nav4.has-focus;
+    // One of the questions or the picker is open.
+    property <bool> layer-open: root.confirm-remove-text != "" || root.limits-open || root.clear-open || root.cleanup-open || root.restore-open || root.picker-open;
 
     init => {
         Palette.color-scheme = ColorScheme.dark;
     }
 
-    FocusScope {
+    // Closing a dialog or the picker: the focus goes back to the window, not to a hidden control.
+    changed layer-open => {
+        if (!root.layer-open) {
+            main.focus();
+        }
+    }
+
+    // The section changed by the keys (Ctrl+digit, Up, Down): while a nav item has the focus the
+    // ring follows the selection.
+    changed section => {
+        if (root.nav-focus) {
+            if (root.section == 0) {
+                nav0.focus();
+            } else if (root.section == 1) {
+                nav1.focus();
+            } else if (root.section == 2) {
+                nav2.focus();
+            } else if (root.section == 3) {
+                nav3.focus();
+            } else {
+                nav4.focus();
+            }
+        }
+    }
+
+    main := FocusScope {
+        init => {
+            self.focus();
+        }
+        capture-key-pressed(e) => {
+            if (root.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, root.nav-focus)) {
+                return accept;
+            }
+            reject
+        }
         key-pressed(e) => {
             if (e.text == Key.Escape) {
                 root.escape();
@@ -298,45 +348,62 @@ export component SettingsWindow inherits Window {
         HorizontalLayout {
             // Left: the sections.
             Rectangle {
-                width: 170px;
+                width: 220px;
                 background: Theme.surface;
                 VerticalLayout {
-                    padding: 10px;
+                    padding: 12px;
                     spacing: 4px;
                     alignment: start;
                     accessible-role: tab-list;
-                    SectionTab {
+                    nav0 := NavItem {
+                        icon: IconName.sliders-horizontal;
                         text: SText.general;
                         active: root.section == 0;
                         clicked => {
                             root.section = 0;
+                            self.focus();
                         }
                     }
-                    SectionTab {
-                        text: SText.privacy;
+                    nav1 := NavItem {
+                        icon: IconName.shield-check;
+                        text: SText.nav-capture;
                         active: root.section == 1;
                         clicked => {
                             root.section = 1;
+                            self.focus();
                         }
                     }
-                    SectionTab {
-                        text: SText.history;
+                    nav2 := NavItem {
+                        icon: IconName.database;
+                        text: SText.nav-storage;
                         active: root.section == 2;
                         clicked => {
                             root.section = 2;
+                            self.focus();
                         }
                     }
-                    SectionTab {
-                        text: SText.about;
+                    nav3 := NavItem {
+                        icon: IconName.arrow-left-right;
+                        text: SText.nav-data;
                         active: root.section == 3;
                         clicked => {
                             root.section = 3;
+                            self.focus();
+                        }
+                    }
+                    nav4 := NavItem {
+                        icon: IconName.info;
+                        text: SText.about;
+                        active: root.section == 4;
+                        clicked => {
+                            root.section = 4;
+                            self.focus();
                         }
                     }
                 }
             }
 
-            // Right: the banner, the section and the Save bar.
+            // Right: the banner, the section, the status line and the save bar.
             VerticalLayout {
                 horizontal-stretch: 1;
 
@@ -360,116 +427,180 @@ export component SettingsWindow inherits Window {
                 ScrollView {
                     vertical-stretch: 1;
                     VerticalLayout {
-                        padding: 18px;
-                        spacing: 10px;
+                        padding: 24px;
+                        spacing: 16px;
                         alignment: start;
+
+                        Text {
+                            text: [SText.general, SText.nav-capture, SText.nav-storage, SText.nav-data, SText.about][root.section];
+                            color: Theme.text;
+                            font-size: 18px;
+                            font-weight: 700;
+                            wrap: word-wrap;
+                            accessible-role: text;
+                        }
+                        Text {
+                            text: [SText.desc-general, SText.desc-capture, SText.desc-storage, SText.desc-data, SText.desc-about][root.section];
+                            color: Theme.text-2;
+                            font-size: 13px;
+                            wrap: word-wrap;
+                        }
 
                         // ---------------------------------------------------- General
                         if root.section == 0: VerticalLayout {
-                            spacing: 10px;
-                            Caption {
-                                text: SText.shortcut-label;
-                            }
-                            LineEdit {
-                                text <=> root.shortcut;
-                                placeholder-text: SText.shortcut-hint;
-                                accessible-label: SText.shortcut-label;
-                                edited(t) => {
-                                    root.edited();
+                            spacing: 16px;
+                            Card {
+                                title: SText.card-popup;
+                                // section:0 shortcut
+                                SettingRow {
+                                    first: true;
+                                    label: SText.shortcut-label;
+                                    error: root.err-shortcut != "" ? (SText.shortcut-warning != "" ? root.err-shortcut + "\n" + SText.shortcut-warning : root.err-shortcut) : SText.shortcut-warning;
+                                    Field {
+                                        width: 220px;
+                                        text <=> root.shortcut;
+                                        placeholder: SText.shortcut-hint;
+                                        label: SText.shortcut-label;
+                                        error: root.err-shortcut;
+                                        inline-error: false;
+                                        edited => {
+                                            root.edited();
+                                        }
+                                    }
+                                }
+                                // section:0 popup-position
+                                SettingRow {
+                                    label: SText.pos-label;
+                                    Select {
+                                        model: [SText.pos-cursor, SText.pos-center];
+                                        current-index <=> root.position-index;
+                                        label: SText.pos-label;
+                                        selected(v) => {
+                                            root.edited();
+                                        }
+                                        key(t, a, o) => {
+                                            return root.select-key(t, a, o);
+                                        }
+                                    }
+                                }
+                                // section:0 close-on-focus-loss
+                                SettingRow {
+                                    label: SText.close-focus;
+                                    Switch {
+                                        label: SText.close-focus;
+                                        checked <=> root.close-on-focus-loss;
+                                        toggled(v) => {
+                                            root.edited();
+                                        }
+                                    }
+                                }
+                                // section:0 enter-pastes
+                                SettingRow {
+                                    label: SText.enter-pastes;
+                                    description: SText.enter-pastes-note;
+                                    Switch {
+                                        label: SText.enter-pastes;
+                                        description: SText.enter-pastes-note;
+                                        checked <=> root.enter-pastes;
+                                        toggled(v) => {
+                                            root.edited();
+                                        }
+                                    }
                                 }
                             }
-                            FieldError {
-                                text: root.err-shortcut;
-                            }
-                            FieldError {
-                                text: SText.shortcut-warning;
-                            }
-                            Caption {
-                                text: SText.lang-label;
-                            }
-                            ComboBox {
-                                model: [SText.lang-en, SText.lang-vi];
-                                current-index <=> root.lang-index;
-                                accessible-label: SText.lang-label;
-                                selected(v) => {
-                                    root.edited();
+                            Card {
+                                title: SText.card-app;
+                                // section:0 language
+                                SettingRow {
+                                    first: true;
+                                    label: SText.lang-label;
+                                    Select {
+                                        model: [SText.lang-en, SText.lang-vi];
+                                        current-index <=> root.lang-index;
+                                        label: SText.lang-label;
+                                        selected(v) => {
+                                            root.edited();
+                                        }
+                                        key(t, a, o) => {
+                                            return root.select-key(t, a, o);
+                                        }
+                                    }
                                 }
-                            }
-                            CheckBox {
-                                text: SText.login;
-                                enabled: root.login-enabled;
-                                checked <=> root.launch-at-login;
-                                toggled => {
-                                    root.edited();
+                                // section:0 start-at-login
+                                SettingRow {
+                                    label: SText.login;
+                                    description: SText.login-drift != "" ? (SText.login-note != "" ? SText.login-note + "\n" + SText.login-drift : SText.login-drift) : SText.login-note;
+                                    Switch {
+                                        label: SText.login;
+                                        enabled: root.login-enabled;
+                                        checked <=> root.launch-at-login;
+                                        toggled(v) => {
+                                            root.edited();
+                                        }
+                                    }
                                 }
-                            }
-                            if SText.login-note != "": Caption {
-                                text: SText.login-note;
-                            }
-                            if SText.login-drift != "": Caption {
-                                text: SText.login-drift;
-                                color: Theme.warning;
-                            }
-                            Caption {
-                                text: SText.pos-label;
-                            }
-                            ComboBox {
-                                model: [SText.pos-cursor, SText.pos-center];
-                                current-index <=> root.position-index;
-                                accessible-label: SText.pos-label;
-                                selected(v) => {
-                                    root.edited();
-                                }
-                            }
-                            CheckBox {
-                                text: SText.close-focus;
-                                checked <=> root.close-on-focus-loss;
-                                toggled => {
-                                    root.edited();
-                                }
-                            }
-                            CheckBox {
-                                text: SText.enter-pastes;
-                                checked <=> root.enter-pastes;
-                                toggled => {
-                                    root.edited();
+                                // section:0 show-welcome
+                                SettingRow {
+                                    label: SText.show-welcome;
+                                    Button {
+                                        text: SText.show-welcome;
+                                        clicked => {
+                                            root.show-welcome();
+                                        }
+                                    }
                                 }
                             }
                         }
 
-                        // ---------------------------------------------------- Privacy
+                        // ---------------------------------------------------- Capture and Privacy
                         if root.section == 1: VerticalLayout {
-                            spacing: 10px;
-                            Caption {
-                                text: SText.capture-label;
-                            }
-                            HorizontalLayout {
+                            spacing: 16px;
+                            // section:1 capture-mode
+                            VerticalLayout {
                                 spacing: 8px;
-                                alignment: start;
-                                Button {
-                                    text: SText.mode-normal;
-                                    primary: root.mode == 0;
-                                    clicked => {
-                                        root.set-mode(0);
+                                Text {
+                                    text: SText.capture-label;
+                                    color: Theme.text-2;
+                                    font-size: 13px;
+                                    font-weight: 700;
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    ModeCard {
+                                        icon: IconName.play;
+                                        title: SText.card-recording;
+                                        line: SText.card-recording-line;
+                                        label: SText.mode-normal;
+                                        selected: root.mode == 0;
+                                        clicked => {
+                                            root.set-mode(0);
+                                        }
+                                    }
+                                    ModeCard {
+                                        icon: IconName.eye-off;
+                                        title: SText.card-private;
+                                        line: SText.card-private-line;
+                                        label: SText.mode-private;
+                                        selected: root.mode == 1;
+                                        clicked => {
+                                            root.set-mode(1);
+                                        }
+                                    }
+                                    ModeCard {
+                                        icon: IconName.pause;
+                                        title: SText.card-paused;
+                                        line: SText.card-paused-line;
+                                        label: SText.mode-paused;
+                                        selected: root.mode == 2;
+                                        clicked => {
+                                            root.set-mode(2);
+                                        }
                                     }
                                 }
-                                Button {
-                                    text: SText.mode-private;
-                                    primary: root.mode == 1;
-                                    clicked => {
-                                        root.set-mode(1);
-                                    }
+                                Note {
+                                    text: SText.mode-current;
+                                    tone: Theme.text-2;
                                 }
-                                Button {
-                                    text: SText.mode-paused;
-                                    primary: root.mode == 2;
-                                    clicked => {
-                                        root.set-mode(2);
-                                    }
-                                }
-                            }
-                            Caption {
-                                text: SText.mode-current;
                             }
                             if root.capture-off: Rectangle {
                                 background: Theme.warning.with-alpha(0.18);
@@ -490,7 +621,7 @@ export component SettingsWindow inherits Window {
                                         alignment: start;
                                         Button {
                                             text: SText.start-capturing;
-                                            primary: true;
+                                            kind: ButtonKind.primary;
                                             clicked => {
                                                 root.start-capturing();
                                             }
@@ -499,407 +630,459 @@ export component SettingsWindow inherits Window {
                                 }
                             }
 
-                            // The markers row: text only, by design (GC-07).
-                            Rectangle {
-                                background: Theme.surface;
-                                border-radius: 6px;
-                                border-width: 1px;
-                                border-color: Theme.success;
-                                height: markers-col.preferred-height + 20px;
-                                accessible-role: text;
-                                accessible-label: SText.markers-label + ". " + SText.markers-note;
-                                markers-col := VerticalLayout {
-                                    padding: 10px;
-                                    spacing: 4px;
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        // Top-aligned with the label's first line (about 17 px tall).
-                                        VerticalLayout {
-                                            width: 14px;
-                                            alignment: start;
-                                            padding-top: 2px;
-                                            Icon {
-                                                name: IconName.lock;
-                                                tint: Theme.success;
-                                                size: 14px;
-                                            }
+                            // section:1 always-protected
+                            // always-protected:begin
+                            Card {
+                                title: SText.always-protected;
+                                ProtectedRow {
+                                    text: SText.protected-os;
+                                }
+                                ProtectedRow {
+                                    text: SText.protected-darkshot;
+                                }
+                                Note {
+                                    text: SText.markers-note;
+                                    accessible-label: SText.markers-label + ". " + SText.markers-note;
+                                }
+                            }
+                            // always-protected:end
+
+                            Card {
+                                title: SText.card-sensitive;
+                                // section:1 sensitive-content
+                                SettingRow {
+                                    first: true;
+                                    label: SText.sensitive-label;
+                                    error: root.sensitive-index == 2 ? SText.sens-warn : "";
+                                    Select {
+                                        model: [SText.sens-drop, SText.sens-masked, SText.sens-store];
+                                        current-index <=> root.sensitive-index;
+                                        label: SText.sensitive-label;
+                                        selected(v) => {
+                                            root.edited();
                                         }
+                                        key(t, a, o) => {
+                                            return root.select-key(t, a, o);
+                                        }
+                                    }
+                                }
+                            }
+
+                            // section:1 excluded-apps
+                            Card {
+                                title: SText.excluded-label;
+                                Note {
+                                    text: SText.excluded-note;
+                                    pad-bottom: 6px;
+                                }
+                                for a[i] in root.apps: Rectangle {
+                                    height: 40px;
+                                    HorizontalLayout {
+                                        spacing: 8px;
                                         Text {
-                                            text: SText.markers-label;
-                                            color: Theme.success;
-                                            font-weight: 700;
-                                            wrap: word-wrap;
+                                            text: (a.name != "" ? a.name + " (" + a.id + ")" : a.id) + "  -  " + a.platform;
+                                            color: Theme.text;
+                                            vertical-alignment: center;
+                                            overflow: elide;
                                             horizontal-stretch: 1;
                                         }
-                                    }
-                                    Caption {
-                                        text: SText.markers-note;
-                                    }
-                                }
-                            }
-
-                            Caption {
-                                text: SText.sensitive-label;
-                            }
-                            ComboBox {
-                                model: [SText.sens-drop, SText.sens-masked, SText.sens-store];
-                                current-index <=> root.sensitive-index;
-                                accessible-label: SText.sensitive-label;
-                                selected(v) => {
-                                    root.edited();
-                                }
-                            }
-                            if root.sensitive-index == 2: FieldError {
-                                text: SText.sens-warn;
-                            }
-
-                            Caption {
-                                text: SText.kinds-label;
-                            }
-                            for k[i] in root.kinds: CheckBox {
-                                text: k.label;
-                                checked: k.on;
-                                toggled => {
-                                    root.kinds[i] = { label: k.label, on: self.checked };
-                                    root.edited();
-                                }
-                            }
-                            FieldError {
-                                text: root.err-kinds;
-                            }
-
-                            Caption {
-                                text: SText.excluded-label;
-                                font-weight: 700;
-                            }
-                            Caption {
-                                text: SText.excluded-note;
-                            }
-                            for a[i] in root.apps: Rectangle {
-                                height: 34px;
-                                background: Theme.surface;
-                                border-radius: 6px;
-                                HorizontalLayout {
-                                    padding-left: 10px;
-                                    padding-right: 6px;
-                                    spacing: 8px;
-                                    Text {
-                                        text: (a.name != "" ? a.name + " (" + a.id + ")" : a.id) + "  -  " + a.platform;
-                                        color: Theme.text;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                        horizontal-stretch: 1;
-                                    }
-                                    if a.builtin: Text {
-                                        text: SText.builtin-badge;
-                                        color: Theme.text-muted;
-                                        font-size: 12px;
-                                        vertical-alignment: center;
-                                    }
-                                    Button {
-                                        text: SText.remove;
-                                        clicked => {
-                                            root.remove-app(i);
+                                        if a.builtin: Text {
+                                            text: SText.builtin-badge;
+                                            color: Theme.text-2;
+                                            font-size: 12px;
+                                            vertical-alignment: center;
+                                        }
+                                        Button {
+                                            text: SText.remove;
+                                            kind: ButtonKind.ghost;
+                                            y: (parent.height - self.height) / 2;
+                                            clicked => {
+                                                root.remove-app(i);
+                                            }
                                         }
                                     }
                                 }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    padding-top: 6px;
+                                    padding-bottom: 6px;
+                                    Field {
+                                        text <=> root.new-app;
+                                        placeholder: SText.app-placeholder;
+                                        label: SText.app-placeholder;
+                                        error: root.err-app;
+                                        inline-error: false;
+                                        horizontal-stretch: 1;
+                                        accepted => {
+                                            root.add-app(root.new-app);
+                                        }
+                                    }
+                                    Button {
+                                        text: SText.add;
+                                        clicked => {
+                                            root.add-app(root.new-app);
+                                        }
+                                    }
+                                    Button {
+                                        text: SText.pick-running;
+                                        clicked => {
+                                            root.open-picker();
+                                        }
+                                    }
+                                }
+                                if root.err-app != "": Text {
+                                    text: root.err-app;
+                                    color: Theme.danger;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
                             }
-                            HorizontalLayout {
-                                spacing: 8px;
-                                LineEdit {
-                                    text <=> root.new-app;
-                                    placeholder-text: SText.app-placeholder;
-                                    accessible-label: SText.app-placeholder;
-                                    horizontal-stretch: 1;
-                                    accepted(t) => {
-                                        root.add-app(t);
+
+                            Card {
+                                title: SText.kinds-label;
+                                // section:1 kinds
+                                for k[i] in root.kinds: SettingRow {
+                                    first: i == 0;
+                                    label: k.label;
+                                    Switch {
+                                        label: k.label;
+                                        checked: k.on;
+                                        toggled(v) => {
+                                            root.kinds[i] = { label: k.label, on: v };
+                                            root.edited();
+                                        }
                                     }
                                 }
-                                Button {
-                                    text: SText.add;
-                                    clicked => {
-                                        root.add-app(root.new-app);
-                                    }
+                                if root.err-kinds != "": Text {
+                                    text: root.err-kinds;
+                                    color: Theme.danger;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
                                 }
-                                Button {
-                                    text: SText.pick-running;
-                                    clicked => {
-                                        root.open-picker();
-                                    }
+                                // section:1 skip-summary
+                                InfoRow {
+                                    label: SText.skipped-label;
+                                    value: root.skip-text;
                                 }
-                            }
-                            FieldError {
-                                text: root.err-app;
                             }
                         }
 
-                        // ---------------------------------------------------- History
+                        // ---------------------------------------------------- History and Storage
                         if root.section == 2: VerticalLayout {
-                            spacing: 10px;
-                            Caption {
-                                text: SText.max-items-label;
-                            }
-                            LineEdit {
-                                text <=> root.max-items;
-                                input-type: number;
-                                accessible-label: SText.max-items-label;
-                                edited(t) => {
-                                    root.edited();
+                            spacing: 16px;
+                            Card {
+                                title: SText.card-limits;
+                                // section:2 max-items
+                                SettingRow {
+                                    first: true;
+                                    label: SText.max-items-label;
+                                    error: root.err-items;
+                                    Field {
+                                        width: 120px;
+                                        text <=> root.max-items;
+                                        input-type: InputType.number;
+                                        label: SText.max-items-label;
+                                        error: root.err-items;
+                                        inline-error: false;
+                                        edited => {
+                                            root.edited();
+                                        }
+                                    }
                                 }
-                            }
-                            FieldError {
-                                text: root.err-items;
-                            }
-                            Caption {
-                                text: SText.max-age-label;
-                            }
-                            LineEdit {
-                                text <=> root.max-age;
-                                input-type: number;
-                                accessible-label: SText.max-age-label;
-                                edited(t) => {
-                                    root.edited();
+                                // section:2 max-age
+                                SettingRow {
+                                    label: SText.max-age-label;
+                                    error: root.err-age;
+                                    Field {
+                                        width: 120px;
+                                        text <=> root.max-age;
+                                        input-type: InputType.number;
+                                        label: SText.max-age-label;
+                                        error: root.err-age;
+                                        inline-error: false;
+                                        edited => {
+                                            root.edited();
+                                        }
+                                    }
                                 }
-                            }
-                            FieldError {
-                                text: root.err-age;
-                            }
-                            Caption {
-                                text: SText.max-storage-label;
-                            }
-                            LineEdit {
-                                text <=> root.max-storage;
-                                input-type: number;
-                                accessible-label: SText.max-storage-label;
-                                edited(t) => {
-                                    root.edited();
+                                // section:2 max-storage
+                                SettingRow {
+                                    label: SText.max-storage-label;
+                                    error: root.err-storage;
+                                    Field {
+                                        width: 120px;
+                                        text <=> root.max-storage;
+                                        input-type: InputType.number;
+                                        label: SText.max-storage-label;
+                                        error: root.err-storage;
+                                        inline-error: false;
+                                        edited => {
+                                            root.edited();
+                                        }
+                                    }
                                 }
-                            }
-                            FieldError {
-                                text: root.err-storage;
-                            }
-                            Caption {
-                                text: SText.retention-note;
+                                Note {
+                                    text: SText.retention-note;
+                                    pad-top: 8px;
+                                    pad-bottom: 4px;
+                                }
                             }
 
-                            Caption {
-                                text: SText.stats-label;
-                                font-weight: 700;
+                            Card {
+                                title: SText.stats-label;
+                                // section:2 storage-stats
+                                InfoRow {
+                                    first: true;
+                                    label: SText.stats-label;
+                                    value: root.stats-text;
+                                }
                             }
-                            Text {
-                                text: root.stats-text;
-                                color: Theme.text;
-                                wrap: word-wrap;
-                            }
-                            Caption {
-                                text: SText.skipped-label;
-                            }
-                            Text {
-                                text: root.skip-text;
-                                color: Theme.text;
-                                wrap: word-wrap;
-                            }
-                            HorizontalLayout {
-                                alignment: start;
-                                Button {
-                                    text: SText.clear;
-                                    clicked => {
-                                        root.clear-ask();
+
+                            Card {
+                                title: SText.cleanup-heading;
+                                // section:2 cleanup
+                                SettingRow {
+                                    first: true;
+                                    label: SText.older-label;
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        Field {
+                                            width: 80px;
+                                            text <=> root.older-days;
+                                            input-type: InputType.number;
+                                            label: SText.older-label;
+                                        }
+                                        Button {
+                                            text: SText.older-do;
+                                            clicked => {
+                                                root.older-ask(root.older-days);
+                                            }
+                                        }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    alignment: start;
+                                    spacing: 8px;
+                                    padding-top: 10px;
+                                    padding-bottom: 6px;
+                                    Button {
+                                        text: SText.orphans-do;
+                                        clicked => {
+                                            root.orphans-ask();
+                                        }
+                                    }
+                                    Button {
+                                        text: SText.compact-do;
+                                        clicked => {
+                                            root.compact-ask();
+                                        }
                                     }
                                 }
                             }
-                            Caption {
-                                text: SText.cleanup-heading;
-                                font-weight: 700;
-                            }
-                            Caption {
-                                text: SText.older-label;
-                            }
-                            HorizontalLayout {
-                                spacing: 8px;
-                                LineEdit {
-                                    text <=> root.older-days;
-                                    input-type: number;
-                                    accessible-label: SText.older-label;
-                                }
-                                Button {
-                                    text: SText.older-do;
-                                    clicked => {
-                                        root.older-ask(root.older-days);
+
+                            Card {
+                                title: SText.history;
+                                // section:2 clear-history
+                                SettingRow {
+                                    first: true;
+                                    label: SText.clear-row;
+                                    Button {
+                                        text: SText.clear;
+                                        kind: ButtonKind.danger;
+                                        clicked => {
+                                            root.clear-ask();
+                                        }
                                     }
                                 }
                             }
-                            HorizontalLayout {
-                                alignment: start;
-                                spacing: 8px;
-                                Button {
-                                    text: SText.orphans-do;
-                                    clicked => {
-                                        root.orphans-ask();
-                                    }
+                        }
+
+                        // ---------------------------------------------------- Data and Transfer
+                        if root.section == 3: VerticalLayout {
+                            spacing: 16px;
+                            Card {
+                                title: SText.transfer-heading;
+                                Note {
+                                    text: SText.transfer-note;
+                                    pad-bottom: 8px;
                                 }
-                                Button {
-                                    text: SText.compact-do;
-                                    clicked => {
-                                        root.compact-ask();
+                                HorizontalLayout {
+                                    alignment: start;
+                                    spacing: 8px;
+                                    padding-bottom: 8px;
+                                    // section:3 backup
+                                    Button {
+                                        text: SText.backup-do;
+                                        enabled: !root.transfer-busy;
+                                        clicked => {
+                                            root.backup-ask();
+                                        }
+                                    }
+                                    // section:3 restore
+                                    Button {
+                                        text: SText.restore-do;
+                                        enabled: !root.transfer-busy;
+                                        clicked => {
+                                            root.restore-ask();
+                                        }
+                                    }
+                                    // section:3 import
+                                    Button {
+                                        text: SText.import-do;
+                                        enabled: !root.transfer-busy;
+                                        clicked => {
+                                            root.import-ask();
+                                        }
                                     }
                                 }
                             }
-                            Caption {
-                                text: SText.transfer-heading;
-                                font-weight: 700;
-                            }
-                            Caption {
-                                text: SText.transfer-note;
-                            }
-                            HorizontalLayout {
-                                alignment: start;
-                                spacing: 8px;
-                                Button {
-                                    text: SText.backup-do;
-                                    enabled: !root.transfer-busy;
-                                    clicked => {
-                                        root.backup-ask();
-                                    }
+                            Card {
+                                title: SText.folder-label;
+                                // section:3 data-folder
+                                InfoRow {
+                                    first: true;
+                                    label: SText.folder-label;
+                                    value: root.data-path;
                                 }
-                                Button {
-                                    text: SText.restore-do;
-                                    enabled: !root.transfer-busy;
-                                    clicked => {
-                                        root.restore-ask();
-                                    }
-                                }
-                                Button {
-                                    text: SText.import-do;
-                                    enabled: !root.transfer-busy;
-                                    clicked => {
-                                        root.import-ask();
+                                HorizontalLayout {
+                                    alignment: start;
+                                    padding-bottom: 8px;
+                                    Button {
+                                        text: SText.open-folder;
+                                        clicked => {
+                                            root.open-folder();
+                                        }
                                     }
                                 }
                             }
                         }
 
                         // ---------------------------------------------------- About
-                        if root.section == 3: VerticalLayout {
-                            spacing: 10px;
-                            Text {
-                                text: SText.title;
-                                color: Theme.text;
-                                font-size: 18px;
-                                font-weight: 700;
-                            }
-                            Text {
-                                text: root.version-text;
-                                color: Theme.text;
-                            }
-                            Caption {
-                                text: SText.caps-label;
-                                font-weight: 700;
-                            }
-                            Text {
-                                text: root.caps-text;
-                                color: Theme.text;
-                                wrap: word-wrap;
-                            }
-                            Caption {
-                                text: SText.folder-label;
-                                font-weight: 700;
-                            }
-                            Text {
-                                text: root.data-path;
-                                color: Theme.text;
-                                wrap: word-wrap;
-                                accessible-role: text;
-                            }
-                            HorizontalLayout {
-                                alignment: start;
-                                Button {
-                                    text: SText.open-folder;
-                                    clicked => {
-                                        root.open-folder();
-                                    }
+                        if root.section == 4: VerticalLayout {
+                            spacing: 16px;
+                            Card {
+                                // section:4 version
+                                InfoRow {
+                                    first: true;
+                                    label: SText.version;
+                                    value: root.version-text;
                                 }
-                                Button {
-                                    text: SText.show-welcome;
-                                    clicked => {
-                                        root.show-welcome();
+                                HorizontalLayout {
+                                    alignment: start;
+                                    padding-bottom: 8px;
+                                    Button {
+                                        text: SText.open-folder;
+                                        kind: ButtonKind.ghost;
+                                        clicked => {
+                                            root.open-folder();
+                                        }
                                     }
                                 }
                             }
-                            if root.status != "": Text {
-                                text: root.status;
-                                color: root.status-error ? Theme.danger : Theme.success;
-                                wrap: word-wrap;
-                            }
-                            Caption {
-                                text: SText.updates-heading;
-                                font-weight: 700;
-                            }
-                            Caption {
-                                text: SText.update-note;
-                            }
-                            HorizontalLayout {
-                                alignment: start;
-                                spacing: 10px;
-                                Button {
-                                    text: SText.update-check;
-                                    enabled: !root.update-busy;
-                                    clicked => {
-                                        root.check-updates();
+                            Card {
+                                title: SText.updates-heading;
+                                Note {
+                                    text: SText.update-note;
+                                    pad-bottom: 4px;
+                                }
+                                // section:4 auto-update
+                                SettingRow {
+                                    first: true;
+                                    label: SText.update-auto;
+                                    Switch {
+                                        label: SText.update-auto;
+                                        enabled: root.auto-update-enabled;
+                                        checked <=> root.auto-update;
+                                        toggled(v) => {
+                                            root.auto-update-toggled(v);
+                                        }
                                     }
                                 }
-                                if root.update-found: Button {
-                                    text: SText.update-open;
-                                    clicked => {
-                                        root.open-release();
+                                // section:4 check-updates
+                                SettingRow {
+                                    label: SText.update-check;
+                                    description: root.update-status;
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        Button {
+                                            text: SText.update-check;
+                                            enabled: !root.update-busy;
+                                            clicked => {
+                                                root.check-updates();
+                                            }
+                                        }
+                                        if root.update-found: Button {
+                                            text: SText.update-open;
+                                            kind: ButtonKind.primary;
+                                            clicked => {
+                                                root.open-release();
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            if root.update-status != "": Text {
-                                text: root.update-status;
-                                color: Theme.text;
-                                wrap: word-wrap;
-                            }
-                            CheckBox {
-                                text: SText.update-auto;
-                                checked <=> root.auto-update;
-                                enabled: root.auto-update-enabled;
-                                toggled => {
-                                    root.auto-update-toggled(root.auto-update);
+                            Card {
+                                title: SText.caps-label;
+                                // section:4 capabilities
+                                InfoRow {
+                                    first: true;
+                                    label: SText.caps-label;
+                                    value: root.caps-text;
                                 }
                             }
-                            Caption {
-                                text: SText.licences-label;
-                                font-weight: 700;
-                            }
-                            Caption {
-                                text: SText.licence-text;
-                            }
-                            Text {
-                                text: SText.notices;
-                                color: Theme.text;
-                                wrap: word-wrap;
-                            }
-                            Text {
-                                text: SText.third-party;
-                                color: Theme.text-muted;
-                                font-size: 12px;
-                                wrap: word-wrap;
+                            Card {
+                                title: SText.licences-label;
+                                // section:4 licences
+                                InfoRow {
+                                    first: true;
+                                    label: SText.licences-label;
+                                    value: SText.licence-text + "\n" + SText.notices;
+                                }
+                                Note {
+                                    text: SText.third-party;
+                                    pad-top: 4px;
+                                    pad-bottom: 8px;
+                                }
                             }
                         }
                     }
                 }
 
-                // The Save bar (hidden on About: nothing to save there).
-                if root.section != 3: Rectangle {
-                    height: 52px;
+                // The result of the last action (saved, cleaned, backed up ...), on every section.
+                if root.status != "": Rectangle {
+                    height: status-text.preferred-height + 16px;
                     background: Theme.surface;
+                    status-text := Text {
+                        x: 24px;
+                        y: 8px;
+                        width: parent.width - 48px;
+                        text: root.status;
+                        color: root.status-error ? Theme.danger : Theme.success;
+                        wrap: word-wrap;
+                        accessible-role: text;
+                    }
+                }
+
+                // The save bar: only after a change, and not on About (nothing to save there).
+                if root.dirty && root.section != 4: Rectangle {
+                    height: 52px;
+                    background: Theme.raised;
                     HorizontalLayout {
-                        padding: 10px;
-                        spacing: 10px;
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        padding-top: 10px;
+                        padding-bottom: 10px;
+                        spacing: 8px;
+                        Rectangle {
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
+                            background: Theme.accent;
+                            y: (parent.height - self.height) / 2;
+                        }
                         Text {
-                            text: root.status;
-                            color: root.status-error ? Theme.danger : Theme.success;
+                            text: SText.unsaved;
+                            color: Theme.text;
                             vertical-alignment: center;
                             overflow: elide;
                             horizontal-stretch: 1;
@@ -907,13 +1090,14 @@ export component SettingsWindow inherits Window {
                         }
                         Button {
                             text: SText.revert;
+                            kind: ButtonKind.ghost;
                             clicked => {
                                 root.revert();
                             }
                         }
-                        Button {
+                        SaveButton {
                             text: SText.save;
-                            primary: true;
+                            key: SText.key-ctrl-s;
                             enabled: root.can-save;
                             clicked => {
                                 root.save();
@@ -926,250 +1110,170 @@ export component SettingsWindow inherits Window {
     }
 
     // Built-in exclusion removal: asks first.
-    Overlay {
+    ConfirmDialog {
         open: root.confirm-remove-text != "";
-        Rectangle {
-            width: min(parent.width - 40px, 420px);
-            height: remove-col.preferred-height + 28px;
-            background: Theme.bg;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Theme.warning;
-            remove-col := VerticalLayout {
-                padding: 14px;
-                spacing: 12px;
-                Text {
-                    text: root.confirm-remove-text;
-                    color: Theme.text;
-                    wrap: word-wrap;
-                }
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-                    Button {
-                        text: SText.cancel;
-                        clicked => {
-                            root.cancel-remove();
-                        }
-                    }
-                    Button {
-                        text: SText.remove;
-                        primary: true;
-                        clicked => {
-                            root.confirm-remove();
-                        }
-                    }
-                }
-            }
+        title: SText.dlg-remove;
+        body: root.confirm-remove-text;
+        confirm-text: SText.remove;
+        cancel-text: SText.cancel;
+        confirmed => {
+            root.confirm-remove();
+        }
+        cancelled => {
+            root.cancel-remove();
         }
     }
 
     // Lowering a retention limit asks first.
-    Overlay {
+    ConfirmDialog {
         open: root.limits-open;
-        Rectangle {
-            width: min(parent.width - 40px, 420px);
-            height: limits-col.preferred-height + 28px;
-            background: Theme.bg;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Theme.warning;
-            limits-col := VerticalLayout {
-                padding: 14px;
-                spacing: 12px;
-                Text {
-                    text: SText.limits-confirm;
-                    color: Theme.text;
-                    wrap: word-wrap;
-                }
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-                    Button {
-                        text: SText.cancel;
-                        clicked => {
-                            root.limits-cancel();
-                        }
-                    }
-                    Button {
-                        text: SText.save;
-                        primary: true;
-                        clicked => {
-                            root.limits-confirm();
-                        }
-                    }
-                }
-            }
+        title: SText.dlg-limits;
+        body: SText.limits-confirm;
+        confirm-text: SText.save;
+        cancel-text: SText.cancel;
+        confirmed => {
+            root.limits-confirm();
+        }
+        cancelled => {
+            root.limits-cancel();
         }
     }
 
     // Clear history: asks first, with "keep pinned".
-    Overlay {
+    ConfirmDialog {
         open: root.clear-open;
-        Rectangle {
-            width: min(parent.width - 40px, 420px);
-            height: clear-col.preferred-height + 28px;
-            background: Theme.bg;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Theme.danger;
-            clear-col := VerticalLayout {
-                padding: 14px;
-                spacing: 12px;
-                Text {
-                    text: root.clear-question;
-                    color: Theme.text;
-                    wrap: word-wrap;
+        title: SText.dlg-clear;
+        body: root.clear-question;
+        confirm-text: SText.clear-do;
+        cancel-text: SText.cancel;
+        danger: true;
+        confirmed => {
+            root.clear-confirm();
+        }
+        cancelled => {
+            root.clear-cancel();
+        }
+        HorizontalLayout {
+            spacing: 10px;
+            Switch {
+                label: SText.keep-pinned;
+                checked <=> root.clear-keep-pinned;
+                toggled(v) => {
+                    root.clear-toggled(v);
                 }
-                CheckBox {
-                    text: SText.keep-pinned;
-                    checked <=> root.clear-keep-pinned;
-                    toggled => {
-                        root.clear-toggled(self.checked);
-                    }
-                }
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-                    Button {
-                        text: SText.cancel;
-                        clicked => {
-                            root.clear-cancel();
-                        }
-                    }
-                    Button {
-                        text: SText.clear-do;
-                        primary: true;
-                        clicked => {
-                            root.clear-confirm();
-                        }
-                    }
-                }
+            }
+            Text {
+                text: SText.keep-pinned;
+                color: Theme.text;
+                vertical-alignment: center;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
             }
         }
     }
 
     // Delete old clips, remove orphaned files, compact: each asks first and names the count.
-    Overlay {
+    ConfirmDialog {
         open: root.cleanup-open;
-        Rectangle {
-            width: min(parent.width - 40px, 420px);
-            height: cleanup-col.preferred-height + 28px;
-            background: Theme.bg;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Theme.danger;
-            cleanup-col := VerticalLayout {
-                padding: 14px;
-                spacing: 12px;
-                Text {
-                    text: root.cleanup-question;
-                    color: Theme.text;
-                    wrap: word-wrap;
-                }
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-                    Button {
-                        text: SText.cancel;
-                        clicked => {
-                            root.cleanup-cancel();
-                        }
-                    }
-                    Button {
-                        text: SText.clear-do;
-                        primary: true;
-                        clicked => {
-                            root.cleanup-confirm();
-                        }
-                    }
-                }
-            }
+        title: SText.cleanup-heading;
+        body: root.cleanup-question;
+        confirm-text: SText.clear-do;
+        cancel-text: SText.cancel;
+        danger: true;
+        confirmed => {
+            root.cleanup-confirm();
+        }
+        cancelled => {
+            root.cleanup-cancel();
         }
     }
 
     // Restore: replaces the whole history, so it always asks first (Task 405).
-    Overlay {
+    ConfirmDialog {
         open: root.restore-open;
-        Rectangle {
-            width: min(parent.width - 40px, 420px);
-            height: restore-col.preferred-height + 28px;
-            background: Theme.bg;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Theme.danger;
-            restore-col := VerticalLayout {
-                padding: 14px;
-                spacing: 12px;
-                Text {
-                    text: root.restore-question;
-                    color: Theme.text;
-                    wrap: word-wrap;
-                }
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-                    Button {
-                        text: SText.cancel;
-                        clicked => {
-                            root.restore-cancel();
-                        }
-                    }
-                    Button {
-                        text: SText.restore-yes;
-                        primary: true;
-                        clicked => {
-                            root.restore-confirm();
-                        }
-                    }
-                }
-            }
+        title: SText.dlg-restore;
+        body: root.restore-question;
+        confirm-text: SText.restore-yes;
+        cancel-text: SText.cancel;
+        danger: true;
+        confirmed => {
+            root.restore-confirm();
+        }
+        cancelled => {
+            root.restore-cancel();
         }
     }
 
-    // Pick running app: program file names only.
-    Overlay {
+    // Pick running app: program file names only. A list, not a question, so it keeps its own
+    // panel on the same scrim.
+    DialogScrim {
         open: root.picker-open;
-        Rectangle {
-            width: min(parent.width - 40px, 420px);
-            height: min(parent.height - 40px, 420px);
-            background: Theme.bg;
-            border-radius: 8px;
+        if root.picker-open: Rectangle {
+            width: min(root.width - 40px, 420px);
+            height: min(root.height - 40px, 420px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: Theme.canvas;
+            border-radius: 10px;
             border-width: 1px;
-            border-color: Theme.line;
+            border-color: Theme.border-strong;
+            accessible-role: groupbox;
+            accessible-label: SText.pick-running;
             VerticalLayout {
-                padding: 14px;
+                padding: 16px;
                 spacing: 8px;
-                Caption {
+                Note {
                     text: SText.pick-note;
                 }
                 if root.picker-loading: Text {
                     text: SText.loading;
-                    color: Theme.text-muted;
+                    color: Theme.text-2;
                 }
                 if !root.picker-loading && root.picker.length == 0: Text {
                     text: SText.pick-none;
-                    color: Theme.text-muted;
+                    color: Theme.text-2;
                 }
-                ListView {
+                Flickable {
                     vertical-stretch: 1;
-                    for p[pi] in root.picker: Rectangle {
-                        height: 30px;
-                        background: pick-touch.has-hover ? Theme.surface : transparent;
+                    content-height: root.picker.length * 32px;
+                    for p[pi] in root.picker: FocusScope {
+                        y: pi * 32px;
+                        height: 32px;
+                        width: parent.width;
+                        focus-on-click: false;
                         accessible-role: button;
                         accessible-label: p;
                         accessible-action-default => {
                             root.pick-app(pi);
                         }
-                        Text {
-                            x: 8px;
-                            width: parent.width - 16px;
-                            text: p;
-                            color: Theme.text;
-                            vertical-alignment: center;
-                            overflow: elide;
+                        key-pressed(e) => {
+                            if (e.text == " " || e.text == Key.Return) {
+                                root.pick-app(pi);
+                                return accept;
+                            }
+                            reject
+                        }
+                        Rectangle {
+                            border-radius: 6px;
+                            background: pick-touch.has-hover ? Theme.surface : transparent;
+                            Text {
+                                x: 8px;
+                                width: parent.width - 16px;
+                                text: p;
+                                color: Theme.text;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                        Rectangle {
+                            visible: parent.has-focus;
+                            border-radius: 6px;
+                            border-width: 2px;
+                            border-color: Theme.focus;
+                            background: transparent;
                         }
                         pick-touch := TouchArea {
+                            mouse-cursor: pointer;
                             clicked => {
                                 root.pick-app(pi);
                             }

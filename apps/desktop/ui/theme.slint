@@ -22,6 +22,8 @@ export global Theme {
     out property <color> bg: self.canvas;
     out property <color> line: self.border;
     out property <color> text-muted: self.text-2;
+    // Backdrop of the settings dialogs (Task 705); a fixed tint of black, not a palette colour.
+    out property <color> scrim: #000000A0;
     // Monospace font for code clips; set from src/theme.rs (a different face per OS).
     in property <string> mono-font: "Consolas";
 }

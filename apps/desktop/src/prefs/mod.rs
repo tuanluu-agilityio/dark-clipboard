@@ -9,9 +9,9 @@
 pub mod about;
 pub mod data;
 pub mod model;
-pub mod sections;
 #[cfg(test)]
 mod model_tests;
+pub mod sections;
 pub mod sys;
 pub mod transfer;
 pub mod welcome;

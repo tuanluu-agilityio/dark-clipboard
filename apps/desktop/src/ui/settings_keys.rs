@@ -61,8 +61,33 @@ pub fn escape_layer(ctx: KeyCtx) -> EscapeLayer {
 
 /// The settings action for a key, or `None` to let the focused element handle it.
 pub fn map_key(k: Key, m: Mods, ctx: KeyCtx) -> Option<SettingsKey> {
-    let _ = (k, m, ctx);
-    None
+    // An open `Select` list owns every key (D-079).
+    if ctx.list_open {
+        return None;
+    }
+    if k == Key::Escape {
+        return Some(SettingsKey::Escape);
+    }
+    // A dialog or the picker is modal: nothing behind it can be saved or switched.
+    if ctx.dialog_open || ctx.picker_open {
+        return None;
+    }
+    let ctrl = m.ctrl && !m.alt && !m.meta && !m.shift;
+    match k {
+        // Ctrl+S may also arrive as its control code (U+0013).
+        Key::Char('s' | 'S' | '\u{13}') if ctrl => Some(SettingsKey::Save),
+        Key::Char(c @ '1'..='5') if ctrl => {
+            let n = u8::try_from(c.to_digit(10)?).ok()?;
+            Some(SettingsKey::Section(n - 1))
+        }
+        Key::Up if ctx.nav_focused && plain(m) => Some(SettingsKey::NavUp),
+        Key::Down if ctx.nav_focused && plain(m) => Some(SettingsKey::NavDown),
+        _ => None,
+    }
+}
+
+fn plain(m: Mods) -> bool {
+    !m.ctrl && !m.shift && !m.alt && !m.meta
 }
 
 /// Slint's key text and modifiers to a settings action.
@@ -98,8 +123,25 @@ impl SelectKey {
 }
 
 pub fn select_key(k: Key, m: Mods, open: bool) -> Option<SelectKey> {
-    let _ = (k, m, open);
-    None
+    if m.ctrl || m.shift || m.meta {
+        return None;
+    }
+    if !open {
+        return match k {
+            Key::Char(' ') if !m.alt => Some(SelectKey::Open),
+            Key::Down if m.alt => Some(SelectKey::Open),
+            _ => None,
+        };
+    }
+    match k {
+        Key::Up => Some(SelectKey::Prev),
+        Key::Down => Some(SelectKey::Next),
+        Key::Home => Some(SelectKey::First),
+        Key::End => Some(SelectKey::Last),
+        Key::Enter | Key::Char(' ') => Some(SelectKey::Choose),
+        Key::Escape => Some(SelectKey::Close),
+        _ => None,
+    }
 }
 
 /// The code for `Select`: 0 when the key is not for it.
