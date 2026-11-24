@@ -689,3 +689,63 @@ fn a_change_pending_before_a_transfer_is_not_read_after_a_queued_private_mode() 
         "nothing on the clipboard after Private is stored"
     );
 }
+
+// ---- Task 415 (Phase 5 review, Review Focus 3) ----
+
+#[test]
+fn export_collection_with_masked_member_excludes_and_counts() {
+    let settings = Settings {
+        privacy: PrivacyPolicy {
+            sensitive_handling: SensitiveHandling::StoreMasked,
+            ..PrivacyPolicy::default()
+        },
+        ..Settings::default()
+    };
+    // The key was first stored unmasked (as under "store"), then joined a collection.
+    let key = secret_text();
+    let h = start(
+        &[("plain member", false), (key.as_str(), false)],
+        Some(settings),
+    );
+    let a = h.app();
+    let col = a.create_collection(&ui(), "Mixed").unwrap();
+    for id in &h.ids {
+        a.add_clip_to_collection(&ui(), *id, col.id).unwrap();
+    }
+    // Re-captured: now masked; the membership stays (D-059).
+    h.fake.copy(text_copy(&key));
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match h.events.recv_timeout(left) {
+            Ok(AppEvent::ClipBumped(id)) | Ok(AppEvent::ClipAdded(id)) => {
+                assert_eq!(id, h.ids[1], "the same clip, bumped");
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => panic!("timed out waiting for the re-capture"),
+        }
+    }
+    let got = a.get_clip(&ui(), h.ids[1], GetOptions::default()).unwrap();
+    assert_eq!(got.clip.sensitivity.level, SensitivityLevel::Masked);
+    let page = a.search_clips(&ui(), query(None)).unwrap();
+    assert!(page.items.iter().any(|i| i.id == h.ids[1] && i.masked));
+
+    let out = h.dir.path().join("mixed.dcexport");
+    let r = a
+        .ui_export(&ui(), ExportSelection::Collection(col.id), &out)
+        .unwrap();
+    assert_eq!((r.exported, r.excluded_sensitive), (1, 1));
+    let f = darkclip_storage::ExportArchive::open(&out, ArchiveLimits::EXPORT).unwrap();
+    let ids: Vec<ClipId> = f.clips().iter().map(|c| c.id).collect();
+    assert_eq!(ids, [h.ids[0]], "the masked member is left out");
+    // Nothing of the key is anywhere in the file.
+    let mut z = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
+    let tail = &key[key.len() - 24..];
+    for i in 0..z.len() {
+        let mut e = z.by_index(i).unwrap();
+        let mut b = Vec::new();
+        e.read_to_end(&mut b).unwrap();
+        assert!(!String::from_utf8_lossy(&b).contains(tail));
+    }
+}
