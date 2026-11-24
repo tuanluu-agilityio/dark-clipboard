@@ -148,14 +148,25 @@ if ($bad) { exit 1 }
 Write-Host '== SQLite connections keep temporary data in memory (D-073, D-077)'
 # Every Connection::open*( in non-test code calls keep_temp_in_memory( within the next 25 lines of the same
 # function, or carries "// temp-store: <reason>" on its line or the line before. Test code (tests.rs, tests/,
-# a top-level #[cfg(test)] mod) is skipped. Bash twin: scripts/check.sh + scripts/temp-store-check.awk.
+# #[cfg(test)] modules: an inline one up to its closing brace, `mod x;` just its line) is skipped. Bash twin: scripts/check.sh + scripts/temp-store-check.awk.
 function Get-TempStoreMisses([string]$path, [string]$label) {
     $lines = @(Get-Content -LiteralPath $path)
-    $skip = $lines.Count
+    $skipl = New-Object bool[] $lines.Count
     for ($i = 0; $i -lt $lines.Count - 1; $i++) {
-        if ($lines[$i] -match '^#\[cfg\(test\)\]\s*$' -and $lines[$i + 1] -match '^(pub(\([a-z]+\))? )?mod\s') { $skip = $i; break }
+        if ($lines[$i] -notmatch '^#\[cfg\(test\)\]\s*$' -or $lines[$i + 1] -notmatch '^(pub(\([a-z]+\))? )?mod\s') { continue }
+        $skipl[$i] = $true; $skipl[$i + 1] = $true
+        if ($lines[$i + 1] -match ';\s*$') { continue }
+        $depth = 0; $seen = $false
+        for ($j = $i + 1; $j -lt $lines.Count; $j++) {
+            $skipl[$j] = $true
+            $opens = ([regex]::Matches($lines[$j], '\{')).Count; $closes = ([regex]::Matches($lines[$j], '\}')).Count
+            $depth += $opens - $closes
+            if ($opens -gt 0) { $seen = $true }
+            if ($seen -and $depth -le 0) { break }
+        }
     }
-    for ($i = 0; $i -lt $skip; $i++) {
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($skipl[$i]) { continue }
         $l = $lines[$i]
         if ($l -match '^\s*//') { continue }
         if ($l -notmatch 'Connection::open\w*\(' -or $l -match 'Connection::open_in_memory') { continue }
@@ -172,6 +183,10 @@ $tsBad = @(Get-TempStoreMisses 'scripts/fixtures/temp-store-bad.rs' 'scripts/fix
 $tsGood = @(Get-TempStoreMisses 'scripts/fixtures/temp-store-good.rs' 'scripts/fixtures/temp-store-good.rs')
 if ($tsBad.Count -ne 1 -or $tsBad[0] -ne 'scripts/fixtures/temp-store-bad.rs:3') { Fail "temp-store self-test: bad fixture not flagged exactly once (got: $($tsBad -join ' '))" }
 if ($tsGood.Count -ne 0) { Fail "temp-store self-test: good fixture flagged ($($tsGood -join ' '))" }
+foreach ($tsName in @('after-inline', 'after-external')) {
+    $tsOut = @(Get-TempStoreMisses "scripts/fixtures/temp-store-bad-$tsName.rs" "scripts/fixtures/temp-store-bad-$tsName.rs")
+    if ($tsOut.Count -ne 1) { Fail "temp-store self-test: bad-$tsName fixture not flagged exactly once (got: $($tsOut -join ' '))" }
+}
 Write-Host "self-test ok: bad fixture flagged ($($tsBad[0])), good fixture passed"
 foreach ($f in $rs) {
     $rel = Rel $f
