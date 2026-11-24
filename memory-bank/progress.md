@@ -107,7 +107,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 702 Popup preview pane | | builder | sonnet | pending | | | | |
 | 703 History layout | | builder | sonnet | pending | | | | |
 | 704 History interaction | | builder | sonnet | pending | | | | |
-| 705 Settings | | builder | sonnet | pending | | | | |
+| 705 Settings (package: scaffolder sonnet PKG705) | task/705-settings | builder | sonnet | in progress | | | | |
 | 706 Secondary surfaces + F1 sheet | | builder | sonnet | pending | | | | |
 | 707 Accessibility pass | | builder | sonnet | pending | | | | |
 | 708 Verification | | platform-verifier | sonnet | pending | | | | |
