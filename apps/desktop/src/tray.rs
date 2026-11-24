@@ -30,7 +30,7 @@ pub enum TrayState {
     Failed,
 }
 
-/// Which glyph the tray icon uses.
+/// Which tray image is shown (the same icon, plus a state badge except for `Normal`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IconId {
     Normal,
@@ -181,40 +181,83 @@ pub fn tooltip_for(u: &TrayUpdate) -> String {
     }
 }
 
-/// Side of the generated icon in pixels (Windows scales it to the tray size).
-pub const ICON_SIZE: usize = 32;
-/// Glyph colour: the dark theme's text colour (see `theme.rs`).
-const GLYPH: [u8; 3] = [0xE7, 0xE9, 0xEC];
+/// Sizes of the pre-rendered tray images (`res/tray/`, made by `res/make_icon.py`).
+pub const TRAY_SIZES: [u32; 4] = [16, 20, 24, 32];
 
-/// Original monochrome artwork, drawn in code: a clipboard outline with a clip on top, and one
-/// inner mark per state (text lines, pause bars, a dot, or a slash). RGBA, `ICON_SIZE` square.
-pub fn icon_rgba(id: IconId) -> Vec<u8> {
-    let mut px = vec![0u8; ICON_SIZE * ICON_SIZE * 4];
-    for y in 0..ICON_SIZE {
-        for x in 0..ICON_SIZE {
-            let board = (6..26).contains(&x) && (6..30).contains(&y);
-            let inner = (8..24).contains(&x) && (8..28).contains(&y);
-            let clip = (11..21).contains(&x) && (3..9).contains(&y);
-            // The glyph is 32 px, so these casts cannot lose anything.
-            let (xi, yi) = (x as i32, y as i32);
-            let mark = match id {
-                IconId::Normal => (10..22).contains(&x) && matches!(y, 14 | 15 | 19 | 20 | 24 | 25),
-                IconId::Paused => {
-                    ((11..14).contains(&x) || (18..21).contains(&x)) && (13..25).contains(&y)
-                }
-                IconId::Private => {
-                    let (dx, dy) = (xi - 16, yi - 19);
-                    dx * dx + dy * dy <= 36
-                }
-                IconId::Unavailable => (xi - yi).abs() <= 1 && (3..30).contains(&x),
-            };
-            if (board && !inner) || clip || mark {
-                let i = (y * ICON_SIZE + x) * 4;
-                px[i..i + 4].copy_from_slice(&[GLYPH[0], GLYPH[1], GLYPH[2], 0xFF]);
-            }
+/// The pre-rendered size closest to the system tray size `px` (`SM_CXSMICON`): a tie goes to
+/// the larger size; below 16 and above 32 clamp.
+pub fn nearest_tray_size(px: u32) -> u32 {
+    let mut best = TRAY_SIZES[0];
+    for size in TRAY_SIZES {
+        // `<=`: on a tie the later (larger) size wins.
+        if size.abs_diff(px) <= best.abs_diff(px) {
+            best = size;
         }
     }
-    px
+    best
+}
+
+/// One tray image: straight RGBA, `size` x `size` pixels.
+#[derive(Debug, Clone, Copy)]
+pub struct TrayImage {
+    pub size: u32,
+    pub rgba: &'static [u8],
+}
+
+macro_rules! tray_rgba {
+    ($state:literal, $size:literal) => {
+        include_bytes!(concat!("../res/tray/", $state, "-", $size, ".rgba")).as_slice()
+    };
+}
+
+/// Raw RGBA made by the generator, embedded as is: no decoder and no extra crate needed, and a
+/// bad image cannot appear at run time (the length is checked in `tray_image`).
+const NORMAL: [&[u8]; 4] = [
+    tray_rgba!("normal", 16),
+    tray_rgba!("normal", 20),
+    tray_rgba!("normal", 24),
+    tray_rgba!("normal", 32),
+];
+const PAUSED: [&[u8]; 4] = [
+    tray_rgba!("paused", 16),
+    tray_rgba!("paused", 20),
+    tray_rgba!("paused", 24),
+    tray_rgba!("paused", 32),
+];
+const PRIVATE: [&[u8]; 4] = [
+    tray_rgba!("private", 16),
+    tray_rgba!("private", 20),
+    tray_rgba!("private", 24),
+    tray_rgba!("private", 32),
+];
+const UNAVAILABLE: [&[u8]; 4] = [
+    tray_rgba!("unavailable", 16),
+    tray_rgba!("unavailable", 20),
+    tray_rgba!("unavailable", 24),
+    tray_rgba!("unavailable", 32),
+];
+
+fn table(id: IconId) -> &'static [&'static [u8]; 4] {
+    match id {
+        IconId::Normal => &NORMAL,
+        IconId::Paused => &PAUSED,
+        IconId::Private => &PRIVATE,
+        IconId::Unavailable => &UNAVAILABLE,
+    }
+}
+
+fn checked(id: IconId, slot: usize) -> Option<TrayImage> {
+    let size = *TRAY_SIZES.get(slot)?;
+    let rgba = *table(id).get(slot)?;
+    (rgba.len() == (size as usize) * (size as usize) * 4).then_some(TrayImage { size, rgba })
+}
+
+/// The image for a state at the pre-rendered size nearest to `px`. A missing or wrong-sized
+/// image falls back to the plain icon at the same size; `None` only if that is bad too.
+pub fn tray_image(id: IconId, px: u32) -> Option<TrayImage> {
+    let size = nearest_tray_size(px);
+    let slot = TRAY_SIZES.iter().position(|s| *s == size)?;
+    checked(id, slot).or_else(|| checked(IconId::Normal, slot))
 }
 
 #[cfg(windows)]
@@ -223,9 +266,7 @@ pub use win::Tray;
 /// The tray icon itself (Windows). Created and used only on the Slint main thread.
 #[cfg(windows)]
 mod win {
-    use super::{
-        icon_id, icon_rgba, menu_model, tooltip_for, IconId, MenuAction, TrayUpdate, ICON_SIZE,
-    };
+    use super::{icon_id, menu_model, tooltip_for, tray_image, IconId, MenuAction, TrayUpdate};
     use darkclip_core::i18n::{t, Msg};
     use std::sync::Arc;
     use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, Submenu};
@@ -256,8 +297,8 @@ mod win {
     }
 
     fn icon_for(id: IconId) -> Option<Icon> {
-        let size = u32::try_from(ICON_SIZE).ok()?;
-        Icon::from_rgba(icon_rgba(id), size, size).ok()
+        let img = tray_image(id, crate::winsys::small_icon_px())?;
+        Icon::from_rgba(img.rgba.to_vec(), img.size, img.size).ok()
     }
 
     impl Tray {
@@ -454,28 +495,73 @@ mod tests {
         assert_eq!(icon_id(TrayState::Failed), IconId::Unavailable);
     }
 
+    const ALL_IDS: [IconId; 4] = [
+        IconId::Normal,
+        IconId::Paused,
+        IconId::Private,
+        IconId::Unavailable,
+    ];
+
     #[test]
-    fn icons_are_distinct_monochrome_and_not_empty() {
-        let ids = [
-            IconId::Normal,
-            IconId::Paused,
-            IconId::Private,
-            IconId::Unavailable,
-        ];
-        let icons: Vec<Vec<u8>> = ids.iter().map(|i| icon_rgba(*i)).collect();
-        for (i, a) in icons.iter().enumerate() {
-            assert_eq!(a.len(), ICON_SIZE * ICON_SIZE * 4);
-            let visible: Vec<&[u8]> = a.chunks(4).filter(|p| p[3] != 0).collect();
-            assert!(visible.len() > 50, "icon {i} is nearly empty");
-            assert!(
-                visible.len() < ICON_SIZE * ICON_SIZE / 2,
-                "icon {i} is a blob"
-            );
-            assert!(visible.iter().all(|p| p[..3] == GLYPH && p[3] == 0xFF));
-            for b in icons.iter().skip(i + 1) {
-                assert_ne!(a, b, "two states share one icon");
+    fn nearest_tray_size_picks_the_closest_and_ties_go_up() {
+        for exact in TRAY_SIZES {
+            assert_eq!(nearest_tray_size(exact), exact);
+        }
+        assert_eq!(nearest_tray_size(17), 16);
+        assert_eq!(nearest_tray_size(18), 20); // tie 16/20 goes up
+        assert_eq!(nearest_tray_size(19), 20);
+        assert_eq!(nearest_tray_size(22), 24); // tie 20/24 goes up
+        assert_eq!(nearest_tray_size(26), 24);
+        assert_eq!(nearest_tray_size(28), 32); // tie 24/32 goes up
+        assert_eq!(nearest_tray_size(30), 32);
+    }
+
+    #[test]
+    fn nearest_tray_size_clamps() {
+        assert_eq!(nearest_tray_size(0), 16);
+        assert_eq!(nearest_tray_size(8), 16);
+        assert_eq!(nearest_tray_size(15), 16);
+        assert_eq!(nearest_tray_size(33), 32);
+        assert_eq!(nearest_tray_size(48), 32);
+        assert_eq!(nearest_tray_size(u32::MAX), 32);
+    }
+
+    #[test]
+    fn every_state_has_an_image_of_every_size() {
+        for id in ALL_IDS {
+            for size in TRAY_SIZES {
+                let img = tray_image(id, size).expect("embedded image");
+                assert_eq!(img.size, size);
+                assert_eq!(img.rgba.len(), (size * size * 4) as usize, "{id:?} {size}");
+                let visible = img.rgba.chunks(4).filter(|p| p[3] != 0).count();
+                assert!(
+                    visible > (size * size / 2) as usize,
+                    "{id:?} {size} is empty"
+                );
             }
         }
+    }
+
+    #[test]
+    fn states_look_different_and_normal_has_no_badge() {
+        for size in TRAY_SIZES {
+            for (i, a) in ALL_IDS.iter().enumerate() {
+                for b in ALL_IDS.iter().skip(i + 1) {
+                    let (x, y) = (tray_image(*a, size), tray_image(*b, size));
+                    assert_ne!(
+                        x.map(|v| v.rgba),
+                        y.map(|v| v.rgba),
+                        "{a:?} = {b:?} at {size}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_unknown_size_falls_back_to_the_nearest_image() {
+        let img = tray_image(IconId::Private, 21).expect("image");
+        assert_eq!(img.size, 20);
     }
 
     #[test]

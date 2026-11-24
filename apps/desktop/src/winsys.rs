@@ -31,7 +31,7 @@ use windows::Win32::UI::HiDpi::{
     MDT_EFFECTIVE_DPI,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, GetForegroundWindow, GetWindowThreadProcessId,
+    GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowThreadProcessId, SM_CXSMICON,
 };
 
 /// Value `GetTimeZoneInformation` returns while daylight saving time is in effect.
@@ -102,6 +102,14 @@ pub fn local_utc_offset_minutes() -> i32 {
 pub fn set_per_monitor_dpi_awareness() {
     // SAFETY: takes a constant context value, no pointers; fails harmlessly when already set.
     let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+}
+
+/// The small-icon size in pixels (`SM_CXSMICON`: 16 at 100 %, 24 at 150 %, 32 at 200 %), used to
+/// pick the tray image. Falls back to 16 when Windows reports nothing usable (Task 710).
+pub fn small_icon_px() -> u32 {
+    // SAFETY: GetSystemMetrics has no preconditions and only reads a system setting.
+    let px = unsafe { GetSystemMetrics(SM_CXSMICON) };
+    u32::try_from(px).ok().filter(|p| *p > 0).unwrap_or(16)
 }
 
 /// The cursor position and the monitor under it, in physical pixels.

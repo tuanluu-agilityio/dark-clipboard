@@ -356,6 +356,10 @@ All rows **untested** until the owner runs them (agents never launch the UI, cha
 | UI kit (Task 700): tooltip on keyboard focus (from the first redesign task that makes a kit IconButton focusable; until then n/a) | Tab to an icon button: its tooltip shows after 0.5 s and disappears when the focus moves on | **untested** |
 | UI kit (Task 700): the app (popup, History, Settings, Welcome) after the palette change | Every window renders in the new colours (darker canvas, blue-violet accent), no text is hard to read, no layout moved | **untested** |
 | UI kit (Task 700, P4): start the app on a scratch folder, open the popup, the History window and Settings once each, close them, then read private bytes of `dark-clipboard.exe` in Task Manager (Details, Memory (private working set) or `Get-Process`) | At most 4 MiB above the same steps on the 0.1.2 build (baseline numbers for the popup alone: `docs/testing/ui-redesign-baseline.md`) | **untested** |
+| App icon (Task 710): the exe in Explorer at small, medium and large icon views; after a rebuild the Windows icon cache may need an Explorer restart | The new clipboard icon on the dark tile with the blue-violet board, clear at every size | **untested** |
+| App icon (Task 710): the running app on the taskbar, in Alt+Tab, and in the title bars of History, Settings and Welcome | The same icon in all four places, not the default Windows icon | **untested** |
+| App icon (Task 710): tray icon in each state (capturing, paused, off, private, capture unavailable) on a light and a dark taskbar | Capturing: plain icon; paused and off: amber badge with pause bars; private: grey badge with a struck eye; unavailable: red badge with "!"; the clipboard, clip and lines stay distinct | **untested** |
+| App icon (Task 710): the tray icon at 100 % and at 150 % display scaling (sign out and in after changing the scale) | Crisp at both (16 px image at 100 %, 24 px at 150 %), no blur or wrong size | **untested** |
 
 ## macOS
 
