@@ -3,8 +3,9 @@
 //! **Backup** (`.dcbackup`, a zip): `history.db` + the blob files it references +
 //! `manifest.json` `{ format, schema_version, app_version, created_at, clip_count, files }`.
 //! The database is a `VACUUM INTO` snapshot (a consistent online copy that carries no free
-//! pages), from which masked clips and clips already expired are then deleted and the
-//! snapshot vacuumed again. Clips flagged no-export (NoCloud) are kept: a backup is the
+//! pages), from which masked clips and clips already expired are then deleted; the
+//! snapshot's search index is then always merged and the snapshot vacuumed again, so no
+//! word of a removed clip, note or tag whose merge was still pending is carried (D-072). Clips flagged no-export (NoCloud) are kept: a backup is the
 //! user's own full copy. The zip is written to `<dest>.dark-clipboard-partial`, flushed,
 //! checked against the limits its own restore enforces (`TooLargeToWrite` otherwise), then
 //! renamed. A crash can leave the partial file behind; it is safe to delete.
@@ -33,7 +34,7 @@
 //!
 //! Only then: a safety copy of the live database is written as
 //! `history.db.pre-restore-<ms>` (kept until the next successful open, which deletes it;
-//! masked clips are purged from it); the staged blobs are copied into the live blob folder
+//! masked clips are purged from it and its search index is merged, like a backup's); the staged blobs are copied into the live blob folder
 //! (content-addressed: existing files are never changed); and the staged database is copied
 //! over the live one with SQLite's online backup API, on the store's own connection (the
 //! single writer, D-028). The destination write transaction is held across steps and rolled
@@ -105,6 +106,10 @@ fn hex_len(n: usize) -> u64 {
 
 /// A consistent copy of the database at `target` without masked or expired clips and
 /// without free pages (so nothing deleted lingers in it), as a single rollback-journal file.
+/// The FTS index is always merged and the copy always vacuumed: the live index can still
+/// hold the words of automatic evictions and replaced notes or tags whose merge is pending
+/// (D-062), and those must not leave in a backup or a pre-restore copy (D-072). Both the
+/// backup and the pre-restore safety copy are made here, so both are covered.
 fn private_snapshot(conn: &Connection, target: &Path, now: Timestamp) -> Result<(), StorageError> {
     db::backup(conn, target)?;
     let result = (|| {
@@ -125,9 +130,12 @@ fn private_snapshot(conn: &Connection, target: &Path, now: Timestamp) -> Result<
                 "DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM clip_tags)",
                 [],
             )?;
-            crate::maintenance::fts_optimize(&c);
-            c.execute_batch("VACUUM")?;
         }
+        // Unconditional (D-072): pending deletions in the contentless index carry tokens
+        // even when nothing was deleted from the snapshot itself. Unlike the live store's
+        // best-effort merge, a failure here fails the snapshot (it is then removed).
+        c.execute("INSERT INTO clips_fts(clips_fts) VALUES('optimize')", [])?;
+        c.execute_batch("VACUUM")?;
         Ok(())
     })();
     if result.is_err() {
