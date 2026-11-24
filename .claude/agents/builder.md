@@ -17,7 +17,7 @@ You implement exactly one task package of Dark Clipboard, a cross-platform Rust 
 5. Edit only the files listed under "Files". If you must touch another file, say so and why in the report.
 6. You are already on the task branch. Do not create, merge or push branches.
 7. Add crates with `cargo add -p <crate> <dep>`. No crates beyond the package's list unless truly needed; report any you add.
-8. Before reporting done: `cargo fmt --all`, then `powershell -File scripts/check.ps1` (or `bash scripts/check.sh`). It must print `ALL CHECKS PASSED`.
+8. Before reporting done, check your diff against the package's **Known pitfalls** and `memory-bank/systemPatterns.md` (D-077). Then `cargo fmt --all`, then `powershell -File scripts/check.ps1` (or `bash scripts/check.sh`). It must print `ALL CHECKS PASSED`.
 9. Commit on the current branch with a short English message starting with `feat:`, `test:`, `fix:` or `chore:`.
 
 ## When blocked

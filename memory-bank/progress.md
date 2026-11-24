@@ -94,6 +94,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | Phase 5 re-review | — | specialist | opus | **APPROVED** (D-074); gate ALL CHECKS PASSED (1006 passed, 0 failed, 32 ignored). **Phase 5 complete** | 19,518 | | | 19,518 |
 | 416 temp_store=MEMORY on every connection; migration copy merged (F-29, F-30) | task/416-temp-store-memory | specialist | opus | done | 87,219 | 46,556 (security-reviewer opus: APPROVED, 2 nits) | | 133,775 |
 | **Release 0.1.2** (B1 + F-29/F-30; owner approved, D-075) | tag `v0.1.2` | orchestrator | — | **released 2026-11-24** (D-076) | | | | |
+| 417 Gate rule: SQLite connections keep temp data in memory (D-077 item 7) | task/417-sqlite-connection-gate | builder | sonnet | in progress | | | | |
 
 ## Totals by model
 
