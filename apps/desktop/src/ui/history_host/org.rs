@@ -43,8 +43,8 @@ pub(super) struct OrgState {
     pub cdel: CollectionDelete,
     pub bulk: BulkFlow,
     pub dlg: Option<Dlg>,
-    /// The note of the pane's clip, once loaded.
-    note: Option<(ClipId, Option<String>)>,
+    /// The note and the collections of the pane's clip, once loaded.
+    note: Option<(ClipId, Option<String>, Vec<String>)>,
     /// A note load is running for this clip.
     note_pending: Option<ClipId>,
 }
@@ -56,6 +56,7 @@ pub(super) fn set_strings(w: &HistoryWindow, lang: Lang) {
     s.set_no_note(t(lang, Msg::OrgNoNote).into());
     s.set_edit_note(t(lang, Msg::OrgEditNote).into());
     s.set_tags_label(t(lang, Msg::OrgGroupTags).into());
+    s.set_collections_label(t(lang, Msg::OrgGroupCollections).into());
     s.set_no_tags(t(lang, Msg::OrgNoTags).into());
     s.set_edit_tags(t(lang, Msg::OrgTagsEdit).into());
     s.set_remove_tag(t(lang, Msg::OrgRemoveTag).into());
@@ -86,7 +87,7 @@ impl Host {
     }
 
     /// Another modal (the "Copy as..." panel, the editor or this dialog) is open.
-    fn modal_open(&self) -> bool {
+    pub(super) fn modal_open(&self) -> bool {
         self.tf.is_some() || self.win.get_edit_open() || self.org.dlg.is_some()
     }
 
@@ -101,10 +102,7 @@ impl Host {
             )
         };
         if let Some(n) = self.flow.count() {
-            return delete(match n {
-                1 => t(lang, Msg::UiConfirmDeleteOne).to_string(),
-                n => fill(t(lang, Msg::UiConfirmDeleteMany), n as u64),
-            });
+            return delete(common::delete_question(n, lang));
         }
         if let Some(q) = self.org.cdel.text(lang) {
             return delete(q);
@@ -147,11 +145,15 @@ impl Host {
                 w.set_org_favorite(one.favorite);
                 let tags: Vec<SharedString> = one.tags.iter().map(|s| s.as_str().into()).collect();
                 w.set_org_tags(ModelRc::new(VecModel::from(tags)));
-                let note = match &self.org.note {
-                    Some((id, n)) if *id == one.id && !one.masked => n.clone().unwrap_or_default(),
-                    _ => String::new(),
+                let (note, cols) = match &self.org.note {
+                    Some((id, n, c)) if *id == one.id && !one.masked => {
+                        (n.clone().unwrap_or_default(), c.clone())
+                    }
+                    _ => (String::new(), Vec::new()),
                 };
                 w.set_org_note(note.into());
+                let cols: Vec<SharedString> = cols.iter().map(|s| s.as_str().into()).collect();
+                w.set_org_collections(ModelRc::new(VecModel::from(cols)));
             }
             _ => {
                 w.set_org_strip(false);
@@ -159,6 +161,7 @@ impl Host {
                 w.set_org_favorite(false);
                 w.set_org_tags(ModelRc::new(VecModel::<SharedString>::default()));
                 w.set_org_note(SharedString::new());
+                w.set_org_collections(ModelRc::new(VecModel::<SharedString>::default()));
             }
         }
         let (text, label, hint) = self.confirm_view();
@@ -177,7 +180,11 @@ impl Host {
             self.org.note = None;
             return;
         }
-        let loaded = self.org.note.as_ref().is_some_and(|(id, _)| *id == item.id);
+        let loaded = self
+            .org
+            .note
+            .as_ref()
+            .is_some_and(|(id, _, _)| *id == item.id);
         if loaded || self.org.note_pending == Some(item.id) {
             return;
         }
@@ -190,14 +197,22 @@ impl Host {
         self.poster.post_quiet(move |app| {
             let r = app
                 .get_clip(&Caller::Ui, id, GetOptions::default())
-                .map(|v| v.clip.note);
+                .map(|v| {
+                    let cols = v.clip.collections.iter().map(|c| c.name.clone()).collect();
+                    (v.clip.note, cols)
+                });
             let _ = ui.upgrade_in_event_loop(move |_| {
                 with_host(|h| h.on_note_loaded(id, open, r));
             });
         });
     }
 
-    fn on_note_loaded(&mut self, id: ClipId, open: bool, r: Result<Option<String>, ApiError>) {
+    fn on_note_loaded(
+        &mut self,
+        id: ClipId,
+        open: bool,
+        r: Result<(Option<String>, Vec<String>), ApiError>,
+    ) {
         if self.org.note_pending == Some(id) {
             self.org.note_pending = None;
         }
@@ -206,8 +221,8 @@ impl Host {
             return;
         }
         match r {
-            Ok(note) => {
-                self.org.note = Some((id, note.clone()));
+            Ok((note, collections)) => {
+                self.org.note = Some((id, note.clone(), collections));
                 if open && !self.modal_open() {
                     let mut d = Dlg::new(DialogKind::Note(id));
                     let editor = NoteEditor::new(note.as_deref());
@@ -547,7 +562,11 @@ impl Host {
             return;
         };
         self.close_dialog();
-        self.org.note = Some((id, value.clone()));
+        let cols = match self.org.note.take() {
+            Some((nid, _, c)) if nid == id => c,
+            _ => Vec::new(),
+        };
+        self.org.note = Some((id, value.clone(), cols));
         self.sync_org();
         let ui = self.win.as_weak();
         self.poster.post(move |app| {
@@ -659,6 +678,36 @@ impl Host {
         if let Some(list) = TagEditor::new(item.tags).remove(&name) {
             self.apply_tags(item.id, list);
         }
+    }
+
+    /// The x on a collection chip of the panel: removes the one clip from that collection (the
+    /// same plan as "Remove from collection...", without the picker).
+    pub(super) fn strip_remove_collection(&mut self, i: usize) {
+        let Some(item) = self.subject().filter(|i| !i.masked) else {
+            return;
+        };
+        let name = match &self.org.note {
+            Some((id, _, cols)) if *id == item.id => cols.get(i).cloned(),
+            _ => None,
+        };
+        let Some(name) = name else {
+            return;
+        };
+        let Some(id) = self
+            .org
+            .nav
+            .user_collections()
+            .into_iter()
+            .find(|c| c.name == name)
+            .map(|c| c.id)
+        else {
+            return;
+        };
+        let plan = BulkPlan::new(
+            BulkOp::RemoveFromCollection { id, name },
+            &self.target_infos(),
+        );
+        self.start_plan(plan);
     }
 
     // ---- actions on the selection ----
@@ -899,7 +948,7 @@ impl Host {
             return self.nothing_to_do();
         }
         // The strip may have loaded it already.
-        if let Some((id, note)) = self.org.note.clone().filter(|(id, _)| *id == item.id) {
+        if let Some((id, note, _)) = self.org.note.clone().filter(|(id, _, _)| *id == item.id) {
             let mut d = Dlg::new(DialogKind::Note(id));
             let editor = NoteEditor::new(note.as_deref());
             let text = editor.text().to_string();
@@ -986,6 +1035,9 @@ pub(super) fn connect(w: &HistoryWindow) {
     });
     w.on_org_remove_tag(|i| {
         with_host(|h| h.strip_remove_tag(usize::try_from(i).unwrap_or(usize::MAX)));
+    });
+    w.on_org_remove_collection(|i| {
+        with_host(|h| h.strip_remove_collection(usize::try_from(i).unwrap_or(usize::MAX)));
     });
     w.on_dlg_edited(|s| {
         with_host(|h| h.dialog_edited(&s));
