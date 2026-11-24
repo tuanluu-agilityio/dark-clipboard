@@ -1,0 +1,122 @@
+// Tooltip (Task 700). Shown 500 ms after the pointer rests on the host or the host gets the
+// keyboard focus, hidden as soon as both stop; only one tooltip exists at a time (`TooltipHub`).
+//
+// Not a `PopupWindow`: while a popup is open Slint sends every key to it, so a tooltip popup
+// would swallow what the user types in the search box (checked in the Task 700 menu
+// investigation, D-079). Instead each host has a `Tooltip` (the 500 ms timer; it runs only while
+// the host is hovered or focused, D-055) that fills the hub, and each window has one
+// `TooltipLayer` as its last child, which draws the bubble above everything else, inside the
+// window (never an OS window), moved to stay inside the window.
+// Rule mirrored by `tests/kit.rs`. Texts come from i18n (`Strings`), never from here.
+
+import { Theme } from "../theme.slint";
+import { KeyCap } from "key_cap.slint";
+
+export enum TipAlign {
+    // The bubble starts at the host's left edge.
+    start,
+    center,
+    // The bubble ends at the host's right edge (hosts near the right window edge).
+    end,
+}
+
+export global TooltipHub {
+    in-out property <bool> shown;
+    in-out property <string> text;
+    in-out property <string> shortcut;
+    in-out property <TipAlign> align;
+    // The host's rectangle in window coordinates.
+    in-out property <length> host-x;
+    in-out property <length> host-y;
+    in-out property <length> host-width;
+    in-out property <length> host-height;
+    // Counts the tooltips shown so far; the owner of the latest one is the only one that hides it.
+    in-out property <int> serial;
+}
+
+// Covers the host (the host sets its size) and owns the 500 ms timer.
+export component Tooltip inherits Rectangle {
+    in property <string> text;
+    // Key cap text such as "Ctrl+P"; empty for none.
+    in property <string> shortcut;
+    // True while the host is hovered or has the keyboard focus (set by the host).
+    in property <bool> active;
+    in property <TipAlign> align: TipAlign.center;
+
+    property <bool> mine;
+    property <int> my-serial;
+
+    background: transparent;
+    accessible-role: none;
+
+    timer := Timer {
+        interval: 500ms;
+        running: root.active && root.text != "" && !root.mine;
+        triggered => {
+            TooltipHub.serial += 1;
+            root.my-serial = TooltipHub.serial;
+            root.mine = true;
+            TooltipHub.text = root.text;
+            TooltipHub.shortcut = root.shortcut;
+            TooltipHub.align = root.align;
+            TooltipHub.host-x = root.absolute-position.x;
+            TooltipHub.host-y = root.absolute-position.y;
+            TooltipHub.host-width = root.width;
+            TooltipHub.host-height = root.height;
+            TooltipHub.shown = true;
+        }
+    }
+
+    changed active => {
+        if (!root.active && root.mine) {
+            root.mine = false;
+            if (TooltipHub.serial == root.my-serial) {
+                TooltipHub.shown = false;
+            }
+        }
+    }
+}
+
+// The bubble. Place one as the LAST child of every window root.
+export component TooltipLayer inherits Rectangle {
+    property <length> bubble-width: row.preferred-width;
+    // Below the host; above it when there is no room below.
+    property <bool> above: TooltipHub.host-y + TooltipHub.host-height + 4px + 24px > root.height;
+    property <length> wanted-x: TooltipHub.align == TipAlign.start ? TooltipHub.host-x
+        : (TooltipHub.align == TipAlign.end ? TooltipHub.host-x + TooltipHub.host-width - root.bubble-width
+        : TooltipHub.host-x + (TooltipHub.host-width - root.bubble-width) / 2);
+
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    accessible-role: none;
+
+    Rectangle {
+        visible: TooltipHub.shown;
+        x: max(4px, min(root.wanted-x, root.width - root.bubble-width - 4px));
+        y: root.above ? TooltipHub.host-y - 4px - 24px : TooltipHub.host-y + TooltipHub.host-height + 4px;
+        width: root.bubble-width;
+        height: 24px;
+        background: Theme.raised;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        accessible-role: none;
+
+        row := HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            spacing: 6px;
+            Text {
+                text: TooltipHub.text;
+                color: Theme.text;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+            if TooltipHub.shortcut != "": KeyCap {
+                text: TooltipHub.shortcut;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+    }
+}

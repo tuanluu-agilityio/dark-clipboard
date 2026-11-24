@@ -4,6 +4,10 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ## [Unreleased]
 
+### Added
+
+- Task 700: new design tokens (darker canvas, blue-violet accent, raised and selected surfaces, focus colour) and the Lucide icon set with a small shared UI kit (icon, icon button, button, key cap, tooltip, switch, menu). The popup's settings and close icons are Lucide icons with tooltips. No layout changed yet; the redesign of each window follows.
+
 ## [0.1.2] - 2026-11-24
 
 Privacy bug-fix release for Windows x64 (alpha, unsigned). The Known issues of 0.1.0 still apply. Release notes for the 0.1 line: https://github.com/tuanluu-agilityio/dark-clipboard/blob/v0.1.2/docs/user/release-notes-0.1.0.md

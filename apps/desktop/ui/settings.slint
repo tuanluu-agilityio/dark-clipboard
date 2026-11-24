@@ -8,7 +8,7 @@
 
 import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Palette } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { Icon, IconKind } from "icons.slint";
+import { Icon, IconName } from "kit/icon.slint";
 
 export struct AppRow {
     name: string,
@@ -518,11 +518,9 @@ export component SettingsWindow inherits Window {
                                             alignment: start;
                                             padding-top: 2px;
                                             Icon {
-                                                kind: IconKind.lock;
+                                                name: IconName.lock;
                                                 tint: Theme.success;
-                                                width: 14px;
-                                                height: 14px;
-                                                accessible-role: none;
+                                                size: 14px;
                                             }
                                         }
                                         Text {

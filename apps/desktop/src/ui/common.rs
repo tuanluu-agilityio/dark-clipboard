@@ -279,6 +279,11 @@ where
     s.set_delete(t(lang, Msg::UiDelete).into());
     s.set_undo(t(lang, Msg::UiUndo).into());
     s.set_close(t(lang, Msg::UiClose).into());
+    s.set_tip_close(t(lang, Msg::UiTipClose).into());
+    s.set_tip_settings(t(lang, Msg::UiTipSettings).into());
+    s.set_tip_favorite(t(lang, Msg::UiTipFavorite).into());
+    s.set_key_esc(t(lang, Msg::UiKeyEsc).into());
+    s.set_key_ctrl_d(t(lang, Msg::UiKeyCtrlD).into());
     s.set_detail_label(t(lang, Msg::UiDetailLabel).into());
     s.set_load_full_text(t(lang, Msg::UiLoadFullText).into());
     s.set_load_larger_image(t(lang, Msg::UiLoadLargerImage).into());

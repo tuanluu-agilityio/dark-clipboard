@@ -25,7 +25,7 @@ if ($LASTEXITCODE -ne 0) { throw 'cargo fetch failed' }
 if ($LASTEXITCODE -ne 0) { throw 'cargo about generate failed' }
 
 $text = [System.IO.File]::ReadAllText($Out)
-foreach ($needle in @('webpki-roots', 'CDLA-Permissive-2.0', 'GPL-3.0-only')) {
+foreach ($needle in @('webpki-roots', 'CDLA-Permissive-2.0', 'GPL-3.0-only', 'Lucide icons')) {
     if ($text -notmatch [regex]::Escape($needle)) { throw "notices file is missing expected entry: $needle" }
 }
 Write-Host "wrote $Out ($([int]((Get-Item -LiteralPath $Out).Length / 1024)) KB)"

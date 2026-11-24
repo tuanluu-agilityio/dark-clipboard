@@ -1,0 +1,88 @@
+// A 28 x 28 icon button (Task 700, `02` section 6): 16 px Lucide icon, 2 px `focus` ring
+// (offset 1 px) when focused, hover / pressed / danger / active tints, tooltip after 500 ms of
+// hover or keyboard focus. `label` is the accessible name (from i18n); the icon is never read.
+
+import { Theme } from "../theme.slint";
+import { Icon, IconName } from "icon.slint";
+import { Tooltip, TipAlign } from "tooltip.slint";
+
+export component IconButton inherits FocusScope {
+    in property <IconName> name;
+    // Accessible name and optional description (i18n strings).
+    in property <string> label;
+    in property <string> description;
+    // Tooltip text; empty means the accessible label. `shortcut` is the key cap, e.g. "Esc".
+    in property <string> tooltip;
+    in property <string> shortcut;
+    in property <TipAlign> tip-align: TipAlign.center;
+    // Destructive actions turn `danger` on hover; `active` shows the accent (toggled on).
+    in property <bool> danger;
+    in property <bool> active;
+    // False keeps the button out of the Tab order (hosts whose key map does not know it yet).
+    in property <bool> focusable: true;
+    callback clicked();
+
+    width: 28px;
+    height: 28px;
+    focus-on-click: false;
+    focus-on-tab-navigation: root.focusable;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-description: root.description;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    key-pressed(e) => {
+        if (e.text == " " || e.text == Key.Return) {
+            root.clicked();
+            return accept;
+        }
+        reject
+    }
+
+    Rectangle {
+        border-radius: 6px;
+        background: touch.pressed ? Theme.raised : (touch.has-hover ? Theme.surface : transparent);
+
+        Icon {
+            name: root.name;
+            size: 16px;
+            tint: root.active ? Theme.accent
+                : (touch.has-hover || root.has-focus ? (root.danger ? Theme.danger : Theme.text) : Theme.text-2);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+    }
+
+    // Focus ring: 2 px, one pixel outside the button.
+    Rectangle {
+        visible: root.has-focus;
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: 8px;
+        border-width: 2px;
+        border-color: Theme.focus;
+        background: transparent;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    Tooltip {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        text: root.tooltip != "" ? root.tooltip : root.label;
+        shortcut: root.shortcut;
+        align: root.tip-align;
+        active: touch.has-hover || (root.focusable && root.has-focus);
+    }
+}
