@@ -5,7 +5,8 @@
 //! While the delete confirmation is open the window is modal: Enter confirms, Esc cancels and
 //! every other key is swallowed, so nothing else can happen behind the dialog.
 
-use crate::popup::keys::{CopyKind, Key, Mods, Move};
+use crate::popup::keys::{key_from_text, CopyKind, Key, Mods, Move};
+use slint::platform::Key as SlintKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct HistoryCtx {
@@ -62,16 +63,107 @@ pub enum HistoryAction {
     Cancel,
     /// A key the modal dialog takes without acting on it.
     Swallow,
+    /// Ctrl+B: the full sidebar or the rail (at rail widths, the sidebar as an overlay).
+    ToggleSidebar,
+    /// Ctrl+F or Ctrl+K: the search box.
+    FocusSearch,
+    /// Ctrl+,: Settings.
+    OpenSettings,
+    /// F6 and Shift+F6: the next and the previous visible region.
+    NextRegion,
+    PrevRegion,
+    /// Right arrow or Enter on a drawer-width window: the detail drawer opens.
+    OpenDrawer,
+    /// Left arrow with the drawer open.
+    CloseDrawer,
+}
+
+/// What else the window shows that changes what a key means (Task 704). `map_key` assumes none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Layers {
+    /// The window is in the narrow layout (the detail is a drawer).
+    pub narrow: bool,
+    pub drawer_open: bool,
+    /// The full sidebar is open as an overlay over the list.
+    pub overlay_open: bool,
+    /// The row menu is open (it owns the keys; this is only for the Esc order).
+    pub menu_open: bool,
+}
+
+/// What Esc closes: one layer per press (`04` section 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EscLayer {
+    Menu,
+    Overlay,
+    Drawer,
+    Marks,
+    Window,
+}
+
+/// The layer an Esc press closes: the menu, the sidebar overlay, the drawer, the marks, and last
+/// the window.
+pub fn esc_layer(l: Layers, has_marks: bool) -> EscLayer {
+    if l.menu_open {
+        EscLayer::Menu
+    } else if l.overlay_open {
+        EscLayer::Overlay
+    } else if l.drawer_open {
+        EscLayer::Drawer
+    } else if has_marks {
+        EscLayer::Marks
+    } else {
+        EscLayer::Window
+    }
+}
+
+/// F6 as `history_key` returns it (the popup's `Key` has no F6).
+pub fn f6() -> Key {
+    Key::Char(char::from(SlintKey::F6))
+}
+
+/// Slint's key text as a `Key`, plus the chords the popup's map does not know: F6, and Ctrl+B
+/// (which arrives as its control code, U+0002). Both come back as `Key::Char`.
+pub fn history_key(text: &str) -> Key {
+    let mut it = text.chars();
+    if let (Some(c), None) = (it.next(), it.next()) {
+        if c == char::from(SlintKey::F6) || c == '\u{2}' {
+            return Key::Char(c);
+        }
+    }
+    key_from_text(text)
 }
 
 /// The history action for a key, or `None` to let the focused element handle it.
 pub fn map_key(k: Key, m: Mods, ctx: HistoryCtx) -> Option<HistoryAction> {
+    map_key_in(k, m, ctx, Layers::default())
+}
+
+/// `map_key` with the layers the window shows (the narrow layout's drawer, Task 704).
+pub fn map_key_in(k: Key, m: Mods, ctx: HistoryCtx, layers: Layers) -> Option<HistoryAction> {
     if ctx.confirming {
         return Some(match k {
             Key::Enter if !m.ctrl && !m.alt && !m.meta => HistoryAction::Confirm,
             Key::Escape => HistoryAction::Cancel,
             _ => HistoryAction::Swallow,
         });
+    }
+    // Chords no control uses itself: they work from the list, the search box and a focused
+    // control alike (Task 704).
+    let chord = m.ctrl && !m.alt && !m.meta && !m.shift;
+    match k {
+        Key::Char(c) if c == char::from(SlintKey::F6) && !m.ctrl && !m.alt && !m.meta => {
+            return Some(if m.shift {
+                HistoryAction::PrevRegion
+            } else {
+                HistoryAction::NextRegion
+            });
+        }
+        Key::Char('f' | 'F' | '\u{6}' | 'k' | 'K' | '\u{b}') if chord => {
+            return Some(HistoryAction::FocusSearch);
+        }
+        Key::Char('b' | 'B' | '\u{2}') if chord => return Some(HistoryAction::ToggleSidebar),
+        Key::Char(',') if chord => return Some(HistoryAction::OpenSettings),
+        _ => {}
     }
     if ctx.chips_focused && k != Key::Escape {
         return None;
@@ -104,12 +196,22 @@ pub fn map_key(k: Key, m: Mods, ctx: HistoryCtx) -> Option<HistoryAction> {
             nav(k).map(HistoryAction::MoveKeep)
         }
         Key::Char(' ') if plain && !m.shift && list_keys => Some(HistoryAction::ToggleMark),
+        // The narrow layout shows the detail as a drawer: Right and Enter open it, Left closes it.
+        Key::Right | Key::Enter
+            if plain && !m.shift && list_keys && layers.narrow && !layers.drawer_open =>
+        {
+            Some(HistoryAction::OpenDrawer)
+        }
+        Key::Left if plain && !m.shift && list_keys && layers.drawer_open => {
+            Some(HistoryAction::CloseDrawer)
+        }
         Key::Enter if m.alt || m.meta || m.ctrl => None,
         Key::Enter if m.shift => Some(HistoryAction::Copy(CopyKind::Plain)),
         Key::Enter => Some(HistoryAction::Copy(CopyKind::Original)),
         Key::Escape => Some(HistoryAction::Escape),
         Key::Delete if plain && !m.shift && list_keys => Some(HistoryAction::Delete),
         Key::Menu if plain => Some(HistoryAction::OpenMenu),
+        Key::F10 if plain && m.shift => Some(HistoryAction::OpenMenu),
         Key::Char('p' | 'P' | '\u{10}') if m.ctrl && !m.alt => Some(HistoryAction::TogglePin),
         Key::Char('t' | 'T' | '\u{14}') if ctrl_only => Some(HistoryAction::CopyAs),
         Key::Char('e' | 'E' | '\u{5}') if ctrl_only => Some(HistoryAction::Edit),
@@ -372,6 +474,187 @@ mod tests {
         ] {
             assert_eq!(map_key(k, CTRL, LIST), Some(A::MoveKeep(mv)), "{k:?}");
             assert_eq!(map_key(k, CTRL, TYPING), Some(A::MoveKeep(mv)), "{k:?}");
+        }
+    }
+
+    // ---- Task 704 ----
+
+    const CTRL_SHIFT: Mods = Mods {
+        ctrl: true,
+        shift: true,
+        ..NONE
+    };
+
+    fn text(k: SlintKey) -> String {
+        char::from(k).to_string()
+    }
+
+    #[test]
+    fn shift_f10_opens_the_row_menu_like_the_menu_key() {
+        assert_eq!(map_key(Key::F10, SHIFT, LIST), Some(A::OpenMenu));
+        assert_eq!(map_key(Key::F10, NONE, LIST), None);
+        assert_eq!(map_key(Key::F10, CTRL, LIST), None);
+        assert_eq!(map_key(Key::Menu, NONE, LIST), Some(A::OpenMenu));
+    }
+
+    #[test]
+    fn the_new_chords_work_from_the_list_the_search_box_and_a_focused_control() {
+        let chips = HistoryCtx {
+            chips_focused: true,
+            ..LIST
+        };
+        for ctx in [LIST, TYPING, chips] {
+            for c in ['f', 'F', '\u{6}', 'k', 'K', '\u{b}'] {
+                assert_eq!(
+                    map_key(Key::Char(c), CTRL, ctx),
+                    Some(A::FocusSearch),
+                    "{c:?}"
+                );
+            }
+            for c in ['b', 'B', '\u{2}'] {
+                assert_eq!(
+                    map_key(Key::Char(c), CTRL, ctx),
+                    Some(A::ToggleSidebar),
+                    "{c:?}"
+                );
+            }
+            assert_eq!(map_key(Key::Char(','), CTRL, ctx), Some(A::OpenSettings));
+            assert_eq!(map_key(f6(), NONE, ctx), Some(A::NextRegion));
+            assert_eq!(map_key(f6(), SHIFT, ctx), Some(A::PrevRegion));
+        }
+    }
+
+    #[test]
+    fn the_new_chords_need_their_modifiers_and_the_modal_dialog_swallows_them() {
+        // Without Ctrl they are typing.
+        for c in ['f', 'k', 'b', ','] {
+            assert_eq!(map_key(Key::Char(c), NONE, TYPING), None, "{c}");
+        }
+        // Ctrl+Shift+F is not Ctrl+F; Alt+F6 is not F6.
+        assert_eq!(map_key(Key::Char('f'), CTRL_SHIFT, LIST), None);
+        let alt = Mods { alt: true, ..NONE };
+        assert_eq!(map_key(f6(), alt, LIST), None);
+        for (k, m) in [
+            (Key::Char('f'), CTRL),
+            (Key::Char('b'), CTRL),
+            (Key::Char(','), CTRL),
+            (f6(), NONE),
+            (Key::F10, SHIFT),
+        ] {
+            assert_eq!(map_key(k, m, CONFIRM), Some(A::Swallow), "{k:?}");
+        }
+    }
+
+    #[test]
+    fn slint_key_text_reaches_f6_and_ctrl_b() {
+        assert_eq!(history_key(&text(SlintKey::F6)), f6());
+        assert_eq!(history_key("\u{2}"), Key::Char('\u{2}'));
+        // Everything else is the popup's translation.
+        assert_eq!(history_key(&text(SlintKey::Escape)), Key::Escape);
+        assert_eq!(history_key(&text(SlintKey::F10)), Key::F10);
+        assert_eq!(history_key("a"), Key::Char('a'));
+        assert_eq!(history_key(""), Key::Other);
+    }
+
+    #[test]
+    fn right_arrow_and_enter_open_the_drawer_only_in_the_narrow_layout() {
+        let narrow = Layers {
+            narrow: true,
+            ..Layers::default()
+        };
+        assert_eq!(
+            map_key_in(Key::Right, NONE, LIST, narrow),
+            Some(A::OpenDrawer)
+        );
+        assert_eq!(
+            map_key_in(Key::Enter, NONE, LIST, narrow),
+            Some(A::OpenDrawer)
+        );
+        // Shift+Enter still copies as plain text; wide layouts keep Enter as Copy.
+        assert_eq!(
+            map_key_in(Key::Enter, SHIFT, LIST, narrow),
+            Some(A::Copy(CopyKind::Plain))
+        );
+        assert_eq!(map_key(Key::Right, NONE, LIST), None);
+        assert_eq!(
+            map_key(Key::Enter, NONE, LIST),
+            Some(A::Copy(CopyKind::Original))
+        );
+        // While typing a query, Right moves the text cursor and Enter copies as before.
+        assert_eq!(map_key_in(Key::Right, NONE, TYPING, narrow), None);
+        assert_eq!(
+            map_key_in(Key::Enter, NONE, TYPING, narrow),
+            Some(A::Copy(CopyKind::Original))
+        );
+        // A focused control keeps Enter and the arrows.
+        let chips = HistoryCtx {
+            chips_focused: true,
+            ..LIST
+        };
+        assert_eq!(map_key_in(Key::Enter, NONE, chips, narrow), None);
+        assert_eq!(map_key_in(Key::Right, NONE, chips, narrow), None);
+    }
+
+    #[test]
+    fn left_arrow_closes_an_open_drawer() {
+        let open = Layers {
+            narrow: true,
+            drawer_open: true,
+            ..Layers::default()
+        };
+        assert_eq!(
+            map_key_in(Key::Left, NONE, LIST, open),
+            Some(A::CloseDrawer)
+        );
+        // Enter acts on the clip while the drawer is open (it is not opened twice).
+        assert_eq!(
+            map_key_in(Key::Enter, NONE, LIST, open),
+            Some(A::Copy(CopyKind::Original))
+        );
+        assert_eq!(map_key_in(Key::Right, NONE, LIST, open), None);
+        assert_eq!(map_key_in(Key::Left, NONE, TYPING, open), None);
+        assert_eq!(map_key(Key::Left, NONE, LIST), None);
+    }
+
+    #[test]
+    fn esc_closes_one_layer_per_press() {
+        let none = Layers::default();
+        let drawer = Layers {
+            drawer_open: true,
+            ..none
+        };
+        let overlay = Layers {
+            overlay_open: true,
+            ..drawer
+        };
+        let menu = Layers {
+            menu_open: true,
+            ..overlay
+        };
+        // Everything open: menu, overlay, drawer, marks, window - one per press.
+        assert_eq!(esc_layer(menu, true), EscLayer::Menu);
+        assert_eq!(esc_layer(overlay, true), EscLayer::Overlay);
+        assert_eq!(esc_layer(drawer, true), EscLayer::Drawer);
+        assert_eq!(esc_layer(none, true), EscLayer::Marks);
+        assert_eq!(esc_layer(none, false), EscLayer::Window);
+        // The drawer comes before the marks and the window.
+        assert_eq!(esc_layer(drawer, false), EscLayer::Drawer);
+    }
+
+    #[test]
+    fn every_pre_704_key_keeps_its_action_with_the_layers_closed() {
+        for (k, m) in [
+            (Key::Enter, NONE),
+            (Key::Left, NONE),
+            (Key::Right, NONE),
+            (Key::Menu, NONE),
+            (Key::Escape, NONE),
+        ] {
+            assert_eq!(
+                map_key_in(k, m, LIST, Layers::default()),
+                map_key(k, m, LIST),
+                "{k:?}"
+            );
         }
     }
 

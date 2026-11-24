@@ -830,6 +830,13 @@ impl Host {
             HistoryAction::DeleteCollection => self.request_delete_collection(),
             HistoryAction::Export => self.export_ask(),
             HistoryAction::Swallow => {}
+            HistoryAction::ToggleSidebar
+            | HistoryAction::FocusSearch
+            | HistoryAction::OpenSettings
+            | HistoryAction::NextRegion
+            | HistoryAction::PrevRegion
+            | HistoryAction::OpenDrawer
+            | HistoryAction::CloseDrawer => {}
         }
         true
     }

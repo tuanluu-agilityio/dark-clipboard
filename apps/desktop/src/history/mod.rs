@@ -82,6 +82,14 @@ mod layout_tests {
             (Key::Char('e'), CTRL_SHIFT, A::Export),
             (Key::Char('a'), CTRL, A::SelectAll),
             (Key::Escape, NONE, A::Escape),
+            // Task 704: new keys, only added.
+            (Key::F10, SHIFT, A::OpenMenu),
+            (Key::Char('f'), CTRL, A::FocusSearch),
+            (Key::Char('k'), CTRL, A::FocusSearch),
+            (Key::Char('b'), CTRL, A::ToggleSidebar),
+            (Key::Char(','), CTRL, A::OpenSettings),
+            (super::keys::f6(), NONE, A::NextRegion),
+            (super::keys::f6(), SHIFT, A::PrevRegion),
         ];
         for (key, mods, want) in table {
             assert_eq!(map_key(*key, *mods, LIST), Some(*want), "{key:?} {mods:?}");
@@ -231,8 +239,11 @@ mod layout_tests {
                     K(Key::Delete, CTRL_SHIFT, A::DeleteCollection),
                 ],
             ),
-            // Export has no button or menu entry today; the key stays (704's menu gets an entry).
-            ("Export", vec![K(Key::Char('e'), CTRL_SHIFT, A::Export)]),
+            // Task 704: the row menu has an Export entry (same action as the key).
+            (
+                "Export",
+                vec![Menu("export"), K(Key::Char('e'), CTRL_SHIFT, A::Export)],
+            ),
             ("Date filters", vec![Panel("date-menu-activated")]),
         ]
     }
@@ -246,6 +257,25 @@ mod layout_tests {
         format!("on_{}", callback.replace('-', "_"))
     }
 
+    /// The row menu entry for a callback name of the old `PopupWindow` menu.
+    fn menu_cmd(callback: &str) -> Option<super::menu::RowCmd> {
+        use super::menu::RowCmd as C;
+        Some(match callback {
+            "act-copy" => C::Copy,
+            "act-copy-plain" => C::CopyPlain,
+            "act-copy-as" => C::CopyAs,
+            "act-edit" => C::Edit,
+            "act-pin" => C::TogglePin,
+            "act-delete" => C::Delete,
+            "act-favorite" => C::ToggleFavorite,
+            "act-select-all" => C::SelectAll,
+            "act-add-collection" => C::AddToCollection,
+            "act-remove-collection" => C::RemoveFromCollection,
+            "export" => C::Export,
+            _ => return None,
+        })
+    }
+
     #[test]
     fn every_removed_control_stays_reachable() {
         for (control, ways) in reach() {
@@ -255,7 +285,19 @@ mod layout_tests {
                     Way::Key(key, mods, want) => {
                         assert_eq!(map_key(key, mods, LIST), Some(want), "{control}");
                     }
-                    Way::Toolbar(cb) | Way::Menu(cb) | Way::Panel(cb) => {
+                    // Task 704: the row menu is built in Rust (`menu::history_menu_items`); its
+                    // entry runs the same host method as the toolbar button.
+                    Way::Menu(cb) => {
+                        let cmd = menu_cmd(cb);
+                        let ctx = super::menu::MenuCtx::default();
+                        assert!(
+                            super::menu::history_menu_items(&ctx)
+                                .iter()
+                                .any(|i| Some(i.cmd) == cmd),
+                            "{control}: the row menu has no entry for {cb}"
+                        );
+                    }
+                    Way::Toolbar(cb) | Way::Panel(cb) => {
                         assert!(
                             SLINT.contains(&format!("callback {cb}(")),
                             "{control}: history.slint has no callback {cb}"
@@ -272,20 +314,23 @@ mod layout_tests {
     }
 
     #[test]
-    fn the_toolbar_and_the_menu_call_the_callbacks_the_table_names() {
-        for cb in [
-            "act-copy",
-            "act-copy-plain",
-            "act-copy-as",
-            "act-edit",
-            "act-pin",
-            "act-delete",
-            "act-favorite",
+    fn the_toolbar_and_the_row_menu_run_the_same_host_methods() {
+        // The toolbar calls the callback; the menu's `RowCmd` is dispatched in the host to the
+        // method the callback's handler calls.
+        for (cb, method) in [
+            ("act-copy", "RowCmd::Copy => self.copy(false)"),
+            ("act-copy-plain", "RowCmd::CopyPlain => self.copy(true)"),
+            ("act-copy-as", "RowCmd::CopyAs => self.open_copy_as()"),
+            ("act-edit", "RowCmd::Edit => self.open_edit()"),
+            ("act-pin", "RowCmd::TogglePin => self.toggle_pin()"),
+            ("act-delete", "RowCmd::Delete => self.request_delete()"),
+            ("act-favorite", "RowCmd::ToggleFavorite => self.act_favorite()"),
         ] {
             assert!(
-                SLINT.matches(&format!("root.{cb}();")).count() >= 2,
-                "history.slint calls {cb} from fewer than two places (toolbar and menu)"
+                SLINT.contains(&format!("root.{cb}();")),
+                "history.slint: the toolbar no longer calls {cb}"
             );
+            assert!(HOST.contains(method), "history_host.rs: no `{method}`");
         }
     }
 
