@@ -37,17 +37,47 @@ fn manifest() -> PathBuf {
 #[test]
 fn the_list_column_is_444_px_at_1000() {
     assert_eq!(LIST_PX, 444.0);
-    // The layout in the markup uses the same numbers.
+    // The layout in the markup uses the same numbers: Rust (`src/history/layout.rs`) hands the
+    // pane widths over, and the defaults are the wide layout.
     let slint = fs::read_to_string(manifest().join("ui/history.slint")).unwrap_or_default();
-    assert!(slint.contains("parent.width - 216px - 340px"), "list width");
-    assert!(slint.contains("width: 340px;"), "detail width");
-    assert!(slint.contains("width: 216px;"), "sidebar width");
+    assert!(
+        slint.contains("parent.width - root.sidebar-w - (root.drawer-mode ? 0px : root.detail-w)"),
+        "list width"
+    );
+    assert!(
+        slint.contains("in property <length> detail-w: 340px;"),
+        "detail width"
+    );
+    assert!(
+        slint.contains("in property <length> sidebar-w: 216px;"),
+        "sidebar width"
+    );
     assert!(slint.contains("height: 48px;"), "toolbar height");
+    assert!(
+        slint.contains("min-width: 640px;"),
+        "the window minimum is 640 px (F-34)"
+    );
+    let layout = layout_src();
+    assert_eq!(layout_const(&layout, "SIDEBAR_FULL"), SIDEBAR_PX as u32);
+    assert_eq!(layout_const(&layout, "DETAIL_WIDE"), DETAIL_PX as u32);
     let row = fs::read_to_string(manifest().join("ui/history_row.slint")).unwrap_or_default();
     assert!(
         row.contains("out property <length> height: 56px;"),
         "row height"
     );
+}
+
+fn layout_src() -> String {
+    fs::read_to_string(manifest().join("src/history/layout.rs")).unwrap_or_default()
+}
+
+/// `pub const NAME: u32 = 123;` of `layout.rs`.
+fn layout_const(src: &str, name: &str) -> u32 {
+    let key = format!("pub const {name}: u32 = ");
+    src.lines()
+        .find_map(|l| l.strip_prefix(&key))
+        .and_then(|v| v.trim_end_matches(';').trim().parse().ok())
+        .unwrap_or(0)
 }
 
 #[test]
@@ -204,4 +234,161 @@ fn the_history_window_has_no_text_footer_and_no_literal_strings() {
         slint.contains("text: Strings.search-placeholder;") && slint.contains("overflow: elide;"),
         "the placeholder must elide"
     );
+}
+
+// ---- Task 704: the narrow layouts, the bulk bar, the rail and the row menu ----
+
+/// The list column at a window width (the drawer of the narrow layout floats over it).
+fn list_px(width: u32, rail: bool, detail: u32, drawer: bool) -> f32 {
+    let side = if rail { 52.0 } else { 216.0 };
+    width as f32 - side - if drawer { 0.0 } else { detail as f32 }
+}
+
+#[test]
+fn the_pane_widths_and_breakpoints_match_the_markup_and_the_spec() {
+    let l = layout_src();
+    assert_eq!(layout_const(&l, "WIDE_MIN"), 1000);
+    assert_eq!(layout_const(&l, "MEDIUM_MIN"), 820);
+    assert_eq!(layout_const(&l, "RAIL"), 52);
+    assert_eq!(layout_const(&l, "DETAIL_MEDIUM"), 300);
+    assert_eq!(layout_const(&l, "DRAWER"), 340);
+    // The smallest window still gives the list room for the toolbar (title 48, search 140).
+    assert!(list_px(640, true, 340, true) >= 240.0);
+    assert!(list_px(820, true, 300, false) >= 240.0);
+    assert!(list_px(1000, false, 340, false) >= 240.0);
+}
+
+#[test]
+fn the_bulk_bar_fits_at_640_and_1000_px_in_both_languages() {
+    // The bar is 8 px in from the list column on each side, 1 px border, 12 px left padding,
+    // 8 px right padding; "N selected" then seven 28 px buttons with 4 px gaps.
+    for (name, list) in [
+        ("1000", list_px(1000, false, 340, false)),
+        ("640", list_px(640, true, 340, true)),
+    ] {
+        let inner = list - 16.0 - 2.0 - 12.0 - 8.0;
+        let buttons = 7.0 * BUTTON_PX + 7.0 * 4.0;
+        for lang in [Lang::En, Lang::Vi] {
+            // Four digits: the longest count a person marks by hand or with Ctrl+A.
+            let text = t(lang, Msg::HistSelectedCount).replace("{n}", "9999");
+            let need = text_px(&text);
+            assert!(
+                need + buttons <= inner,
+                "{lang:?} bulk bar at {name} px needs {} px but has {inner} px",
+                need + buttons
+            );
+        }
+    }
+    // The bar is 36 px high with a 28 px button inside.
+    let panes = fs::read_to_string(manifest().join("ui/history_panes.slint")).unwrap_or_default();
+    assert!(panes.contains("height: 36px;"));
+    assert!(panes.contains("border-color: Theme.accent;"));
+}
+
+#[test]
+fn the_bulk_bar_has_the_seven_controls_as_icon_buttons_with_labels() {
+    let panes = fs::read_to_string(manifest().join("ui/history_panes.slint")).unwrap_or_default();
+    let bar = &panes[panes.find("export component BulkBar").unwrap_or(0)..];
+    assert_eq!(bar.matches("BulkBtn {").count(), 7, "seven controls");
+    for cb in [
+        "act-pin",
+        "act-favorite",
+        "act-add-to-collection",
+        "act-tag",
+        "act-export",
+        "act-delete",
+        "act-clear",
+    ] {
+        assert!(bar.contains(&format!("root.{cb}();")), "{cb}");
+    }
+    // Every control has a translated name (no literal).
+    for label in [
+        "Strings.pin",
+        "Strings.hist-favorite",
+        "Strings.hist-add-to-collection",
+        "Strings.hist-bulk-tag",
+        "Strings.hist-export",
+        "Strings.delete",
+        "Strings.clear-selection",
+    ] {
+        assert!(bar.contains(&format!("label: {label};")), "{label}");
+    }
+    for lang in [Lang::En, Lang::Vi] {
+        for m in [
+            Msg::HistBulkTag,
+            Msg::HistMenuAddToCollection,
+            Msg::HistMenuExport,
+            Msg::HistSelectedCount,
+        ] {
+            assert!(!t(lang, m).is_empty());
+        }
+    }
+}
+
+#[test]
+fn rail_tooltips_fit_inside_the_narrowest_window() {
+    // The tooltip bubble is 8 px padding each side and sits beside the 52 px rail; the longest
+    // text is a label with a four-digit count in brackets, "Label (9999)".
+    let room = 640.0 - 52.0 - 8.0 - 16.0;
+    let labels = [
+        Msg::UiGroupLibrary,
+        Msg::UiFilterAll,
+        Msg::UiFilterPinned,
+        Msg::OrgFavorites,
+        Msg::ClipTypeText,
+        Msg::ClipTypeRichText,
+        Msg::ClipTypeUrl,
+        Msg::ClipTypeCode,
+        Msg::ClipTypeImage,
+        Msg::ClipTypeFiles,
+        Msg::ClipTypeColor,
+        Msg::OrgGroupCollections,
+        Msg::OrgGroupTags,
+        Msg::UiFilterApps,
+    ];
+    for lang in [Lang::En, Lang::Vi] {
+        for m in labels {
+            let px = text_px(&format!("{} (9999)", t(lang, m)));
+            assert!(px <= room, "{lang:?} {m:?} tooltip needs {px} of {room} px");
+        }
+    }
+    // The rail is 52 px with 36 px rows and carries the name as its accessible label.
+    let panes = fs::read_to_string(manifest().join("ui/history_panes.slint")).unwrap_or_default();
+    assert!(panes.contains("root.compact ? 36px : 28px"));
+    assert!(panes.contains("accessible-label: root.compact ? root.item.tip : root.item.label;"));
+    assert!(panes.contains("text: root.item.tip;"));
+}
+
+#[test]
+fn the_row_menu_is_230_px_and_its_texts_are_not_literals() {
+    let slint = fs::read_to_string(manifest().join("ui/history.slint")).unwrap_or_default();
+    assert!(
+        slint.contains("menu-width: 230px;"),
+        "the row menu is 230 px wide"
+    );
+    assert!(
+        !slint.contains("PopupWindow"),
+        "the row menu is the kit Menu, not a mouse-only PopupWindow"
+    );
+    assert!(!slint.contains("CtxEntry"));
+    // The key walk is in Rust: the markup only forwards the key text.
+    assert!(slint.contains("return root.row-menu-key(text);"));
+}
+
+#[test]
+fn the_new_texts_exist_in_both_languages_and_are_short() {
+    for lang in [Lang::En, Lang::Vi] {
+        for m in [
+            Msg::HistDrawerOpen,
+            Msg::HistDrawerClose,
+            Msg::HistCheckLabel,
+            Msg::HistMenuCopyPlain,
+            Msg::HistMenuRemoveFromCollection,
+        ] {
+            let s = t(lang, m);
+            assert!(!s.is_empty());
+            // Tooltips and accessible names, 26 characters at most.
+            assert!(s.chars().count() <= 26, "{lang:?} {m:?} is {s}");
+        }
+    }
 }

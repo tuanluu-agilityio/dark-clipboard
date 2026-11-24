@@ -15,8 +15,10 @@
 //! Nothing is logged here: settings values, program names and paths are never formatted into
 //! log lines (GC-06).
 
+use super::settings_keys::{self, EscapeLayer, KeyCtx, SettingsKey};
 use super::{status_msg, Poster, SText, SettingsWindow};
 use super::{AppRow, KindItem};
+use crate::popup::keys::Mods;
 use crate::popup::row::fill;
 use crate::prefs::about::{self, CapValue};
 use crate::prefs::data::{self, CleanupAction, CleanupFlow, ClearCounts};
@@ -76,6 +78,11 @@ struct Host {
     /// What the start-at-login toggle showed when the form was filled (or last saved): only a
     /// change from this is written (D-056).
     login_opened: bool,
+    /// Counts every edit of the form; a save clears `dirty` only if no edit came after the form
+    /// was read for it.
+    edits: u64,
+    /// `edits` when the running save read the form.
+    edits_at_save: u64,
 }
 
 thread_local! {
@@ -394,6 +401,36 @@ fn set_strings(w: &SettingsWindow, lang: Lang, snap: Option<&Snapshot>) {
     s.set_update_auto(m(Msg::SettingsUpdateAuto));
     s.set_update_note(m(Msg::SettingsUpdateNote));
     s.set_update_open(m(Msg::SettingsUpdateOpen));
+    // Redesign (Task 705).
+    s.set_nav_capture(m(Msg::SettingsSectionCapture));
+    s.set_nav_storage(m(Msg::SettingsSectionStorage));
+    s.set_nav_data(m(Msg::SettingsSectionData));
+    s.set_desc_general(m(Msg::SettingsDescGeneral));
+    s.set_desc_capture(m(Msg::SettingsDescCapture));
+    s.set_desc_storage(m(Msg::SettingsDescStorage));
+    s.set_desc_data(m(Msg::SettingsDescData));
+    s.set_desc_about(m(Msg::SettingsDescAbout));
+    s.set_card_popup(m(Msg::SettingsCardPopup));
+    s.set_card_app(m(Msg::SettingsCardApp));
+    s.set_card_sensitive(m(Msg::SettingsCardSensitive));
+    s.set_card_limits(m(Msg::SettingsCardLimits));
+    s.set_enter_pastes_note(m(Msg::SettingsEnterPastesNote));
+    s.set_card_recording(m(Msg::SettingsCardRecording));
+    s.set_card_private(m(Msg::SettingsCardPrivate));
+    s.set_card_paused(m(Msg::SettingsCardPaused));
+    s.set_card_recording_line(m(Msg::SettingsCardRecordingLine));
+    s.set_card_private_line(m(Msg::SettingsCardPrivateLine));
+    s.set_card_paused_line(m(Msg::SettingsCardPausedLine));
+    s.set_always_protected(m(Msg::SettingsAlwaysProtected));
+    s.set_protected_os(m(Msg::SettingsProtectedOs));
+    s.set_protected_darkshot(m(Msg::SettingsProtectedDarkshot));
+    s.set_unsaved(m(Msg::SettingsUnsaved));
+    s.set_key_ctrl_s(m(Msg::SettingsKeyCtrlS));
+    s.set_dlg_remove(m(Msg::SettingsDlgRemove));
+    s.set_dlg_limits(m(Msg::SettingsDlgLimits));
+    s.set_dlg_clear(m(Msg::SettingsDlgClear));
+    s.set_dlg_restore(m(Msg::SettingsDlgRestore));
+    s.set_clear_row(m(Msg::SettingsClearRow));
     show_update_view(w, lang);
     w.set_version_text(format!("{} {}", t(lang, Msg::SettingsVersion), about::version()).into());
     // Parts that follow the latest status refresh.
@@ -430,6 +467,18 @@ fn set_strings(w: &SettingsWindow, lang: Lang, snap: Option<&Snapshot>) {
 }
 
 impl Host {
+    /// The form changed: the save bar shows.
+    fn clear_dirty_if_unchanged(&self) {
+        if dirty_after_save(self.edits_at_save, self.edits) {
+            self.win.set_dirty(false);
+        }
+    }
+
+    fn mark_dirty(&mut self) {
+        self.edits = self.edits.wrapping_add(1);
+        self.win.set_dirty(true);
+    }
+
     fn refresh_apps(&self) {
         let rows: Vec<AppRow> = self
             .apps
@@ -509,6 +558,8 @@ impl Host {
         self.apps = d.apps;
         self.clear_errors();
         self.refresh_apps();
+        // The form shows what is stored: nothing to save.
+        self.win.set_dirty(false);
     }
 
     /// The form as a draft.
@@ -602,6 +653,12 @@ impl Host {
     }
 }
 
+/// After a save the form is clean only if nothing was edited since the form was read for it; an
+/// edit made while the save was running keeps the save bar.
+fn dirty_after_save(edits_at_save: u64, edits_now: u64) -> bool {
+    edits_at_save == edits_now
+}
+
 /// `login` is the stored start-at-login choice after the save (the real state).
 fn on_save_result(r: SaveResult, login: bool) {
     with_host(|h| {
@@ -611,6 +668,7 @@ fn on_save_result(r: SaveResult, login: bool) {
         match r {
             SaveResult::Saved => {
                 h.clear_errors();
+                h.clear_dirty_if_unchanged();
                 // The toggle shows the stored choice; a later save writes it only when the user
                 // changes it again (D-056).
                 h.win.set_launch_at_login(login);
@@ -627,6 +685,7 @@ fn on_save_result(r: SaveResult, login: bool) {
             }
             SaveResult::SavedLoginFailed => {
                 h.clear_errors();
+                h.clear_dirty_if_unchanged();
                 // The toggle goes back to what is really registered; the failure is shown.
                 h.win.set_launch_at_login(login);
                 h.login_opened = login;
@@ -673,6 +732,7 @@ fn save_now() {
         h.saving = true;
         h.win.set_can_save(false);
         h.set_status(None);
+        h.edits_at_save = h.edits;
         Some((h.collect(), h.poster.clone()))
     })
     .flatten() else {
@@ -825,6 +885,8 @@ fn create() -> Option<()> {
             picker_names: Vec::new(),
             picker_gen: 0,
             login_opened: false,
+            edits: 0,
+            edits_at_save: 0,
         });
     });
     connect(&w);
@@ -837,6 +899,7 @@ fn add_app(text: &str) {
         match h.apps.add(text, model::current_platform()) {
             Ok(_) => {
                 h.win.set_new_app(SharedString::new());
+                h.mark_dirty();
                 h.refresh_apps();
             }
             Err(m) => h.win.set_err_app(t(h.lang, m).into()),
@@ -1213,6 +1276,88 @@ fn clear_history() {
     });
 }
 
+/// The layers that can be open, as the key map sees them. A `Select` list owns its keys, so the
+/// host never sees one open.
+fn key_ctx(h: &Host, nav_focused: bool) -> KeyCtx {
+    KeyCtx {
+        nav_focused,
+        dialog_open: h.clear.is_open()
+            || h.cleanup.is_open()
+            || h.restore.is_open()
+            || h.apps.pending().is_some()
+            || h.win.get_limits_open(),
+        picker_open: h.win.get_picker_open(),
+        list_open: false,
+    }
+}
+
+/// Esc: closes the open question or the picker (one layer per press), else hides the window.
+/// Hiding keeps the form in memory, but showing the window again fills it from the saved
+/// settings, so pending changes are discarded then (as before the redesign).
+fn escape() {
+    let layer = with_host(|h| {
+        let layer = settings_keys::escape_layer(key_ctx(h, false));
+        if layer != EscapeLayer::Window {
+            h.close_overlays();
+        }
+        layer
+    });
+    if layer == Some(EscapeLayer::Window) {
+        hide();
+    }
+}
+
+/// Every key the window sees before the focused element. True when the key was handled.
+fn on_key(
+    text: SharedString,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+    meta: bool,
+    nav_focused: bool,
+) -> bool {
+    let mods = Mods {
+        ctrl,
+        shift,
+        alt,
+        meta,
+    };
+    let Some(action) =
+        with_host(|h| settings_keys::map_text(text.as_str(), mods, key_ctx(h, nav_focused)))
+            .flatten()
+    else {
+        return false;
+    };
+    match action {
+        SettingsKey::Escape => escape(),
+        SettingsKey::Section(n) => {
+            with_host(|h| h.win.set_section(i32::from(n)));
+        }
+        SettingsKey::NavUp => {
+            with_host(|h| h.win.set_section((h.win.get_section() - 1).max(0)));
+        }
+        SettingsKey::NavDown => {
+            with_host(|h| {
+                let last = settings_keys::SECTION_COUNT - 1;
+                h.win.set_section((h.win.get_section() + 1).min(last));
+            });
+        }
+        // Ctrl+S is clicking Save: the same `save()`, the same inline errors. The bar only shows
+        // after a change and never on About, so there is nothing to save otherwise.
+        SettingsKey::Save => {
+            let go = with_host(|h| {
+                h.win.get_can_save()
+                    && h.win.get_dirty()
+                    && h.win.get_section() != settings_keys::SECTION_COUNT - 1
+            });
+            if go == Some(true) {
+                save();
+            }
+        }
+    }
+    true
+}
+
 fn connect(w: &SettingsWindow) {
     w.on_save(save);
     w.on_revert(|| {
@@ -1228,7 +1373,10 @@ fn connect(w: &SettingsWindow) {
         }
     });
     w.on_edited(|| {
-        with_host(|h| h.set_status(None));
+        with_host(|h| {
+            h.mark_dirty();
+            h.set_status(None);
+        });
     });
     w.on_set_mode(|i| {
         let Some(poster) = with_host(|h| h.poster.clone()) else {
@@ -1249,14 +1397,18 @@ fn connect(w: &SettingsWindow) {
         with_host(|h| {
             if let Ok(i) = usize::try_from(i) {
                 // A built-in entry only asks; it goes after `confirm_remove`.
-                let _: RemoveOutcome = h.apps.request_remove(i);
+                if h.apps.request_remove(i) == RemoveOutcome::Removed {
+                    h.mark_dirty();
+                }
             }
             h.refresh_apps();
         });
     });
     w.on_confirm_remove(|| {
         with_host(|h| {
-            h.apps.confirm_remove();
+            if h.apps.confirm_remove() {
+                h.mark_dirty();
+            }
             h.refresh_apps();
         });
     });
@@ -1344,23 +1496,9 @@ fn connect(w: &SettingsWindow) {
             h.set_status(msg);
         });
     });
-    w.on_escape(|| {
-        let closed = with_host(|h| {
-            let open = h.clear.is_open()
-                || h.cleanup.is_open()
-                || h.restore.is_open()
-                || h.apps.pending().is_some()
-                || h.win.get_limits_open()
-                || h.win.get_picker_open();
-            if open {
-                h.close_overlays();
-            }
-            open
-        });
-        if closed == Some(false) {
-            hide();
-        }
-    });
+    w.on_escape(escape);
+    w.on_key(on_key);
+    w.on_select_key(|text, alt, open| settings_keys::select_code(text.as_str(), alt, open));
     w.window().on_close_requested(|| {
         with_host(|h| h.close_overlays());
         slint::CloseRequestResponse::HideWindow
@@ -1473,4 +1611,17 @@ pub fn hide() {
         return;
     };
     let _ = w.hide();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dirty_after_save;
+
+    #[test]
+    fn a_save_clears_dirty_only_when_nothing_changed_meanwhile() {
+        assert!(dirty_after_save(3, 3));
+        assert!(!dirty_after_save(3, 4));
+        // The counter wraps without a false "clean".
+        assert!(!dirty_after_save(u64::MAX, 0));
+    }
 }

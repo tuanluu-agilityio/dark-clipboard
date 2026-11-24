@@ -9,7 +9,7 @@ import { Theme, Strings } from "theme.slint";
 import { Icon, IconName } from "kit/icon.slint";
 import { IconButton } from "kit/icon_button.slint";
 import { KeyCap } from "kit/key_cap.slint";
-import { Tooltip } from "kit/tooltip.slint";
+import { Tooltip, TipAlign } from "kit/tooltip.slint";
 import { StatusHint } from "popup.slint";
 import { OrgStrings } from "organize.slint";
 
@@ -27,6 +27,8 @@ export struct FilterItem {
     badge: string,
     // A header with a `+` button (Collections).
     add: bool,
+    // The tooltip and accessible name on the rail: the label and, where there is one, the count.
+    tip: string,
 }
 
 // A group header of the sidebar: chevron, name, and for Collections the `+` (and, while a user
@@ -35,12 +37,14 @@ component SideHeader inherits Rectangle {
     in property <FilterItem> item;
     in property <bool> focused;
     in property <bool> col-shown;
+    // The 52 px rail: only the chevron shows (the name stays in the accessible label).
+    in property <bool> compact;
     callback activated();
     callback add-clicked();
     callback rename-clicked();
     callback delete-clicked();
 
-    height: 28px;
+    height: root.compact ? 36px : 28px;
     border-radius: 6px;
     accessible-role: button;
     accessible-label: root.item.label;
@@ -56,7 +60,15 @@ component SideHeader inherits Rectangle {
         }
     }
 
-    HorizontalLayout {
+    if root.compact: Icon {
+        name: root.item.collapsed ? IconName.chevron-right : IconName.chevron-down;
+        size: 14px;
+        tint: Theme.text-3;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    if !root.compact: HorizontalLayout {
         padding-left: 4px;
         padding-right: 2px;
         spacing: 4px;
@@ -126,16 +138,18 @@ component SideHeader inherits Rectangle {
 component SideItem inherits Rectangle {
     in property <FilterItem> item;
     in property <bool> focused;
+    // The 52 px rail: the icon alone, the name and count as tooltip and accessible name.
+    in property <bool> compact;
     callback activated();
 
-    height: 28px;
+    height: root.compact ? 36px : 28px;
     border-radius: 6px;
     background: root.item.on ? Theme.selected : (touch.has-hover ? Theme.surface : transparent);
     accessible-role: checkbox;
     accessible-checkable: true;
     accessible-checked: root.item.on;
-    accessible-label: root.item.label;
-    accessible-description: root.item.badge;
+    accessible-label: root.compact ? root.item.tip : root.item.label;
+    accessible-description: root.compact ? "" : root.item.badge;
     accessible-action-default => {
         root.activated();
     }
@@ -145,6 +159,16 @@ component SideItem inherits Rectangle {
         clicked => {
             root.activated();
         }
+    }
+
+    if root.compact: Tooltip {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        text: root.item.tip;
+        align: TipAlign.start;
+        active: touch.has-hover || root.focused;
     }
 
     // The active item has a 3 px accent bar (a non-colour cue).
@@ -158,7 +182,15 @@ component SideItem inherits Rectangle {
         background: Theme.accent;
     }
 
-    HorizontalLayout {
+    if root.compact: Icon {
+        name: root.item.icon;
+        size: 18px;
+        tint: root.item.on ? Theme.accent : Theme.text-2;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    if !root.compact: HorizontalLayout {
         padding-left: 12px;
         padding-right: 8px;
         spacing: 8px;
@@ -208,17 +240,30 @@ export component SidebarView inherits FocusScope {
     in property <[FilterItem]> items;
     // A user collection is the active filter: its header also offers rename and delete (mouse).
     in property <bool> col-shown;
+    // The 52 px rail (Task 704): icons only, 36 px rows.
+    in property <bool> compact;
+    // The overlay copy takes the keyboard focus when it opens.
+    in property <bool> grab-focus;
+    // The id this view reports its focus under (-50 sidebar, -51 rail, -52 overlay).
+    in property <int> focus-id: -50;
     callback toggled(int);
     callback group-toggled(int);
     callback add-clicked();
     callback rename-clicked();
     callback delete-clicked();
-    callback focus-report(bool);
+    callback focus-report(int, bool);
     property <int> cursor;
+    property <length> row-h: root.compact ? 36px : 28px;
 
     focus-on-click: false;
     accessible-role: groupbox;
     accessible-label: Strings.filters-label;
+
+    init => {
+        if (root.grab-focus) {
+            self.focus();
+        }
+    }
 
     key-pressed(e) => {
         if (e.text == Key.UpArrow) {
@@ -263,30 +308,31 @@ export component SidebarView inherits FocusScope {
         reject
     }
     focus-gained(reason) => {
-        root.focus-report(true);
+        root.focus-report(root.focus-id, true);
     }
     focus-lost(reason) => {
-        root.focus-report(false);
+        root.focus-report(root.focus-id, false);
     }
     // Keep the cursor row in view.
     changed cursor => {
-        if (root.cursor * 28px < -scroll.content-y) {
-            scroll.content-y = -(root.cursor * 28px);
-        } else if ((root.cursor + 1) * 28px > -scroll.content-y + scroll.visible-height) {
-            scroll.content-y = -((root.cursor + 1) * 28px - scroll.visible-height);
+        if (root.cursor * root.row-h < -scroll.content-y) {
+            scroll.content-y = -(root.cursor * root.row-h);
+        } else if ((root.cursor + 1) * root.row-h > -scroll.content-y + scroll.visible-height) {
+            scroll.content-y = -((root.cursor + 1) * root.row-h - scroll.visible-height);
         }
     }
 
     scroll := ScrollView {
         VerticalLayout {
-            padding-left: 8px;
-            padding-right: 8px;
+            padding-left: root.compact ? 4px : 8px;
+            padding-right: root.compact ? 4px : 8px;
             padding-top: 4px;
             spacing: 0px;
             for item[i] in root.items: Rectangle {
-                height: 28px;
+                height: root.row-h;
                 if item.header: SideHeader {
                     item: item;
+                    compact: root.compact;
                     focused: root.has-focus && i == root.cursor;
                     col-shown: root.col-shown;
                     activated => {
@@ -305,6 +351,7 @@ export component SidebarView inherits FocusScope {
                 }
                 if !item.header: SideItem {
                     item: item;
+                    compact: root.compact;
                     focused: root.has-focus && i == root.cursor;
                     activated => {
                         root.cursor = i;
@@ -480,6 +527,9 @@ export component DetailToolbar inherits FocusScope {
     in property <bool> can-favorite;
     in property <bool> favorite;
     in property <string> fav-text;
+    // The drawer toolbar takes the focus when it is created; F6 bumps `focus-seq`.
+    in property <bool> grab-focus;
+    in property <int> focus-seq;
     callback act-copy();
     callback act-copy-plain();
     callback act-copy-as();
@@ -494,6 +544,15 @@ export component DetailToolbar inherits FocusScope {
     height: 28px;
     accessible-role: groupbox;
     accessible-label: Strings.detail-label;
+
+    init => {
+        if (root.grab-focus) {
+            self.focus();
+        }
+    }
+    changed focus-seq => {
+        self.focus();
+    }
 
     function usable(i: int) -> bool {
         if (i == 0 || i == 1) {
@@ -912,6 +971,167 @@ export component HistoryStatus inherits Rectangle {
                 color: Theme.text-2;
                 font-size: 12px;
                 vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// One button of the bulk bar: an icon button that reports its focus under its own id (it handles
+// Enter and Space itself, so Rust's key map must leave those keys alone, `ChipFocus`).
+component BulkBtn inherits VerticalLayout {
+    in property <IconName> name;
+    in property <string> label;
+    in property <int> focus-id;
+    in property <bool> on: true;
+    in property <bool> danger;
+    callback pressed();
+    callback focus-report(int, bool);
+
+    alignment: center;
+    horizontal-stretch: 0;
+    IconButton {
+        name: root.name;
+        label: root.label;
+        danger: root.danger;
+        enabled: root.on;
+        opacity: root.on ? 1.0 : 0.4;
+        tip-align: TipAlign.end;
+        focus-gained(reason) => {
+            root.focus-report(root.focus-id, true);
+        }
+        focus-lost(reason) => {
+            root.focus-report(root.focus-id, false);
+        }
+        clicked => {
+            if (root.on) {
+                root.pressed();
+            }
+        }
+    }
+}
+
+// The bulk bar (Task 704, 36 px, accent outline) above the list while two or more rows are
+// marked: "N selected" and seven buttons that call the callbacks the detail toolbar and the keys
+// already have. `enabled[i]` comes from Rust (`history::bulk::bulk_bar`), in the order Pin,
+// Favorite, Add to collection, Tag, Export, Delete, Clear.
+export component BulkBar inherits Rectangle {
+    in property <string> text;
+    in property <[bool]> enabled;
+    callback act-pin();
+    callback act-favorite();
+    callback act-add-to-collection();
+    callback act-tag();
+    callback act-export();
+    callback act-delete();
+    callback act-clear();
+    callback focus-report(int, bool);
+
+    height: 36px;
+    border-radius: 8px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.accent;
+    accessible-role: groupbox;
+    accessible-label: root.text;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 8px;
+        spacing: 4px;
+        Text {
+            text: root.text;
+            color: Theme.text;
+            font-size: 13px;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            min-width: 0px;
+            overflow: elide;
+            accessible-role: AccessibleRole.none;
+        }
+        BulkBtn {
+            name: IconName.pin;
+            label: Strings.pin;
+            focus-id: -130;
+            on: root.enabled[0];
+            pressed => {
+                root.act-pin();
+            }
+            focus-report(id, on) => {
+                root.focus-report(id, on);
+            }
+        }
+        BulkBtn {
+            name: IconName.star;
+            label: Strings.hist-favorite;
+            focus-id: -131;
+            on: root.enabled[1];
+            pressed => {
+                root.act-favorite();
+            }
+            focus-report(id, on) => {
+                root.focus-report(id, on);
+            }
+        }
+        BulkBtn {
+            name: IconName.folder-plus;
+            label: Strings.hist-add-to-collection;
+            focus-id: -132;
+            on: root.enabled[2];
+            pressed => {
+                root.act-add-to-collection();
+            }
+            focus-report(id, on) => {
+                root.focus-report(id, on);
+            }
+        }
+        BulkBtn {
+            name: IconName.tag;
+            label: Strings.hist-bulk-tag;
+            focus-id: -133;
+            on: root.enabled[3];
+            pressed => {
+                root.act-tag();
+            }
+            focus-report(id, on) => {
+                root.focus-report(id, on);
+            }
+        }
+        BulkBtn {
+            name: IconName.upload;
+            label: Strings.hist-export;
+            focus-id: -134;
+            on: root.enabled[4];
+            pressed => {
+                root.act-export();
+            }
+            focus-report(id, on) => {
+                root.focus-report(id, on);
+            }
+        }
+        BulkBtn {
+            name: IconName.trash-2;
+            label: Strings.delete;
+            focus-id: -135;
+            danger: true;
+            on: root.enabled[5];
+            pressed => {
+                root.act-delete();
+            }
+            focus-report(id, on) => {
+                root.focus-report(id, on);
+            }
+        }
+        BulkBtn {
+            name: IconName.x;
+            label: Strings.clear-selection;
+            focus-id: -136;
+            on: root.enabled[6];
+            pressed => {
+                root.act-clear();
+            }
+            focus-report(id, on) => {
+                root.focus-report(id, on);
             }
         }
     }

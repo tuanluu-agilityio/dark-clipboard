@@ -1,0 +1,385 @@
+// The parts of the settings window (Task 705): nav item, card, setting row, capture-mode card, the
+// Save button and the read-only "Always protected" row. Colours come from `Theme` only; every text
+// is set by the host from i18n.
+
+import { Theme } from "theme.slint";
+import { Icon, IconName } from "kit/icon.slint";
+import { KeyCap } from "kit/key_cap.slint";
+
+// One section in the nav: icon and label, role `tab`, focusable with a 2 px ring. The active one
+// has the `selected` fill and a 3 px accent bar.
+export component NavItem inherits FocusScope {
+    in property <IconName> icon;
+    in property <string> text;
+    in property <bool> active;
+    callback clicked();
+
+    height: 36px;
+    focus-on-click: false;
+    accessible-role: tab;
+    accessible-label: root.text;
+    accessible-checkable: true;
+    accessible-checked: root.active;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    key-pressed(e) => {
+        if (e.text == " " || e.text == Key.Return) {
+            root.clicked();
+            return accept;
+        }
+        reject
+    }
+
+    Rectangle {
+        border-radius: 6px;
+        background: root.active ? Theme.selected : (touch.has-hover ? Theme.raised : transparent);
+
+        if root.active: Rectangle {
+            x: 0px;
+            y: 6px;
+            width: 3px;
+            height: parent.height - 12px;
+            border-radius: 2px;
+            background: Theme.accent;
+        }
+
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            spacing: 8px;
+            Icon {
+                name: root.icon;
+                size: 16px;
+                tint: root.active ? Theme.accent : Theme.text-2;
+                y: (parent.height - self.height) / 2;
+            }
+            Text {
+                text: root.text;
+                color: root.active ? Theme.text : Theme.text-2;
+                font-size: 13px;
+                font-weight: root.active ? 700 : 400;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+        }
+    }
+
+    Rectangle {
+        visible: root.has-focus;
+        width: parent.width;
+        height: parent.height;
+        border-radius: 6px;
+        border-width: 2px;
+        border-color: Theme.focus;
+        background: transparent;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// A group of rows on a `surface` panel with a title.
+export component Card inherits Rectangle {
+    in property <string> title;
+
+    height: col.preferred-height;
+    background: Theme.surface;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.border;
+    accessible-role: none;
+
+    col := VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 12px;
+        padding-bottom: 8px;
+        spacing: 0px;
+        if root.title != "": Text {
+            text: root.title;
+            color: Theme.text-2;
+            font-size: 13px;
+            font-weight: 700;
+            wrap: word-wrap;
+        }
+        @children
+    }
+}
+
+// One setting: label and description on the left, the control on the right, an inline error
+// under the row. A hairline above separates it from the previous row unless it is `first`.
+export component SettingRow inherits Rectangle {
+    in property <string> label;
+    in property <string> description;
+    in property <string> error;
+    in property <bool> first;
+
+    height: lay.preferred-height;
+    accessible-role: none;
+
+    if !root.first: Rectangle {
+        y: 0px;
+        height: 1px;
+        background: Theme.border;
+    }
+
+    lay := VerticalLayout {
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 4px;
+        HorizontalLayout {
+            spacing: 16px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: root.label;
+                    color: Theme.text;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+                if root.description != "": Text {
+                    text: root.description;
+                    color: Theme.text-3;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                @children
+            }
+        }
+        if root.error != "": Text {
+            text: root.error;
+            color: Theme.danger;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// A caption with a value under it, full width (statistics, paths, capabilities).
+export component InfoRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> first;
+
+    height: lay.preferred-height;
+    accessible-role: text;
+    accessible-label: root.label + ". " + root.value;
+
+    if !root.first: Rectangle {
+        y: 0px;
+        height: 1px;
+        background: Theme.border;
+    }
+
+    lay := VerticalLayout {
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 2px;
+        Text {
+            text: root.label;
+            color: Theme.text-3;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        Text {
+            text: root.value;
+            color: Theme.text;
+            font-size: 13px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// One capture mode as a card: icon, name, one line. Role `checkbox` with a checked state
+// (Slint 1.19 has no radio role).
+export component ModeCard inherits FocusScope {
+    in property <IconName> icon;
+    in property <string> title;
+    in property <string> line;
+    // Accessible name (the long mode name).
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+
+    height: 96px;
+    horizontal-stretch: 1;
+    focus-on-click: false;
+    accessible-role: checkbox;
+    accessible-checkable: true;
+    accessible-checked: root.selected;
+    accessible-label: root.label;
+    accessible-description: root.line;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    key-pressed(e) => {
+        if (e.text == " " || e.text == Key.Return) {
+            root.clicked();
+            return accept;
+        }
+        reject
+    }
+
+    Rectangle {
+        border-radius: 10px;
+        border-width: root.selected ? 2px : 1px;
+        border-color: root.selected ? Theme.accent : Theme.border;
+        background: root.selected ? Theme.selected : (touch.has-hover ? Theme.raised : Theme.surface);
+
+        VerticalLayout {
+            padding: 12px;
+            spacing: 4px;
+            Icon {
+                name: root.icon;
+                size: 18px;
+                tint: root.selected ? Theme.accent : Theme.text-2;
+            }
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: 13px;
+                font-weight: 700;
+                overflow: elide;
+            }
+            Text {
+                text: root.line;
+                color: Theme.text-2;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+    }
+
+    Rectangle {
+        visible: root.has-focus;
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: 12px;
+        border-width: 2px;
+        border-color: Theme.focus;
+        background: transparent;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.focus();
+            root.clicked();
+        }
+    }
+}
+
+// The primary Save button: check icon, label and the Ctrl+S key cap.
+export component SaveButton inherits FocusScope {
+    in property <string> text;
+    in property <string> key;
+    callback clicked();
+
+    height: 32px;
+    width: lay.preferred-width;
+    focus-on-click: false;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    key-pressed(e) => {
+        if (root.enabled && (e.text == " " || e.text == Key.Return)) {
+            root.clicked();
+            return accept;
+        }
+        reject
+    }
+
+    Rectangle {
+        border-radius: 6px;
+        background: !root.enabled ? Theme.surface : (touch.has-hover ? Theme.focus : Theme.accent);
+
+        lay := HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            spacing: 6px;
+            Icon {
+                name: IconName.check;
+                size: 16px;
+                tint: root.enabled ? Theme.on-accent : Theme.text-3;
+                y: (parent.height - self.height) / 2;
+            }
+            Text {
+                text: root.text;
+                font-size: 13px;
+                font-weight: 600;
+                vertical-alignment: center;
+                color: root.enabled ? Theme.on-accent : Theme.text-3;
+            }
+            KeyCap {
+                text: root.key;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+    }
+
+    Rectangle {
+        visible: root.has-focus;
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: 8px;
+        border-width: 2px;
+        border-color: Theme.focus;
+        background: transparent;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// A privacy marker that is always respected. It is only drawn: a lock and a name, nothing to
+// press, no way to take the focus and no value that anything can write (GC-07).
+export component ProtectedRow inherits Rectangle {
+    in property <string> text;
+
+    height: 32px;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.text;
+
+    HorizontalLayout {
+        spacing: 8px;
+        Icon {
+            name: IconName.lock;
+            size: 14px;
+            tint: Theme.success;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.text;
+            color: Theme.text;
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+    }
+}

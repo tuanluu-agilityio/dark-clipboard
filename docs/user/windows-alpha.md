@@ -46,7 +46,7 @@ Every action also has a button. Images show a thumbnail and the details pane sho
 
 ## History window
 
-Open it from the tray ("History...") or with Ctrl+H in the popup. It has filters on the left, the list in the middle and details on the right. You can select several clips (Ctrl+click, Shift+click, Shift+arrows, Space, Ctrl+A), copy, copy as plain text, pin and delete. **Delete always asks for confirmation** in this window. Its context menu is mouse only; every action also has a key. The window remembers its size and position.
+Open it from the tray ("History...") or with Ctrl+H in the popup. It has filters on the left, the list in the middle and details on the right. You can select several clips (Ctrl+click, Shift+click, Shift+arrows, Space, Ctrl+A), copy, copy as plain text, pin and delete. **Delete always asks for confirmation** in this window. Its context menu opens with a right click, the Menu key or Shift+F10 and works with the keyboard; every action also has a key. The window remembers its size and position.
 
 ## Paste back and its safety rules
 

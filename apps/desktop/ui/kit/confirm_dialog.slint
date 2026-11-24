@@ -1,0 +1,105 @@
+// ConfirmDialog (Task 705): the one modal question of the settings window, in place of the five
+// hand-made overlays. A scrim (`Theme.scrim`) that swallows clicks, a panel with a title, a body,
+// optional extra content (`@children`, for example a switch) and two buttons: Cancel and the
+// primary (or danger) one. Enter = primary, Esc = cancel (the window also maps Esc, see
+// `src/ui/settings_keys.rs`). Its `FocusScope` takes the focus each time the
+// dialog opens (`changed open`), so the keys go to the dialog. One dialog at a time is the host's rule.
+//
+// `DialogScrim` is also the backdrop of the running-app picker, which is a list, not a question.
+
+import { Theme } from "../theme.slint";
+import { Button, ButtonKind } from "button.slint";
+
+export component DialogScrim inherits Rectangle {
+    in property <bool> open;
+
+    visible: root.open;
+    background: Theme.scrim;
+    accessible-role: none;
+
+    // Swallows clicks so nothing behind the dialog can be pressed.
+    TouchArea { }
+
+    @children
+}
+
+export component ConfirmDialog inherits DialogScrim {
+    in property <string> title;
+    in property <string> body;
+    in property <string> confirm-text;
+    in property <string> cancel-text;
+    // The confirm button is red (an action that deletes).
+    in property <bool> danger;
+    callback confirmed();
+    callback cancelled();
+
+    // The focus enters the dialog each time it opens.
+    changed open => {
+        if (root.open) {
+            scope.focus();
+        }
+    }
+
+    Rectangle {
+        width: min(root.width - 40px, 420px);
+        height: col.preferred-height + 2px;
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        background: Theme.canvas;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: root.danger ? Theme.danger : Theme.border-strong;
+        accessible-role: groupbox;
+        accessible-label: root.title + ". " + root.body;
+
+        scope := FocusScope {
+            key-pressed(e) => {
+                if (e.text == Key.Return) {
+                    root.confirmed();
+                    return accept;
+                }
+                if (e.text == Key.Escape) {
+                    root.cancelled();
+                    return accept;
+                }
+                reject
+            }
+
+            col := VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+                if root.title != "": Text {
+                    text: root.title;
+                    color: Theme.text;
+                    font-size: 15px;
+                    font-weight: 700;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.body;
+                    color: Theme.text-2;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+                @children
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Button {
+                        text: root.cancel-text;
+                        clicked => {
+                            root.cancelled();
+                        }
+                    }
+                    Button {
+                        text: root.confirm-text;
+                        kind: root.danger ? ButtonKind.danger : ButtonKind.primary;
+                        clicked => {
+                            root.confirmed();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

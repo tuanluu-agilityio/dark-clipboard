@@ -58,6 +58,11 @@ export component HistoryRow inherits Rectangle {
     in property <ClipRow> data;
     in property <bool> selected;
     in property <int> index;
+    // Task 704: the select-mode checkbox column (shown in select mode, or once two rows are
+    // marked). A click on it toggles the mark like Space; `check-label` is the accessible name.
+    in property <bool> show-check;
+    in property <string> check-label;
+    callback check-toggled();
     callback activated();
     // A left click with Ctrl / Shift held; a right click (window coordinates of the pointer).
     callback pressed(bool, bool);
@@ -94,6 +99,32 @@ export component HistoryRow inherits Rectangle {
         padding-left: 12px;
         padding-right: 10px;
         spacing: 10px;
+
+        if root.show-check: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: root.data.marked ? Theme.accent : Theme.border-strong;
+                background: root.data.marked ? Theme.accent : transparent;
+                accessible-role: checkbox;
+                accessible-checkable: true;
+                accessible-checked: root.data.marked;
+                accessible-label: root.check-label;
+                accessible-action-default => {
+                    root.check-toggled();
+                }
+                if root.data.marked: Icon {
+                    name: IconName.check;
+                    size: 14px;
+                    tint: Theme.bg;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+            }
+        }
 
         VerticalLayout {
             alignment: center;
@@ -169,12 +200,19 @@ export component HistoryRow inherits Rectangle {
 
     touch := TouchArea {
         double-clicked => {
-            root.activated();
+            if (!(root.show-check && self.mouse-x < 36px)) {
+                root.activated();
+            }
         }
         pointer-event(e) => {
             if (e.kind == PointerEventKind.up) {
                 if (e.button == PointerEventButton.left) {
-                    root.pressed(e.modifiers.control, e.modifiers.shift);
+                    // The checkbox column is the first 36 px of the row.
+                    if (root.show-check && self.mouse-x < 36px) {
+                        root.check-toggled();
+                    } else {
+                        root.pressed(e.modifiers.control, e.modifiers.shift);
+                    }
                 } else if (e.button == PointerEventButton.right) {
                     root.context(root.absolute-position.x + self.mouse-x, root.absolute-position.y + self.mouse-y);
                 }

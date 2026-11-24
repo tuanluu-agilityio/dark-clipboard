@@ -44,7 +44,7 @@ An alpha: there is no installer and no signed binary. Download it (above) or bui
 - Tray icon with menu (pause, private mode, history, settings, quit) and a global shortcut (default `Ctrl+Shift+V`).
 - Popup near the cursor (440 x 520): a search field and four icon buttons (preview, history, settings, close), a filter segment with a More filters menu, 48 px rows with copy, pin and more buttons, a right-click row menu, previews for text, images and file lists, pin, delete with undo, and a status line with the capture state and key hints. `Ctrl+K` focuses the search, `Ctrl+,` opens Settings, `Shift+F10` (or the Menu key) opens the row menu, `Ctrl+1` to `Ctrl+9` pick a filter tab and `Ctrl+Shift+F` opens More filters. The menus and buttons only copy; paste stays `Ctrl+Enter`.
 - Copy back with Enter; paste into the previous app with Ctrl+Enter (opt-in "Enter also pastes"). Paste is refused for elevated apps, the taskbar and windows it cannot identify.
-- History window (sidebar with Library, Types, Collections, Tags and Apps, a date menu, 56 px rows, a detail panel with a toolbar, tags, note and collections, and a status line) with multi-select, pin and delete (always asks first).
+- History window (sidebar with Library, Types, Collections, Tags and Apps, a date menu, 56 px rows, a detail panel with a toolbar, tags, note and collections, and a status line) with multi-select, a bulk bar for several marked clips, a keyboard context menu, pin and delete (always asks first). It shrinks to 640 x 460: below 1000 px the sidebar becomes an icon rail, below 820 px the details become a drawer.
 - Settings window (shortcut, language, start at login, capture mode, retention, excluded apps, about and licences) and a first-run welcome. English and Vietnamese.
 - Start at login through the current user's `Run` registry key (off unless you tick it).
 - Software renderer by default (small memory, no idle CPU).
@@ -106,6 +106,12 @@ The history window's left pane lists **Favorites**, your **collections** and you
 | `Ctrl+L` / `Ctrl+Shift+L` | Add the marked clips to a collection / remove them from one (pick with the arrows, `Enter`) |
 | `Ctrl+Shift+N` | New collection |
 | `Ctrl+Shift+R` / `Ctrl+Shift+Del` | Rename / delete the collection the list is filtered to (deleting asks first and names it; its clips stay in your history) |
+| `Menu` or `Shift+F10` | Open the context menu of the selected row (Up, Down, Home, End, a letter, `Enter`; `Right` opens "Add to collection", `Left` or `Esc` goes back). It has Copy, Copy plain text, Copy as..., Edit a copy..., Pin, Favorite, Add to collection, Remove from collection, Tags, Note, Export, Select all and Delete |
+| `Ctrl+F` or `Ctrl+K` | Focus the search field |
+| `Ctrl+B` | Collapse the sidebar to a rail of icons, or show it again (on a narrow window it opens over the list) |
+| `F6` / `Shift+F6` | Move the keyboard to the next / previous part of the window (sidebar, list, details) |
+| `Ctrl+,` | Open Settings |
+| `Right` on a narrow window | Show the details as a drawer over the list (`Esc` or `Left` closes it) |
 
 The same actions are buttons in the detail panel's toolbar and context-menu entries; the panel shows the note, the tags and the collections of the selected clip, each tag and collection has a remove button, and the sidebar's Collections header has a New collection button. In the popup, a star marks favorite rows, the filter segment has a **Favorites** tab, **More filters** lists your collections, and `Ctrl+D` favorites or unfavorites the selected row. Favorites are kept by "Clear history" and "Delete old clips" (see below).
 
@@ -128,7 +134,7 @@ In the history window, **Ctrl+Shift+E** exports the collection the list is filte
 
 ### Known limits
 
-See "Known issues" in the [CHANGELOG](CHANGELOG.md). In short: the Windows build has no console, so `--toggle`, `--quit` and `--help` do not set a shell exit code interactively; a popup opened from the tray only copies; the context menu in the history window is mouse only; an Explorer restart may remove the tray icon; GNOME on Wayland may not support background capture later.
+See "Known issues" in the [CHANGELOG](CHANGELOG.md). In short: the Windows build has no console, so `--toggle`, `--quit` and `--help` do not set a shell exit code interactively; a popup opened from the tray only copies; an Explorer restart may remove the tray icon; GNOME on Wayland may not support background capture later.
 
 ## Platform status
 

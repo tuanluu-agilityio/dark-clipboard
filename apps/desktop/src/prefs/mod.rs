@@ -11,6 +11,7 @@ pub mod data;
 pub mod model;
 #[cfg(test)]
 mod model_tests;
+pub mod sections;
 pub mod sys;
 pub mod transfer;
 pub mod welcome;

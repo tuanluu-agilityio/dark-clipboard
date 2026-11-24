@@ -15,4 +15,4 @@ Icons (45): search, settings, x, pin, pin-off, star, lock, shield-check, eye-off
 clipboard-paste, type, wand-sparkles, pencil, sticky-note, tag, folder, folder-plus, layers,
 file-text, link, code, image, file, clock, history, more-horizontal, check, undo-2, keyboard, pause,
 play, database, hard-drive-download, upload, download, info, refresh-cw, panel-right, list-checks,
-chevron-right, chevron-down, plus, calendar (Task 703).
+chevron-right, chevron-down, plus, calendar (Task 703), sliders-horizontal, arrow-left-right (Task 705).
