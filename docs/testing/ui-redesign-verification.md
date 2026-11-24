@@ -83,3 +83,44 @@ Means (bytes, MiB): hidden baseline 10,162,176 (9.69), Phase 7 10,051,584 (9.59)
 - **P8, P7 animation review**: owner and review.
 - **P1 in a clean state**: three planned runs were disturbed by load on the owner's live machine; quiet runs 4 and 5 are the usable numbers. Re-run `scripts/measure-popup.ps1 -Trials 50 -SeedClips 10000` (the script writes no settings file, so on a fresh folder the welcome window shows and capture stays off) on an idle machine for a final answer.
 - Visual checks (icons, DPI, Narrator, Vietnamese) are owner rows: `docs/testing/platform-checklist.md`, section "Phase 7 demo checklist (Task 708, Windows)".
+
+## Task 711: exe size (F-39)
+
+Release exe (`cargo build --release -p dark-clipboard`, Windows, one shared `--target-dir`), built at each `main` merge commit of Phase 7. The v0.1.2 row reproduces the recorded 13,105,664 B and the Task 707 row reproduces the 14,079,488 B of D-086.
+
+| Merge commit | Task | Exe bytes | vs v0.1.2 (KiB) | Step (KiB) |
+|---|---|---|---|---|
+| `558f81f` | v0.1.2 | 13,105,664 | 0.0 | |
+| `d314c55` | 700 kit and tokens | 13,142,528 | +36.0 | +36.0 |
+| `c67b9ba` | 710 app icon | 13,353,984 | +242.5 | +206.5 |
+| `d521ed7` | 701 popup layout | 13,526,528 | +411.0 | +168.5 |
+| `072500c` | 703 history layout (on 701) | 13,617,152 | +499.5 | +88.5 |
+| `69aea22` | 702 popup preview (on 701, 703) | 13,733,376 | +613.0 | +113.5 |
+| `474fbad` | 705 settings | 13,902,336 | +778.0 | +165.0 |
+| `9efe38a` | 704 history interaction | 13,981,696 | +855.5 | +77.5 |
+| `4b69ad1` | 707 accessibility (includes 706) | 14,079,488 | +951.0 | +95.5 |
+
+Task 706 was merged inside the 707 branch, so its share is in the last row.
+
+Section sizes (PE headers) v0.1.2 -> Task 707: `.text` 7,763,770 -> 8,471,194 (+691 KiB), `.rdata` 5,033,214 -> 5,199,254 (+162 KiB), `.pdata` +29 KiB, `.rsrc` 0 -> 58,096 (the icon, +57 KiB), `.reloc` +12 KiB. Generated Slint code (`out/app.rs`): 8.75 MB -> 12.14 MB of Rust source, 3,440 bindings (median 1.1 KB each), 230 item-geometry and layout-info functions, 226 accessibility functions.
+
+### Root causes
+
+1. **PNG window icon (Task 710): -116 KiB.** `icon: @image-url("../res/window-64.png")` in four windows makes Slint link its raster image decoders (`image-default-formats`). Measured by removing the four lines: 14,079,488 -> 13,960,192 B. No other `.slint` file names a raster image.
+2. **Generated Slint code (Tasks 701-707): about +600 KiB of `.text`.** The growth follows the number of elements, bindings and accessibility entries per window (settings window alone: 0.6 MB of Rust for the window struct plus 1.7 MB in its sub-components). It is spread over thousands of small bindings; there is no single large item. Nothing in it can be removed without changing the UI.
+3. **Data (Task 710): +57 KiB icon resource (`.ico`, 8 sizes) and +36 KiB tray images (16 raw RGBA files), +16 KiB window icon as raw RGBA.** Required by the feature.
+
+### Tried
+
+| Experiment | Exe bytes | Result |
+|---|---|---|
+| Remove `ui/kit/gallery.slint` (`KitGallery`, 208 KB of generated source) | 14,079,488 (unchanged) | No size effect (the linker already dropped it); removed anyway (dead code, slower builds); scans now cover the real windows |
+| Window icon from raw RGBA set in `theme::apply` instead of the PNG | 13,977,088 | **-102,400 B (-100 KiB)** net of the 16 KiB of pixel data |
+| `opt-level = "s"` for the `dark-clipboard` package (`--config`) | 14,597,632 | +620 KiB: worse; `"z"` stays |
+| Every kit component read for per-instance inlining (from the compiler rules, not measured) (root `opacity`, `visible`, animations) | | Only the `DialogScrim` family inlines (5 instances, one each); the `Icon` 49-way chain is a single sub-component; no duplication found |
+
+### Result
+
+13,977,088 B = **+851 KiB** over v0.1.2 (was +951 KiB). The +300 KiB budget is not reached: the remaining +851 KiB is about 600 KiB of generated UI code for the redesigned windows, 57 KiB of icon resource, 52 KiB of icon pixel data, plus smaller growth of `.rdata`, `.pdata` and `.reloc`. Reaching +300 KiB would need removing UI (elements, accessibility properties) or changing the Slint feature set or renderers, which is a behaviour change and out of scope.
+
+Commands: `git worktree add --detach <scratch> <commit>`, `cargo build --release -p dark-clipboard --target-dir <shared>`, size with `stat -c %s <target>/release/dark-clipboard.exe`; sections read from the PE header; generated code from `<target>/release/build/dark-clipboard/*/out/app.rs`.
