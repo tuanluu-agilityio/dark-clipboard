@@ -24,6 +24,8 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ### Fixed
 
+- Task 711: the row menus (popup "..." button and right click, history right click, Menu key and Shift+F10) and the history date menu opened at the right or bottom edge of the window instead of under the row or the pointer; they now open where they should.
+- Task 711: the three capture-mode cards in Settings (Recording, Private, Paused) were drawn narrow and content-sized, with cut-off titles; they now share the row equally.
 - Task 703: a masked clip (a clip that may hold a secret) no longer shows the first characters of the secret in the history list; the row and the detail panel show only the fixed "Hidden" text, and a search never highlights it.
 
 ### Known issues

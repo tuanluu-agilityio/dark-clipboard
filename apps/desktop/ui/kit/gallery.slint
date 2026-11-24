@@ -132,6 +132,9 @@ export component KitGallery inherits Window {
     }
 
     menu := Menu {
+        // Anchor at the window origin: `open(x, y)` takes window positions.
+        x: 0px;
+        y: 0px;
         entries: root.entries;
         highlighted: root.highlighted;
         // The host decides what keys do (Task 701); the gallery only needs the wiring to compile.

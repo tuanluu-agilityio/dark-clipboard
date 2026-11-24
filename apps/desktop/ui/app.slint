@@ -526,6 +526,9 @@ export component MainWindow inherits Window {
 
     // The row menu and More filters: an in-window menu whose keys Rust decides (D-079, F-31).
     menu := Menu {
+        // Anchor at the window origin: `open(x, y)` takes window positions.
+        x: 0px;
+        y: 0px;
         entries: root.menu-entries;
         menu-width: root.menu-width;
         highlighted: root.menu-highlighted;
