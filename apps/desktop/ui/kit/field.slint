@@ -1,0 +1,92 @@
+// Field (Task 705): a restyled single-line text field with the behaviour of the std `LineEdit` it
+// replaces: `text` (in-out), `edited()` (the user changed the text, never a programmatic write),
+// `accepted()` (Enter) and `input-type`. 32 px high, radius 6, 2 px `focus` ring; an `error`
+// turns the border `danger` and, unless `inline-error` is false, is written under the field
+// (the settings rows write it under the row instead). Role `text-input`.
+
+import { Theme } from "../theme.slint";
+
+export component Field inherits VerticalLayout {
+    in-out property <string> text <=> input.text;
+    in property <string> placeholder;
+    // Empty: fine. Text: the message (also the accessible description).
+    in property <string> error;
+    in property <bool> inline-error: true;
+    // Accessible name (i18n).
+    in property <string> label;
+    in property <InputType> input-type: InputType.text;
+    out property <bool> has-focus: input.has-focus;
+    callback edited();
+    callback accepted();
+
+    spacing: 4px;
+
+    Rectangle {
+        height: 32px;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: root.error != "" ? Theme.danger : (input.has-focus ? Theme.focus : Theme.border-strong);
+        background: Theme.surface;
+        clip: true;
+
+        // Pressing the padding around the text still focuses the field.
+        TouchArea {
+            mouse-cursor: MouseCursor.text;
+            clicked => {
+                input.focus();
+            }
+        }
+
+        if input.text == "": Text {
+            x: 10px;
+            width: parent.width - 20px;
+            height: parent.height;
+            text: root.placeholder;
+            color: Theme.text-3;
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        input := TextInput {
+            x: 10px;
+            width: parent.width - 20px;
+            height: self.preferred-height;
+            y: (parent.height - self.height) / 2;
+            color: Theme.text;
+            font-size: 13px;
+            single-line: true;
+            input-type: root.input-type;
+            selection-background-color: Theme.accent.with-alpha(0.4);
+            selection-foreground-color: Theme.text;
+            accessible-role: text-input;
+            accessible-label: root.label != "" ? root.label : root.placeholder;
+            accessible-description: root.error;
+            accepted => {
+                root.accepted();
+            }
+            edited => {
+                root.edited();
+            }
+        }
+
+        Rectangle {
+            visible: input.has-focus;
+            x: -1px;
+            y: -1px;
+            width: parent.width + 2px;
+            height: parent.height + 2px;
+            border-radius: 6px;
+            border-width: 2px;
+            border-color: Theme.focus;
+            background: transparent;
+        }
+    }
+
+    if root.inline-error && root.error != "": Text {
+        text: root.error;
+        color: Theme.danger;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+}

@@ -310,6 +310,57 @@ messages! {
     SettingsSectionPrivacy => ("Privacy", "Riêng tư"),
     SettingsSectionHistory => ("History", "Lịch sử"),
     SettingsSectionAbout => ("About", "Giới thiệu"),
+    // Settings redesign (Task 705): five sections, cards, capture-mode cards, save bar, dialogs.
+    SettingsSectionCapture => ("Capture & Privacy", "Ghi nhớ & Riêng tư"),
+    SettingsSectionStorage => ("History & Storage", "Lịch sử & Lưu trữ"),
+    SettingsSectionData => ("Data & Transfer", "Dữ liệu & Chuyển"),
+    SettingsDescGeneral => (
+        "Shortcut, language, startup and how the popup behaves.",
+        "Phím tắt, ngôn ngữ, khởi động và cách cửa sổ nhanh hoạt động."
+    ),
+    SettingsDescCapture => (
+        "What Dark Clipboard keeps, and what it never keeps.",
+        "Những gì Dark Clipboard lưu, và những gì không bao giờ lưu."
+    ),
+    SettingsDescStorage => (
+        "Limits, storage use and cleaning up your history.",
+        "Giới hạn, dung lượng đã dùng và dọn dẹp lịch sử."
+    ),
+    SettingsDescData => (
+        "Backup, restore, import and where your data lives.",
+        "Sao lưu, khôi phục, nhập và nơi dữ liệu được lưu."
+    ),
+    SettingsDescAbout => (
+        "Version, updates, what this system supports and licences.",
+        "Phiên bản, cập nhật, những gì hệ thống này hỗ trợ và giấy phép."
+    ),
+    SettingsCardPopup => ("Popup", "Cửa sổ nhanh"),
+    SettingsCardApp => ("Application", "Ứng dụng"),
+    SettingsCardSensitive => ("Sensitive content", "Nội dung nhạy cảm"),
+    SettingsCardLimits => ("Limits", "Giới hạn"),
+    SettingsEnterPastesNote => (
+        "When this is off, Enter only copies and Ctrl+Enter pastes.",
+        "Khi tắt, Enter chỉ sao chép và Ctrl+Enter mới dán."
+    ),
+    SettingsCardRecording => ("Recording", "Đang ghi"),
+    SettingsCardPrivate => ("Private", "Riêng tư"),
+    SettingsCardPaused => ("Paused", "Tạm dừng"),
+    SettingsCardRecordingLine => ("Saves what you copy", "Lưu những gì bạn sao chép"),
+    SettingsCardPrivateLine => ("Nothing is saved", "Không lưu gì cả"),
+    SettingsCardPausedLine => ("Stops until you resume", "Dừng đến khi bạn tiếp tục"),
+    SettingsAlwaysProtected => ("Always protected", "Luôn được bảo vệ"),
+    SettingsProtectedOs => (
+        "System and password-manager markers",
+        "Dấu của hệ thống và trình quản lý mật khẩu"
+    ),
+    SettingsProtectedDarkshot => ("Darkshot clipboard marker", "Dấu bảng nhớ tạm của Darkshot"),
+    SettingsUnsaved => ("Unsaved changes", "Có thay đổi chưa lưu"),
+    SettingsKeyCtrlS => ("Ctrl+S", "Ctrl+S"),
+    SettingsDlgRemove => ("Remove built-in exclusion", "Gỡ loại trừ có sẵn"),
+    SettingsDlgLimits => ("Lower the limits?", "Hạ thấp giới hạn?"),
+    SettingsDlgClear => ("Clear history?", "Xóa lịch sử?"),
+    SettingsDlgRestore => ("Restore this backup?", "Khôi phục bản sao lưu này?"),
+    SettingsClearRow => ("Remove clips from the history", "Xóa mục khỏi lịch sử"),
     SettingsReadOnlyBanner => (
         "The settings file could not be read or is from a newer version. Defaults are shown and nothing can be saved, so your file is never overwritten.",
         "Không đọc được tệp cài đặt hoặc tệp do phiên bản mới hơn tạo ra. Đang hiện giá trị mặc định và không thể lưu, để tệp của bạn không bị ghi đè."
@@ -952,6 +1003,7 @@ pub const SAME_IN_BOTH: &[Msg] = &[
     Msg::UiSizePixels,
     Msg::UiKeyMenu,
     Msg::UiKeyCtrlE,
+    Msg::SettingsKeyCtrlS,
     Msg::HistKeyCtrlN,
     Msg::HistKeyCtrlG,
     Msg::HistKeyCtrlA,

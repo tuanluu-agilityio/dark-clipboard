@@ -1,0 +1,210 @@
+// Select (Task 705): a restyled drop-down with the behaviour of the std `ComboBox` it replaces
+// (`current-index`, `model`, `selected(int)`). Space or Alt+Down opens an in-window list
+// (`PopupWindow`, so the host window keeps the focus), the arrows move the highlight, Enter
+// chooses, Esc closes only the list. Like `Menu`, it does not decide what a key does (F-31): its
+// `FocusScope`s forward the key text to the host through `key(string, bool, bool) -> int`
+// (text, Alt held, list open) and the host (`src/ui/settings_keys.rs`) answers with a code:
+// 0 not handled, 1 open, 2 previous, 3 next, 4 first, 5 last, 6 choose, 7 close.
+//
+// While the list is open Slint sends every key to it (D-079), so its `FocusScope` takes the
+// focus when the list is created (`init`). Role `combobox`; `label` is the accessible name.
+
+import { Theme } from "../theme.slint";
+import { Icon, IconName } from "icon.slint";
+
+export component Select inherits FocusScope {
+    in-out property <int> current-index;
+    in property <[string]> model;
+    // Accessible name and description (i18n); the visible label lives in the setting row.
+    in property <string> label;
+    in property <string> description;
+    callback selected(int);
+    callback key(string, bool, bool) -> int;
+
+    property <int> highlighted;
+    // True while the list has the keyboard focus (set from inside the list).
+    property <bool> opened;
+
+    width: 200px;
+    height: 32px;
+    focus-on-click: false;
+    accessible-role: combobox;
+    accessible-label: root.label;
+    accessible-description: root.description;
+    accessible-value: root.model[root.current-index];
+    accessible-expandable: true;
+    accessible-expanded: root.opened;
+    accessible-action-default => {
+        root.open();
+    }
+    accessible-action-expand => {
+        root.open();
+    }
+
+    public function open() {
+        root.highlighted = root.current-index;
+        pop.show();
+    }
+
+    function choose(i: int) {
+        root.current-index = i;
+        root.selected(i);
+        pop.close();
+    }
+
+    // Applies the host's answer for a key; false when the key is not for the select.
+    function apply(code: int) -> bool {
+        if (code == 0) {
+            return false;
+        }
+        if (code == 1) {
+            if (!root.opened) {
+                root.open();
+            }
+            return true;
+        }
+        if (!root.opened) {
+            return false;
+        }
+        if (code == 2) {
+            root.highlighted = Math.max(root.highlighted - 1, 0);
+        } else if (code == 3) {
+            root.highlighted = Math.min(root.highlighted + 1, root.model.length - 1);
+        } else if (code == 4) {
+            root.highlighted = 0;
+        } else if (code == 5) {
+            root.highlighted = root.model.length - 1;
+        } else if (code == 6) {
+            root.choose(root.highlighted);
+        } else if (code == 7) {
+            pop.close();
+        }
+        return true;
+    }
+
+    key-pressed(e) => {
+        if (root.enabled && root.apply(root.key(e.text, e.modifiers.alt, false))) {
+            return accept;
+        }
+        reject
+    }
+
+    Rectangle {
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        background: !root.enabled ? Theme.surface : (touch.has-hover ? Theme.raised : Theme.surface);
+
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            spacing: 8px;
+            Text {
+                text: root.model[root.current-index];
+                color: root.enabled ? Theme.text : Theme.text-3;
+                font-size: 13px;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            Icon {
+                name: IconName.chevron-down;
+                size: 16px;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+    }
+
+    Rectangle {
+        visible: root.has-focus || root.opened;
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: 8px;
+        border-width: 2px;
+        border-color: Theme.focus;
+        background: transparent;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.focus();
+            root.open();
+        }
+    }
+
+    pop := PopupWindow {
+        x: 0px;
+        y: root.height + 2px;
+        width: root.width;
+        height: root.model.length * 28px + 8px;
+        close-policy: PopupClosePolicy.close-on-click-outside;
+
+        Rectangle {
+            background: Theme.raised;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+
+            FocusScope {
+                init => {
+                    self.focus();
+                }
+                changed has-focus => {
+                    root.opened = self.has-focus;
+                }
+                key-pressed(e) => {
+                    if (root.apply(root.key(e.text, e.modifiers.alt, true))) {
+                        return accept;
+                    }
+                    reject
+                }
+
+                VerticalLayout {
+                    padding: 4px;
+                    for item[i] in root.model: Rectangle {
+                        height: 28px;
+                        border-radius: 6px;
+                        background: root.highlighted == i ? Theme.selected : transparent;
+                        accessible-role: list-item;
+                        accessible-label: item;
+                        accessible-action-default => {
+                            root.choose(i);
+                        }
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            spacing: 8px;
+                            Text {
+                                text: item;
+                                color: Theme.text;
+                                font-size: 13px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                            if root.current-index == i: Icon {
+                                name: IconName.check;
+                                size: 16px;
+                                tint: Theme.accent;
+                                y: (parent.height - self.height) / 2;
+                            }
+                        }
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            moved => {
+                                root.highlighted = i;
+                            }
+                            clicked => {
+                                root.choose(i);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
