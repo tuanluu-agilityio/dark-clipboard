@@ -1,5 +1,7 @@
 # Windows alpha artifact (Task 210)
 
+> **Superseded for releases.** Release builds, their asset names, SHA-256 checksums and verification are now described in [docs/release.md](../release.md) and produced by `.github/workflows/release.yml` (Tasks 408 and 410, D-068). This file is kept as the history of the first internal alpha build, hashed on one machine; nothing below describes a release. The version of the workspace is now 0.1.0.
+
 Facts about the release build that was hashed for the internal Windows alpha. "0.1.0-alpha" is the milestone name only: the binary reports version 0.0.1 (`CARGO_PKG_VERSION`, the `start` log line and Settings > About), and the version is not bumped until the owner asks for a release (D-056). This is a record, not a release: no tag was created, no GitHub release exists and the file was not uploaded anywhere.
 
 | Item | Value |

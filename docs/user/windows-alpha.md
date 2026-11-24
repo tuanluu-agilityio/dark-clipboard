@@ -1,15 +1,15 @@
-# Dark Clipboard for Windows: alpha user guide
+# Dark Clipboard 0.1.0 for Windows: user guide
 
-This is the guide for the internal Windows alpha (0.1.0-alpha). It is built from source and is not released. The view-models behind the screens below (their logic, not the screens themselves) are covered by automated tests; the screens have **not yet been checked by hand on a real desktop**: the rows are listed as untested in the [platform checklist](../testing/platform-checklist.md). If something here does not match what you see, the guide is wrong, not you. macOS and Linux have no app yet.
+This is the guide for Dark Clipboard 0.1.0, an **alpha** for Windows 11 x64 (the file keeps its old name so that links to it still work). macOS and Linux have no app yet. The logic behind the screens below is covered by automated tests, but the screens have **not yet been checked by hand on a real desktop**: those rows are listed as untested in the [platform checklist](../testing/platform-checklist.md). If something here does not match what you see, the guide is wrong, not you. The binary is unsigned.
 
 ## Install and start
 
-There is no installer. Build and run it from the repository (see the [README](../../README.md#build-and-run)):
+There is no installer. Download the zip from the GitHub release, check its SHA-256 and unzip it (see the [README](../../README.md#download-windows-x64) and [release.md](../release.md#verifying-a-download)), then start `dark-clipboard.exe`. Windows SmartScreen may warn because the file is unsigned. To build it yourself instead (see the [README](../../README.md#build-and-run)):
 
     cargo build --release -p dark-clipboard
     target\release\dark-clipboard.exe
 
-The app starts hidden. Look for its icon in the notification area (you may need to open the overflow arrow). The build that was hashed for this alpha is described in [alpha-artifact.md](../testing/alpha-artifact.md).
+The app starts hidden. Look for its icon in the notification area (you may need to open the overflow arrow). Settings > About shows the version (0.1.0).
 
 ## First run
 
@@ -77,19 +77,52 @@ You can also pick the mode in Settings > Privacy.
 - Clips from excluded apps (below).
 - Anything that arrives while capture is off, paused or in private mode.
 
-The app has no network access and sends nothing anywhere. There is no telemetry. The log file contains event names and counts, never clip content.
+No account, no cloud, no telemetry. The app makes no network request, with one opt-in exception: the update check (see "Update check" below). The log file contains event names and counts, never clip content.
 
-Limits of this protection: app identity on the clipboard is cooperative, so the markers are the main defence. Verified by hand so far: KeePassXC 2.8.0 and Darkshot. Bitwarden, 1Password, Office and RDP are untested.
+Limits of this protection: app identity on the clipboard is cooperative, so the markers are the main defence. Verified by hand so far: KeePassXC 2.8.0 and Darkshot 0.6.0. KeePass 2, Bitwarden, 1Password, Office and RDP are untested.
 
 ## Excluded apps
 
-Settings > Privacy lists apps whose copies are never stored. The built-in list contains password managers such as KeePassXC and Darkshot. You can add your own apps and remove built-in ones after a confirmation (removing the Darkshot entry does not make its clips storable, because Darkshot's markers still exclude them).
+Settings > Privacy lists apps whose copies are never stored. The built-in list contains KeePassXC, KeePass 2 (`keepass.exe`; only in a settings file created by 0.1.0, an older settings file keeps its own list), 1Password, Bitwarden and Darkshot. You can add your own apps and remove built-in ones after a confirmation (removing the Darkshot entry does not make its clips storable, because Darkshot's markers still exclude them).
 
 ## Settings
 
-Settings has four sections: **General** (shortcut, language, start at login, popup behaviour, "Enter also pastes"), **Privacy** (capture mode, the privacy markers note, sensitive-data handling, the kinds of content captured, excluded apps, a "Start capturing..." button if capture is off), **History** (retention limits for items, days and storage size; 0 means unlimited; lowering a limit asks first because old clips can then be removed) and **About** (version, licence notices, show the welcome again). One Save applies the whole form. If the settings file cannot be written, you see a message and the app does not claim it saved.
+Settings has four sections: **General** (shortcut, language, start at login, popup behaviour, "Enter also pastes"), **Privacy** (capture mode, the privacy markers note, sensitive-data handling, the kinds of content captured, excluded apps, a "Start capturing..." button if capture is off), **History** (retention limits for items, days and storage size; 0 means unlimited; lowering a limit asks first because old clips can then be removed; storage and cleanup; backup and transfer) and **About** (version, licence notices, show the welcome again, the update check). One Save applies the whole form. If the settings file cannot be written, you see a message and the app does not claim it saved.
 
 English and Vietnamese are available; the first run follows your Windows language.
+
+## Collections, tags, notes and favorites
+
+In the history window the left pane lists **Favorites**, your **collections** and your **tags**, each with a count; pick one to filter the list. Keys: `Ctrl+D` favorite, `Ctrl+N` note (up to 4,000 characters), `Ctrl+G` tags, `Ctrl+L` / `Ctrl+Shift+L` add to / remove from a collection, `Ctrl+Shift+N` new collection, `Ctrl+Shift+R` rename, `Ctrl+Shift+Del` delete a collection (asks first; its clips stay). The popup shows a star on favorites and has Favorites and collection chips; `Ctrl+D` toggles the favorite. A masked clip takes no add action. "Snippets" are a collection plus pinned clips; there is no template engine.
+
+## Transforms and edited copies
+
+`Ctrl+T` (popup or history window) opens "Copy as...": trim, line endings, upper or lower case, JSON pretty or minify, URL encode or decode, Base64 encode or decode, HTML to text. You see the result before you copy it; copying writes it to the clipboard and stores nothing. Input over 1 MiB is refused. "Edit..." (`Ctrl+E`, history window) opens a text clip in an editor; "Save as new clip" (or `Ctrl+Enter`) stores a new clip that goes through the normal rules (a secret is dropped or masked as your setting says). The original never changes. Images, files and masked clips have neither.
+
+## Data management
+
+Settings > History shows how much is stored and has cleanup tools, each with a confirmation that names the count: **Clear history** (keeps pinned clips and favorites unless you untick the box), **Delete old clips** (pinned clips and favorites are kept), **Remove orphaned files** and **Compact database** (needs free disk space of twice the database size). Deleting is real: the search index is merged and the write-ahead log truncated at once, so deleted words do not stay in `history.db`. Clips removed automatically by the retention limits leave the file within about 10 minutes.
+
+## Backup, restore, export and import
+
+Settings > History > Backup and transfer (the file dialogs are the Windows ones and were never run by hand):
+
+- **Back up now...** writes a `.dcbackup` file with your history, images, collections, tags, notes and favorites. Masked and expired clips are left out. **It is a plain zip and is not encrypted**, and it keeps clips that apps asked not to sync to the cloud: if you save it in a synced folder (OneDrive, Dropbox, Google Drive) your whole history is uploaded. Keep backups out of synced folders.
+- **Restore from backup...** asks first and checks the whole file before changing anything. A damaged, unsafe or newer file is refused with a message and nothing changes. Your previous history is kept as `history.db.pre-restore-<time>` until the app starts again. A restore needs free disk space of about twice the backup plus your database.
+- **Import clips...** adds clips from a `.dcexport` file. Nothing in the file is trusted: kinds, previews and hashes are worked out again, sources are dropped, secrets follow your setting, file lists are skipped, duplicates are merged. Refused in private mode.
+- **Export** (`Ctrl+Shift+E` in the history window) writes the collection you are looking at, or the marked clips. Masked and sensitive clips and clips marked "do not upload to the cloud" are never exported; the message says how many were left out.
+
+## Update check
+
+Off by default. Settings > About has "Check for updates" and "Automatically check weekly". A check is one HTTPS request to `api.github.com` (this project's latest release) with only a fixed `User-Agent: DarkClipboard/<version>` and an `Accept` header: no clip data, settings or identifiers. Your network address is visible to GitHub as in any web request; `HTTPS_PROXY`, `HTTP_PROXY` and `ALL_PROXY` are honoured, the Windows system proxy is not. The answer is either "You are up to date" or "New version available: X" with a button that opens the release page in your browser. Nothing is downloaded or installed. With the toggle off the app makes no request unless you press the button. With a read-only settings file the toggle is disabled. This has not been checked by hand.
+
+## If the app cannot start
+
+At start the app checks its history database and its connection name, and tells you instead of quitting silently:
+
+- **A history from a newer Dark Clipboard:** a message explains it and nothing is changed. Install the newer version.
+- **A damaged history:** a message offers to move it aside. Yes renames `history.db` (with its `-wal` and `-shm` files), `blobs` and any `history.db.pre-...` copies with the mark `damaged-<time>` and starts with an empty history; nothing is deleted and you can then restore a backup. The moved files keep all your old clips, including ones that would have expired, and retention and Clear history do not touch them: delete them yourself when you no longer need them. `--headless` only prints the explanation.
+- **"Dark Clipboard could not start: another program is using its connection.":** another program holds the app's named pipe. Close it or end that process and start again. A previous Dark Clipboard that is still shutting down is waited for about a second.
 
 ## Start at login
 
@@ -103,7 +136,7 @@ Off by default. Switch it on in Settings > General or with the box in the welcom
 | Settings | `%APPDATA%\DarkClipboard\settings.json` |
 | Start at login | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `DarkClipboard` |
 
-With `--data-dir <folder>` the history, log and settings are all in that folder. A `--data-dir` that names the default folder (`%LOCALAPPDATA%\DarkClipboard`) is the normal profile: settings stay in `%APPDATA%\DarkClipboard\settings.json`. A second start with the same options forwards `--toggle` or `--quit` to the running app.
+With `--data-dir <folder>` the history, log and settings are all in that folder. A `--data-dir` that names the default folder (`%LOCALAPPDATA%\DarkClipboard`) is the normal profile: settings stay in `%APPDATA%\DarkClipboard\settings.json`. A second start with the same options forwards `--toggle` or `--quit` to the running app. At every start the app gives the data folder a protected access list (only your account and SYSTEM), but only for the default folder or a folder it created itself (it leaves a `.dark-clipboard-data` marker); a `--data-dir` folder that existed before 0.1.0 is never changed. The access list has not been checked by hand yet. It also removes itself from Windows Error Reporting for your account, so that crash reports do not carry clips; this has not been checked by hand.
 
 ## Uninstall and data removal
 
@@ -119,4 +152,4 @@ If you used `--data-dir`, delete that folder instead of steps 3 and 4. Deleting 
 
 ## Known limits
 
-See "Known issues" in the [CHANGELOG](../../CHANGELOG.md). Notably: the Windows build has no console, so `--toggle`, `--quit` and `--help` do not set a shell exit code in an interactive terminal; if Explorer restarts the tray icon may disappear until you restart the app; and most UI behaviour described here is untested by hand.
+See "Known issues" in the [CHANGELOG](../../CHANGELOG.md). Notably: the Windows build has no console, so `--toggle`, `--quit` and `--help` do not set a shell exit code in an interactive terminal; if Explorer restarts the tray icon may disappear until you restart the app; a backup is not encrypted; and most UI behaviour described here is untested by hand.
