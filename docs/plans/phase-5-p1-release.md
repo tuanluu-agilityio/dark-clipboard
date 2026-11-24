@@ -47,3 +47,15 @@ Phase 5 starts before Phase 4 because Phase 4 cannot be verified without hardwar
 | 9 | 407 Security re-review (Windows scope) | security-reviewer / opus | orchestrator | Phase gate |
 
 Not run without the owner: 408 (release workflow; a test tag is a public action), 410 (0.1.0 docs/website), and the 0.1.0 release itself (releases only when the owner asks; macOS/Linux preview needs Phase 4). 409 is done (GPLv3 applied in Task 201, D-045). Paste Stack is planned for 0.2 (D-037); Snippets = a user collection plus pinned clips (403 docs). Markdown conversion is not in 404 (no reliable deterministic converter without a large dependency). Item "rename" is not added (clips have no name field; the note covers it).
+
+## Phase review result (2026-11-24, D-074)
+
+Re-review after Task 415: **APPROVED** (specialist / opus). Gate on `main` 7906839: ALL CHECKS PASSED (1006 passed, 0 failed, 32 ignored).
+
+- [x] RF1 Migration 1→2 at 10k clips, failure mid-migration: `migration_1_to_2_keeps_10k_clips_and_creates_favorites`, `migration_2_failure_mid_transaction_keeps_v1_and_backup` (restore from `.bak` not exercised, F-28).
+- [x] RF2 Newer backup refused: `newer_backup_is_refused_and_live_data_is_unchanged`, `restoring_a_newer_backup_is_refused_and_keeps_the_history`.
+- [x] RF3 Masked clip in an exported collection excluded and counted: `export_collection_with_masked_member_excludes_and_counts` (Task 415).
+- [x] RF4 Vietnamese uppercase tag normalized, searchable without accents: `vietnamese_tag_searchable_without_accents`.
+- [x] RF5 Fuzzed DIB/PNG/HTML: no panic, bounded memory (stable fallback harness, `docs/testing/fuzzing.md`); TIFF not applicable (no decoder). libFuzzer not run (F-24).
+- [x] Backup privacy (review B1): Task 415 tests (`backup_after_eviction_has_no_evicted_tokens` and others).
+- [ ] Owner manual rows in `docs/testing/platform-checklist.md` (UI, J7 keyboard flows, file dialogs, WER/ACL checks): untested by hand (GC-19).
