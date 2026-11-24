@@ -110,14 +110,16 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 705 Settings (package: scaffolder sonnet 83,008) | task/705-settings | builder | sonnet | done (five sections, kit Select/Field/ConfirmDialog, Always-protected card without controls, dirty save bar + Ctrl+S with edit counter, settings key map; D-082) | 357,438 (incl. package) | 77,983 (security-reviewer opus: APPROVED, 2 should-fix (dirty during save, Enter on Switch in dialog) fixed; focus return → 707) | 8,872 | 444,293 |
 | 706 Secondary surfaces + F1 sheet (package: scaffolder sonnet 73,791) | task/706-secondary-surfaces | builder | sonnet | done (F1/Ctrl+/ shortcuts sheet with drift test against the real key maps, EmptyState, welcome, Copy as/Edit panels, org dialogs, delete confirmation restyled; D-084) | 379,484 (incl. package) | 34,284 (reviewer sonnet: APPROVED, nits) | 0 | 413,768 |
 | 707 Accessibility pass (packages 707+708: scaffolder sonnet 74,543) | task/707-accessibility | builder | sonnet | done (A3 role/label scan over 73 instances, A6 hit-target scan, Narrator description tests incl. masked rows in both windows, A7 budgets for welcome/F1 sheet/dialogs, settings focus return to the opener; D-085; nothing needed fixing in labels/targets) | 234,312 (incl. packages) | 43,260 (reviewer sonnet: APPROVED, 1 should-fix → F-36) | 0 | 277,572 |
-| 708 Verification | task/708-verification | platform-verifier | sonnet | in progress | | | | |
-| 709 Phase review | | specialist | opus | pending | | | | |
+| 708 Verification | task/708-verification | platform-verifier | sonnet | done (v0.1.2 vs Phase 7 on 10k clips: P1 quiet 16.6 → 22.3 ms ≤ 30; P3 9.69 → 9.59 MiB (absolute 9 MiB missed by both, D-086); P4 +0.56 MiB; P5 0 %; P6 +951 KiB (budget 300, missed, F-39); P2 not measurable; demo checklist added) | 78,656 | 25,633 (reviewer sonnet: APPROVED) | 0 | 104,289 |
+| 709 Phase review | main 4b69ad1 (read-only worktree) | specialist | opus | done: **APPROVED** (Review Focus 1–4, 6 proven in code; 5 = Task 708; nits → F-38) | | 128,253 | | 128,253 |
+
+Phase 7 complete 2026-11-25 (709 APPROVED; budgets per D-086; every visual, keyboard, Narrator and DPI check is an untested owner row, see the "Phase 7 demo checklist" in `docs/testing/platform-checklist.md`).
 
 ## Totals by model
 
 | Model | Tokens |
 |---|---|
-| opus | 12,389,805 |
-| sonnet | 9,125,706 |
+| opus | 12,518,058 |
+| sonnet | 9,229,995 |
 | haiku | 0 |
-| **Total** | **21,515,511** (subagents only; orchestrator not measured) |
+| **Total** | **21,748,053** (subagents only; orchestrator not measured) |
