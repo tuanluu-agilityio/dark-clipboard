@@ -372,6 +372,27 @@ All rows **untested** until the owner runs them (agents never launch the UI, cha
 | App icon (Task 710): tray icon in each state (capturing, paused, off, private, capture unavailable) on a light and a dark taskbar | Capturing: plain icon; paused and off: amber badge with pause bars; private: grey badge with a struck eye; unavailable: red badge with "!"; the clipboard, clip and lines stay distinct | **untested** |
 | App icon (Task 710): the tray icon at 100 % and at 150 % display scaling (sign out and in after changing the scale) | Crisp at both (16 px image at 100 %, 24 px at 150 %), no blur or wrong size | **untested** |
 
+## Windows: history layout (Task 703)
+
+All rows **untested** until the owner runs them (agents never click, type, take screenshots or write the real clipboard, GC-19). Use a scratch history (`--seed-demo-clips 200 --data-dir <temp>`, then run with the same `--data-dir`). Open the history window from the tray.
+
+| Check | Expected | Status |
+|---|---|---|
+| History at 100 %, 150 % and 200 % display scaling, and with the window dragged between two monitors of different DPI | Icons are crisp, rows are 56 px, the sidebar (216 px) and the detail panel (340 px) keep their width, nothing is clipped | **untested** |
+| Tab walk from the search field | The focus ring visits: search, date button, select toggle, sidebar, list, detail toolbar, tags +, note, collections + (report the actual order if it differs) | **untested** |
+| Sidebar: click or Enter on All, Pinned, Favorites, a type, a collection, a tag, an app | One item per group is on; the list filters as the old left pane did; selecting it again clears it; counts show on Favorites, collections and tags only | **untested** |
+| Sidebar: collapse and expand a group (click the header, or Enter, Left and Right on it); close and reopen the window | Apps starts collapsed; every group's state is back to the default after reopening | **untested** |
+| Sidebar: + on the Collections header, then rename and delete (pencil and bin appear while a collection is the filter), and Ctrl+Shift+N, Ctrl+Shift+R, Ctrl+Shift+Delete | The same dialogs as before; the keys still work | **untested** |
+| Date menu by mouse and by keys (Enter or Space on the focused button, Up, Down, Home, End, a letter, Enter, Esc) | The menu lists Any time, Today, Last 7 days, Last 30 days with a check on the active one; the button shows it; Esc closes the menu first and the window stays open; typing in the search box keeps working after it closes | **untested** |
+| Select toggle (list-checks button) | It marks the row under the cursor like Space and shows as on; pressed again it clears the marks; Ctrl+A and Esc still work; the panel says "N clips" with several marked | **untested** |
+| Every key of the history window: arrows, Shift and Ctrl with arrows, Home, End, Space, Enter, Shift+Enter, Delete, Menu, Ctrl+P, Ctrl+T, Ctrl+E, Ctrl+D, Ctrl+N, Ctrl+G, Ctrl+L, Ctrl+Shift+L, Ctrl+Shift+N, Ctrl+Shift+R, Ctrl+Shift+Delete, Ctrl+Shift+E, Ctrl+A, Esc | Each does what it did before this task | **untested** |
+| Detail toolbar: select a text clip, an image, a file clip, a masked clip and several marked clips | Copy and Copy as plain text only for one clip; Copy as... and Edit a copy... only for one unmasked text clip; Pin, Favorite and Delete follow the marks; disabled buttons look dim and do nothing; Left and Right move between the buttons and Enter presses one | **untested** |
+| Detail panel sections: Tags (+, x), Note (click, Enter), Collections (+, x) | Each opens the existing dialog or changes the clip; the panel updates; the Collections chips list the real collections of the clip | **untested** |
+| A masked clip (copy a fake API key with the sensitive setting "Store masked"), in English and Vietnamese | The row, the detail panel, the tooltips, Narrator and the delete confirmation show only "Hidden: may contain a secret" or the fixed texts, never the first characters of the secret; a search for its first letters does not highlight it | **untested** |
+| Narrator on the window | It reads rows (kind, source, age, tag, Pinned, Favorite, Masked), sidebar items with their counts, the toolbar buttons and the detail toolbar buttons by name | **untested** |
+| Vietnamese pass | The toolbar, the date button, the sidebar, the detail toolbar tooltips, the sections and the status line fit with nothing clipped at 1000 px | **untested** |
+| Copy something so a toast shows | The toast floats above the status line and hides no control | **untested** |
+
 ## macOS
 
 All rows **untested** (no hardware, Q-04).
