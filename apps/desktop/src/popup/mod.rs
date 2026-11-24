@@ -9,6 +9,7 @@ pub mod detail;
 pub mod highlight;
 pub mod keys;
 pub mod list;
+pub mod menu;
 pub mod paste;
 pub mod place;
 pub mod row;

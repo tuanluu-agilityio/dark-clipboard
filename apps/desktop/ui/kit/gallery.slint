@@ -18,9 +18,11 @@ export component KitGallery inherits Window {
     background: Theme.canvas;
 
     in property <[MenuEntry]> entries: [
-        { label: "a", icon: IconName.copy, shortcut: "Ctrl+C", danger: false },
-        { label: "b", icon: IconName.trash-2, shortcut: "", danger: true },
+        { label: "a", icon: IconName.copy, shortcut: "Ctrl+C", danger: false, submenu: false, checked: true },
+        { label: "b", icon: IconName.trash-2, shortcut: "", danger: true, submenu: false, checked: false },
+        { label: "c", icon: IconName.folder, shortcut: "", danger: false, submenu: true, checked: false },
     ];
+    in-out property <int> highlighted;
     callback chosen(int);
     in-out property <bool> flag;
 
@@ -88,6 +90,14 @@ export component KitGallery inherits Window {
 
     menu := Menu {
         entries: root.entries;
+        highlighted: root.highlighted;
+        // The host decides what keys do (Task 701); the gallery only needs the wiring to compile.
+        key(text) => {
+            return text == "";
+        }
+        hovered(i) => {
+            root.highlighted = i;
+        }
         activated(i) => {
             root.chosen(i);
         }

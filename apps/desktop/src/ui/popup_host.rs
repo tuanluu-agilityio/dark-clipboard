@@ -26,17 +26,21 @@
 //! Queries, previews, source names and window titles are never logged or formatted (GC-06,
 //! SR-11).
 
-use super::common::{self, clip_row, Px};
+use super::common::{self, Px};
+use super::generated::{IconName, MenuEntry, SegTab, StatusHint};
 use super::{Chip, ClipRow, MainWindow, Poster, Strings};
 use crate::log::{Log, Val};
 use crate::organize::bulk::favorite_toggle;
 use crate::organize::nav::{self, Nav};
-use crate::popup::chips;
+use crate::popup::chips::{self, MoreEntry, MoreItem, MoreLevel, TabIcon};
 use crate::popup::detail::{DetailModel, DetailRequest};
 use crate::popup::keys::{self, Action, ChipFocus, CopyKind, KeyCtx, Mods};
 use crate::popup::list::{Applied, Filters, Item, ListModel, Request, View};
-use crate::popup::paste::{self as paste_rules, AfterCopy, Via};
+use crate::popup::menu::{self, MenuAction, MenuKey, MenuKind, OpenMenu, RowMenuAction};
+use crate::popup::paste::{self as paste_rules, AfterCopy, CaptureShown, Via};
+use crate::popup::row::{self as row_rules, Section};
 use crate::popup::transform::{self as tf, PanelKey, Session};
+use crate::tray::TrayState;
 use darkclip_app::api::{Caller, CopyMode};
 use darkclip_app::{ClipApi, ClipSummaryView, Page};
 use darkclip_core::i18n::{t, Lang, Msg};
@@ -88,15 +92,42 @@ pub fn set_strings(w: &MainWindow, lang: Lang) {
         .set_settings_open(t(lang, Msg::SettingsOpen).into());
     w.global::<Strings>()
         .set_key_hints(t(lang, paste_rules::key_hints(can_paste, enter_pastes)).into());
+    let s = w.global::<Strings>();
+    s.set_search_hint(t(lang, Msg::UiPopupSearchHint).into());
+    s.set_tip_preview(t(lang, Msg::UiTipPreview).into());
+    s.set_tip_history(t(lang, Msg::UiTipHistory).into());
+    s.set_more_filters(t(lang, Msg::UiMoreFilters).into());
+    s.set_row_more(t(lang, Msg::UiRowMore).into());
+    s.set_key_ctrl_k(t(lang, Msg::UiKeyCtrlK).into());
+    s.set_key_ctrl_h(t(lang, Msg::UiKeyCtrlH).into());
+    s.set_key_ctrl_z(t(lang, Msg::UiKeyCtrlZ).into());
+    s.set_key_ctrl_comma(t(lang, Msg::UiKeyCtrlComma).into());
+    s.set_key_space(t(lang, Msg::UiKeySpace).into());
+}
+
+/// Ids `ChipFocus` uses for controls that are not filter chips: the four header buttons
+/// (9000..9003), the filter segment (9100) and the More filters button (9101). Above every chip
+/// id, so they never clash with one.
+const CONTROL_BASE: i32 = 9000;
+
+/// Width of the row menu: its longest label ("Sao chép dạng văn bản thuần") and key cap fit
+/// (`tests/popup_budget.rs`). The More filters menu keeps the kit default.
+const ROW_MENU_WIDTH: f32 = 340.0;
+const MORE_MENU_WIDTH: f32 = 220.0;
+
+/// The two models behind the filters: the segment tabs and the active extra-filter chips.
+struct FilterModels {
+    segment: Rc<VecModel<SegTab>>,
+    extras: Rc<VecModel<Chip>>,
 }
 
 struct Host {
     model: ListModel,
     rows: Rc<VecModel<ClipRow>>,
-    chips: Rc<VecModel<Chip>>,
+    filters: FilterModels,
     /// The source names behind the source chips, in chip order.
     sources: Vec<String>,
-    /// The collections behind the Favorites and collection chips (Task 403).
+    /// The collections behind the Favorites tab and the collection filters (Task 403).
     nav: Nav,
     poster: Poster,
     window: Weak<MainWindow>,
@@ -108,8 +139,16 @@ struct Host {
     slow: bool,
     /// A deleted clip that can still be undone (the delete is not sent yet).
     pending_delete: Option<ClipId>,
-    /// Which chip has the keyboard focus (from the chips' own reports).
+    /// Which chip or control has the keyboard focus (from their own reports).
     chip_focus: ChipFocus,
+    /// The open menu (the row menu or More filters), if any. Holds no text.
+    menu: Option<OpenMenu>,
+    /// The actions of the open row menu, in item order.
+    row_menu: Vec<RowMenuAction>,
+    /// The entries of the open More filters level, in item order.
+    more: Vec<MoreEntry>,
+    /// The capture state the status line names (read when the popup shows).
+    capture: CaptureShown,
     /// The platform's paste injector; `None` where auto-paste is unsupported.
     injector: Option<Injector>,
     /// A focus return or paste is running: further copies wait for it.
@@ -167,22 +206,105 @@ fn now_and_offset() -> (darkclip_core::Timestamp, i32) {
     )
 }
 
-/// The chips for `f`: the popup's own, with Favorites and the collections right after Pinned.
-fn chip_rows(f: &Filters, sources: &[String], nav: &Nav, lang: Lang) -> Vec<Chip> {
-    let mut specs = chips::popup_chips(f, sources, lang);
-    let at = specs
-        .iter()
-        .position(|c| c.id == chips::CHIP_PINNED)
-        .map_or(specs.len(), |i| i + 1);
-    specs.splice(at..at, nav::popup_nav_chips(f, nav, lang));
-    specs
+fn tab_icon(i: TabIcon) -> IconName {
+    match i {
+        TabIcon::All => IconName::Layers,
+        TabIcon::Text => IconName::FileText,
+        TabIcon::Link => IconName::Link,
+        TabIcon::Code => IconName::Code,
+        TabIcon::Image => IconName::Image,
+        TabIcon::Files => IconName::File,
+        TabIcon::Pinned => IconName::Pin,
+        TabIcon::Favorites => IconName::Star,
+    }
+}
+
+/// The segment tabs and the extra-filter chips for `f`. Only the first active tab shows its
+/// name, so the segment keeps its width budget.
+fn filter_models(
+    f: &Filters,
+    sources: &[String],
+    nav: &Nav,
+    lang: Lang,
+) -> (Vec<SegTab>, Vec<Chip>) {
+    let tabs = chips::popup_segment(f, nav, lang);
+    let label_at = tabs.iter().position(|t| t.on);
+    let seg = tabs
+        .into_iter()
+        .enumerate()
+        .map(|(i, t)| SegTab {
+            id: t.id,
+            label: t.label.into(),
+            icon: tab_icon(t.icon),
+            on: t.on,
+            show_label: Some(i) == label_at,
+            divider: t.divider_before,
+        })
+        .collect();
+    let extras = chips::popup_extras(f, nav, sources, lang)
         .into_iter()
         .map(|c| Chip {
             id: c.id,
             label: c.label.into(),
             on: c.on,
         })
-        .collect()
+        .collect();
+    (seg, extras)
+}
+
+/// Brings `model` to `new`: changed rows are updated in place (so a toggled control keeps the
+/// keyboard focus); the model is replaced only when the set changes. True when replaced.
+fn sync_model<T: Clone + PartialEq + 'static>(
+    model: &VecModel<T>,
+    new: Vec<T>,
+    key: impl Fn(&T) -> i32,
+) -> bool {
+    let old: Vec<T> = model.iter().collect();
+    match crate::popup::in_place_changes(&old, &new, key) {
+        Some(changed) => {
+            for i in changed {
+                if let Some(c) = new.get(i) {
+                    model.set_row_data(i, c.clone());
+                }
+            }
+            false
+        }
+        None => {
+            model.set_vec(new);
+            true
+        }
+    }
+}
+
+fn capture_shown(state: Option<TrayState>) -> CaptureShown {
+    match state {
+        Some(TrayState::Active) => CaptureShown::Capturing,
+        Some(TrayState::Paused(_)) => CaptureShown::Paused,
+        Some(TrayState::Private) => CaptureShown::Private,
+        Some(TrayState::Off | TrayState::Failed) | None => CaptureShown::Off,
+    }
+}
+
+fn menu_icon(a: RowMenuAction, pinned: bool) -> IconName {
+    match a {
+        RowMenuAction::Copy => IconName::Copy,
+        RowMenuAction::CopyPlain => IconName::Type,
+        RowMenuAction::CopyAs => IconName::WandSparkles,
+        RowMenuAction::TogglePin if pinned => IconName::PinOff,
+        RowMenuAction::TogglePin => IconName::Pin,
+        RowMenuAction::ToggleFavorite => IconName::Star,
+        RowMenuAction::Delete => IconName::Trash2,
+    }
+}
+
+fn more_icon(i: MoreItem) -> IconName {
+    match i {
+        MoreItem::Today | MoreItem::Week => IconName::Clock,
+        MoreItem::RichText => IconName::FileText,
+        MoreItem::Color => IconName::Type,
+        MoreItem::Collections | MoreItem::Collection(_) => IconName::Folder,
+        MoreItem::Apps | MoreItem::App(_) => IconName::Layers,
+    }
 }
 
 /// Forgets the list of a popup session that ended (D-056, like the history window's `leave`):
@@ -193,7 +315,7 @@ fn chip_rows(f: &Filters, sources: &[String], nav: &Nav, lang: Lang) -> Vec<Chip
 fn forget_list(
     model: &mut ListModel,
     rows: &VecModel<ClipRow>,
-    chips: &VecModel<Chip>,
+    filters: &FilterModels,
     sources: &mut Vec<String>,
     nav: &mut Nav,
     chip_focus: &mut ChipFocus,
@@ -205,8 +327,10 @@ fn forget_list(
     // No collection name stays either; the next show loads them again.
     *nav = Nav::default();
     *chip_focus = ChipFocus::default();
-    // The fixed chips stay (all off); no source chip names an app from before.
-    chips.set_vec(chip_rows(model.filters(), sources, nav, lang));
+    // The fixed tabs stay (all off); no extra filter names an app or collection from before.
+    let (seg, extras) = filter_models(model.filters(), sources, nav, lang);
+    filters.segment.set_vec(seg);
+    filters.extras.set_vec(extras);
 }
 
 impl Host {
@@ -215,7 +339,7 @@ impl Host {
     }
 
     fn row_for(&self, item: &Item, index: usize) -> ClipRow {
-        clip_row(item, index, self.lang, &self.model.filters().text)
+        common::popup_clip_row(item, index, self.lang, &self.model.filters().text)
     }
 
     /// Rebuilds every row (new results, or the language changed).
@@ -228,28 +352,84 @@ impl Host {
             .map(|(i, item)| self.row_for(item, i))
             .collect();
         self.rows.set_vec(rows);
+        self.sync_sections();
+    }
+
+    /// The overlines (PINNED n / RECENT n): which row starts each, and their texts. Only in the
+    /// plain list (no search text, no filter); counts come from the loaded rows.
+    fn sync_sections(&self) {
+        let visible = self.model.visible();
+        let show = row_rules::sections_visible(self.model.filters());
+        let secs = if show {
+            row_rules::section_for(&visible)
+        } else {
+            vec![Section::None; visible.len()]
+        };
+        for (i, s) in secs.iter().enumerate() {
+            if let Some(mut row) = self.rows.row_data(i) {
+                if row.section != s.code() {
+                    row.section = s.code();
+                    self.rows.set_row_data(i, row);
+                }
+            }
+        }
+        let Some(w) = self.window() else {
+            return;
+        };
+        let at = |want: Section| {
+            secs.iter()
+                .position(|s| *s == want)
+                .and_then(|i| i32::try_from(i).ok())
+                .unwrap_or(-1)
+        };
+        let (pinned, recent) = row_rules::section_counts(&visible);
+        w.set_pinned_at(at(Section::FirstPinned));
+        w.set_recent_at(at(Section::FirstRecent));
+        w.set_pinned_heading(
+            row_rules::section_title(Section::FirstPinned, pinned, recent, self.lang).into(),
+        );
+        w.set_recent_heading(
+            row_rules::section_title(Section::FirstRecent, pinned, recent, self.lang).into(),
+        );
     }
 
     fn rebuild_chips(&mut self) {
         self.sources = self.model.sources(MAX_SOURCES);
-        let chips = chip_rows(self.model.filters(), &self.sources, &self.nav, self.lang);
-        // Changed chips are updated in place, so a toggled chip keeps the keyboard focus; the
-        // model is replaced only when the set of chips changes (e.g. other source apps).
-        let old: Vec<Chip> = self.chips.iter().collect();
-        match crate::popup::in_place_changes(&old, &chips, |c| c.id) {
-            Some(changed) => {
-                for i in changed {
-                    if let Some(c) = chips.get(i) {
-                        self.chips.set_row_data(i, c.clone());
-                    }
-                }
-            }
-            None => {
-                self.chip_focus
-                    .retain(|id| chips.iter().any(|c| c.id == id));
-                self.chips.set_vec(chips);
-            }
+        let (seg, extras) =
+            filter_models(self.model.filters(), &self.sources, &self.nav, self.lang);
+        sync_model(&self.filters.segment, seg, |t| t.id);
+        // The extras change as a set: a focused one that is gone loses the focus. Header
+        // buttons and the segment are not chips and keep theirs.
+        let replaced = sync_model(&self.filters.extras, extras, |c| c.id);
+        if replaced {
+            let extras = &self.filters.extras;
+            self.chip_focus
+                .retain(|id| id >= CONTROL_BASE || extras.iter().any(|c| c.id == id));
         }
+    }
+
+    /// The status line: the capture state and the key hints (paste hints follow the setting).
+    fn render_status(&self) {
+        let Some(w) = self.window() else {
+            return;
+        };
+        w.set_status_tone(self.capture.tone());
+        w.set_status_text(t(self.lang, paste_rules::capture_label(self.capture)).into());
+        let (can_paste, enter_pastes) = PASTE_PREFS.get();
+        let hints: Vec<StatusHint> = paste_rules::status_hints(can_paste, enter_pastes)
+            .into_iter()
+            .map(|h| StatusHint {
+                key: t(self.lang, h.key).into(),
+                label: t(self.lang, h.label).into(),
+            })
+            .collect();
+        w.set_hints(ModelRc::new(VecModel::from(hints)));
+    }
+
+    /// Reads the capture state when the popup shows.
+    fn sync_status(&mut self) {
+        self.capture = capture_shown(super::tray_host::current_state());
+        self.render_status();
     }
 
     /// Selection, state and footer properties.
@@ -274,8 +454,6 @@ impl Host {
         w.set_selected(i32::try_from(sel).unwrap_or(0));
         let item = self.model.selected_item();
         w.set_has_selection(item.is_some());
-        w.set_selected_pinned(item.is_some_and(|i| i.pinned));
-        w.set_can_transform(item.is_some_and(|i| tf::can_transform(i.kind, i.masked)));
     }
 
     /// The selection or the pane changed: load what the pane needs and redraw it.
@@ -365,13 +543,19 @@ impl Host {
         self.loading.stop();
         self.commit_delete();
         self.close_copy_as();
+        // A menu closes with the session (no entry names stay), and no tooltip may flash on the
+        // next show.
+        self.close_menu();
+        if let Some(w) = self.window() {
+            w.invoke_reset_tooltip();
+        }
         self.clear_toast();
         self.slow = false;
         self.typed_search = None;
         forget_list(
             &mut self.model,
             &self.rows,
-            &self.chips,
+            &self.filters,
             &mut self.sources,
             &mut self.nav,
             &mut self.chip_focus,
@@ -383,6 +567,7 @@ impl Host {
             w.set_query(SharedString::new());
         }
         self.sync_state_only();
+        self.sync_sections();
         self.render_detail();
     }
 
@@ -545,6 +730,7 @@ impl Host {
                 _ => break,
             }
         }
+        self.sync_sections();
     }
 
     fn toggle_pin(&mut self) {
@@ -870,6 +1056,24 @@ impl Host {
             Action::CopyAs => self.open_copy_as(),
             Action::ToggleFavorite => self.toggle_favorite(),
             Action::CloseDetail => self.set_detail_open(false),
+            Action::FocusSearch => {
+                if let Some(w) = self.window() {
+                    w.invoke_focus_search();
+                    w.invoke_select_search();
+                }
+            }
+            Action::OpenSettings => {
+                // Outside the borrow: Settings calls back into hosts.
+                let _ = slint::invoke_from_event_loop(super::settings_host::show);
+            }
+            Action::RowMenu => self.open_row_menu(None),
+            Action::Segment(n) => {
+                if let Some(id) = chips::segment_chip(n) {
+                    self.toggle_chip(id);
+                }
+            }
+            Action::MoreFilters => self.open_more_menu(),
+            Action::Shortcuts => self.show_shortcuts(),
             Action::OpenHistory => {
                 // Close the popup (without returning the focus: the history is a window of its
                 // own), then open the history. Outside the borrow: both call back into hosts.
@@ -898,6 +1102,233 @@ impl Host {
             }
         }
         true
+    }
+
+    /// F1 and Ctrl+/: the shortcuts sheet is Task 706. Until then the keys do nothing, and no
+    /// hint advertises them.
+    fn show_shortcuts(&mut self) {}
+
+    // ---- Menus (Task 701, D-079, F-31): the host owns the state, Slint only draws ----
+
+    /// Opens the menu with `entries`; `at` is a window position (right click), otherwise it
+    /// opens under the selected row (Row) or the More filters button (More).
+    fn open_menu(&mut self, kind: MenuKind, entries: Vec<MenuEntry>, at: Option<(f32, f32)>) {
+        let Some(w) = self.window() else {
+            return;
+        };
+        self.menu = Some(OpenMenu::new(kind, entries.len()));
+        w.set_menu_width(match kind {
+            MenuKind::Row => ROW_MENU_WIDTH,
+            MenuKind::More => MORE_MENU_WIDTH,
+        });
+        w.set_menu_entries(ModelRc::new(VecModel::from(entries)));
+        w.set_menu_highlighted(0);
+        match (kind, at) {
+            (_, Some((x, y))) => w.invoke_open_menu_at(x, y),
+            (MenuKind::Row, None) => w.invoke_open_row_menu(),
+            (MenuKind::More, None) => w.invoke_open_more_menu(),
+        }
+    }
+
+    /// The row menu for the selected clip. There is no paste item (D-056).
+    fn open_row_menu(&mut self, at: Option<(f32, f32)>) {
+        if self.tf.is_some() {
+            return;
+        }
+        let Some(item) = self.model.selected_item() else {
+            return;
+        };
+        let (pinned, favorite) = (item.pinned, item.favorite);
+        let can = tf::can_transform(item.kind, item.masked);
+        let items = menu::row_menu_items(pinned, favorite, can);
+        let lang = self.lang;
+        let entries: Vec<MenuEntry> = items
+            .iter()
+            .map(|a| MenuEntry {
+                label: t(lang, menu::row_menu_label(*a, pinned, favorite)).into(),
+                icon: menu_icon(*a, pinned),
+                shortcut: menu::row_menu_key(*a).map_or("", |k| t(lang, k)).into(),
+                danger: *a == RowMenuAction::Delete,
+                submenu: false,
+                checked: false,
+            })
+            .collect();
+        self.open_menu(MenuKind::Row, entries, at);
+        self.row_menu = items;
+    }
+
+    fn more_entries(&mut self, level: MoreLevel) -> Vec<MenuEntry> {
+        self.more = chips::more_filter_items(
+            self.model.filters(),
+            &self.nav,
+            &self.sources,
+            self.lang,
+            level,
+        );
+        self.more
+            .iter()
+            .map(|e| MenuEntry {
+                label: e.label.as_str().into(),
+                icon: more_icon(e.item),
+                shortcut: SharedString::new(),
+                danger: false,
+                submenu: e.sub,
+                checked: e.on,
+            })
+            .collect()
+    }
+
+    /// "More filters" under its button (Ctrl+Shift+F or a click).
+    fn open_more_menu(&mut self) {
+        if self.tf.is_some() {
+            return;
+        }
+        let entries = self.more_entries(MoreLevel::Top);
+        self.open_menu(MenuKind::More, entries, None);
+    }
+
+    /// Closes the menu and forgets its entries (they may name collections and apps).
+    fn close_menu(&mut self) {
+        self.forget_menu();
+        if let Some(w) = self.window() {
+            w.invoke_close_menu();
+            w.set_menu_entries(ModelRc::new(VecModel::<MenuEntry>::default()));
+        }
+    }
+
+    /// The menu is gone (closed by a click outside, or by us): no state of it stays.
+    fn forget_menu(&mut self) {
+        self.menu = None;
+        self.row_menu.clear();
+        self.more.clear();
+    }
+
+    fn set_highlight(&mut self, i: usize) {
+        if let Some(m) = self.menu.as_mut() {
+            m.highlighted = i;
+        }
+        if let Some(w) = self.window() {
+            w.set_menu_highlighted(i32::try_from(i).unwrap_or(0));
+        }
+    }
+
+    /// One key of the open menu. True when it was handled.
+    fn menu_key(&mut self, text: &str) -> bool {
+        let Some(m) = self.menu else {
+            return false;
+        };
+        let action = match menu::menu_key_from_text(text) {
+            MenuKey::Letter(c) => {
+                let labels: Vec<String> = self
+                    .window()
+                    .map(|w| {
+                        w.get_menu_entries()
+                            .iter()
+                            .map(|e| e.label.to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                menu::letter_jump(&refs, m.highlighted, c)
+                    .map_or(MenuAction::None, MenuAction::Move)
+            }
+            k => menu::menu_key(k, m.highlighted, m.count),
+        };
+        match action {
+            MenuAction::Move(i) => self.set_highlight(i),
+            MenuAction::Activate(i) => self.activate_menu(i),
+            MenuAction::Close => self.close_menu(),
+            MenuAction::Back => self.menu_back(),
+            MenuAction::Submenu(i) => self.enter_submenu(i),
+            MenuAction::None => return false,
+        }
+        true
+    }
+
+    /// An entry was chosen (Enter, or a click; Slint already closed a leaf's popup).
+    fn activate_menu(&mut self, i: usize) {
+        let Some(m) = self.menu else {
+            return;
+        };
+        match m.kind {
+            MenuKind::Row => {
+                let action = self.row_menu.get(i).copied();
+                self.close_menu();
+                if let Some(a) = action {
+                    self.run_row_menu(a);
+                }
+            }
+            MenuKind::More => {
+                let Some(item) = self.more.get(i).map(|e| e.item) else {
+                    return;
+                };
+                match item {
+                    MoreItem::Collections => self.enter_more(MoreLevel::Collections),
+                    MoreItem::Apps => self.enter_more(MoreLevel::Apps),
+                    other => {
+                        self.close_menu();
+                        if let Some(id) = other.chip_id() {
+                            self.toggle_chip(id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Right on an entry that opens a list.
+    fn enter_submenu(&mut self, i: usize) {
+        if self
+            .menu
+            .is_some_and(|m| m.kind == MenuKind::More && m.level == 0)
+            && self.more.get(i).is_some_and(|e| e.sub)
+        {
+            self.activate_menu(i);
+        }
+    }
+
+    fn enter_more(&mut self, level: MoreLevel) {
+        let entries = self.more_entries(level);
+        if let Some(m) = self.menu.as_mut() {
+            m.enter_level(1, entries.len());
+        }
+        if let Some(w) = self.window() {
+            w.set_menu_entries(ModelRc::new(VecModel::from(entries)));
+            w.set_menu_highlighted(0);
+        }
+    }
+
+    /// Left at the second level goes back to the first.
+    fn menu_back(&mut self) {
+        if !self.menu.as_mut().is_some_and(OpenMenu::back) {
+            return;
+        }
+        let entries = self.more_entries(MoreLevel::Top);
+        if let Some(w) = self.window() {
+            w.set_menu_entries(ModelRc::new(VecModel::from(entries)));
+            w.set_menu_highlighted(0);
+        }
+    }
+
+    /// What a row menu item does. Copies only restore (never paste); the menu has no paste item.
+    fn run_row_menu(&mut self, a: RowMenuAction) {
+        match a {
+            RowMenuAction::Copy | RowMenuAction::CopyPlain => {
+                let id = self.model.selected_item().map(|i| i.id);
+                let kind = menu::copy_of(a).unwrap_or(CopyKind::Original);
+                self.copy(id, kind, menu::MENU_VIA);
+            }
+            RowMenuAction::CopyAs => self.open_copy_as(),
+            RowMenuAction::TogglePin => self.toggle_pin(),
+            RowMenuAction::ToggleFavorite => self.toggle_favorite(),
+            RowMenuAction::Delete => self.delete_selected(),
+        }
+    }
+
+    /// Selects row `i` (a click on one of its actions or a right click acts on that row).
+    fn select_row(&mut self, i: i32) {
+        self.model.select(usize::try_from(i).unwrap_or(0));
+        self.sync_state();
     }
 
     fn toggle_chip(&mut self, id: i32) {
@@ -968,6 +1399,7 @@ fn refresh_hints() {
             w.global::<Strings>()
                 .set_key_hints(t(h.lang, paste_rules::key_hints(can, enter)).into());
         }
+        h.render_status();
     });
 }
 
@@ -998,6 +1430,7 @@ fn on_results(gen: u64, append: bool, result: Result<Page<ClipSummaryView>, &'st
                 for r in new {
                     h.rows.push(r);
                 }
+                h.sync_sections();
             }
         }
         h.rebuild_chips();
@@ -1012,14 +1445,18 @@ fn on_results(gen: u64, append: bool, result: Result<Page<ClipSummaryView>, &'st
 /// Creates the host and connects the window's callbacks. Call once, on the main thread.
 pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
     let rows = Rc::new(VecModel::<ClipRow>::default());
-    let chips = Rc::new(VecModel::<Chip>::default());
+    let filters = FilterModels {
+        segment: Rc::new(VecModel::<SegTab>::default()),
+        extras: Rc::new(VecModel::<Chip>::default()),
+    };
     w.set_rows(ModelRc::from(rows.clone()));
-    w.set_chips(ModelRc::from(chips.clone()));
+    w.set_segment(ModelRc::from(filters.segment.clone()));
+    w.set_chips(ModelRc::from(filters.extras.clone()));
     set_strings(w, lang);
     let mut host = Host {
         model: ListModel::new(),
         rows,
-        chips,
+        filters,
         sources: Vec::new(),
         nav: Nav::default(),
         poster,
@@ -1031,6 +1468,10 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
         slow: false,
         pending_delete: None,
         chip_focus: ChipFocus::default(),
+        menu: None,
+        row_menu: Vec::new(),
+        more: Vec::new(),
+        capture: CaptureShown::Off,
         injector: None,
         pasting: false,
         tf: None,
@@ -1041,6 +1482,7 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
     };
     host.rebuild_chips();
     host.sync_state();
+    host.render_status();
     HOST.with(|cell| *cell.borrow_mut() = Some(host));
 
     w.on_query_edited(|_| {
@@ -1069,12 +1511,17 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
                 h.panel_key(tf::panel_key(keys::key_from_text(&text)));
                 return true;
             }
+            // Keys go to an open menu, never here: a menu still recorded was closed by a click
+            // outside, so forget it.
+            h.forget_menu();
             let query_empty = h.window().is_none_or(|w| w.get_query().is_empty());
+            let held = h.chip_focus.focused(search_focused);
             let ctx = KeyCtx {
                 query_empty,
                 search_focused,
                 undo_available: h.pending_delete.is_some(),
-                chips_focused: h.chip_focus.focused(search_focused),
+                chips_focused: held,
+                control_focused: held,
             };
             let mods = Mods {
                 ctrl,
@@ -1088,9 +1535,6 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
             }
         })
         .unwrap_or(false)
-    });
-    w.on_act_copy_as(|| {
-        with_host(|h| h.open_copy_as());
     });
     w.on_tf_chosen(|i| {
         with_host(|h| h.choose_transform(usize::try_from(i).unwrap_or(usize::MAX)));
@@ -1121,24 +1565,45 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
             h.copy(id, kind, via);
         });
     });
-    // The buttons only restore (never paste, whatever the setting).
-    w.on_act_copy(|| {
+    // Row actions (the hover buttons) and the menu only restore (never paste, whatever the
+    // setting): Rust selects the row first, then acts.
+    w.on_row_action(|i, action| {
         with_host(|h| {
-            let id = h.model.selected_item().map(|i| i.id);
-            h.copy(id, CopyKind::Original, Via::Other);
+            h.select_row(i);
+            match action {
+                0 => {
+                    let id = h.model.selected_item().map(|i| i.id);
+                    h.copy(id, CopyKind::Original, Via::Other);
+                }
+                1 => h.toggle_pin(),
+                _ => h.open_row_menu(None),
+            }
         });
     });
-    w.on_act_copy_plain(|| {
+    w.on_row_context(|i, x, y| {
         with_host(|h| {
-            let id = h.model.selected_item().map(|i| i.id);
-            h.copy(id, CopyKind::Plain, Via::Other);
+            h.select_row(i);
+            h.open_row_menu(Some((x, y)));
         });
     });
-    w.on_act_pin(|| {
-        with_host(|h| h.act(Action::TogglePin));
+    w.on_more_filters(|| {
+        with_host(Host::open_more_menu);
     });
-    w.on_act_delete(|| {
-        with_host(|h| h.act(Action::Delete));
+    w.on_menu_key(|text| with_host(|h| h.menu_key(&text)).unwrap_or(false));
+    w.on_menu_hovered(|i| {
+        with_host(|h| h.set_highlight(usize::try_from(i).unwrap_or(0)));
+    });
+    w.on_menu_activated(|i| {
+        with_host(|h| h.activate_menu(usize::try_from(i).unwrap_or(usize::MAX)));
+    });
+    w.on_menu_dismissed(|| {
+        with_host(Host::forget_menu);
+    });
+    w.on_act_preview(|| {
+        with_host(|h| h.act(Action::ToggleDetail));
+    });
+    w.on_act_history(|| {
+        with_host(|h| h.act(Action::OpenHistory));
     });
     w.on_act_undo(|| {
         with_host(|h| h.act(Action::Undo));
@@ -1182,6 +1647,7 @@ pub fn set_lang(lang: Lang) {
             h.lang = lang;
             h.rebuild_chips();
             h.rebuild_rows();
+            h.render_status();
             h.render_detail();
         }
     });
@@ -1226,6 +1692,7 @@ pub fn show(w: &MainWindow, asked: Instant, trigger: Trigger) {
         // Normally done by the hide before; again here so a show can never start from the
         // rows of an earlier session (D-056).
         h.end_session();
+        h.sync_status();
         h.reload_nav();
         h.search(Filters::default());
         h.sync_state();
@@ -1339,10 +1806,26 @@ mod tests {
         }
     }
 
+    fn user_collection(name: &str) -> darkclip_app::api::CollectionView {
+        darkclip_app::api::CollectionView {
+            id: darkclip_core::CollectionId::new_v7(NOW),
+            name: name.to_string(),
+            system: false,
+            clip_count: 1,
+        }
+    }
+
+    fn models() -> FilterModels {
+        FilterModels {
+            segment: Rc::new(VecModel::<SegTab>::default()),
+            extras: Rc::new(VecModel::<Chip>::default()),
+        }
+    }
+
     #[test]
     fn after_hide_the_next_show_draws_no_previous_row_before_its_first_page() {
-        // A popup session: one page shown, with a source chip, and a refresh still running
-        // when the popup hides.
+        // A popup session: one page shown, with a source and a collection filter on, and a
+        // refresh still running when the popup hides.
         let mut model = ListModel::new();
         let first = model.search(Filters::default(), NOW, 0);
         assert!(matches!(
@@ -1360,26 +1843,27 @@ mod tests {
                 .visible()
                 .iter()
                 .enumerate()
-                .map(|(i, item)| clip_row(item, i, Lang::En, ""))
+                .map(|(i, item)| common::popup_clip_row(item, i, Lang::En, ""))
                 .collect::<Vec<_>>(),
         );
         let mut sources = model.sources(MAX_SOURCES);
-        let chips = VecModel::<Chip>::default();
         let mut nav = Nav {
-            collections: vec![darkclip_app::api::CollectionView {
-                id: darkclip_core::CollectionId::new_v7(NOW),
-                name: "Private project".to_string(),
-                system: false,
-                clip_count: 1,
-            }],
+            collections: vec![user_collection("Private project")],
             tags: Vec::new(),
         };
-        chips.set_vec(chip_rows(model.filters(), &sources, &nav, Lang::En));
-        assert!(chips.iter().any(|c| c.label.as_str() == "Private project"));
+        let on = Filters {
+            source: Some("editor.exe".to_string()),
+            collection: nav.collections.first().map(|c| c.id),
+            ..Filters::default()
+        };
+        let filters = models();
+        let (seg, extras) = filter_models(&on, &sources, &nav, Lang::En);
+        filters.segment.set_vec(seg);
+        filters.extras.set_vec(extras);
+        let labels: Vec<String> = filters.extras.iter().map(|c| c.label.to_string()).collect();
+        assert_eq!(labels, ["Private project", "editor.exe"]);
         let mut focus = ChipFocus::default();
-        if let Some(last) = chips.iter().last() {
-            focus.report(last.id, true);
-        }
+        focus.report(chips::CHIP_SOURCE, true);
         let in_flight = model.refresh(NOW, 0);
         assert_eq!(rows.row_count(), 2);
         assert_eq!(sources, vec!["editor.exe".to_string()]);
@@ -1388,7 +1872,7 @@ mod tests {
         forget_list(
             &mut model,
             &rows,
-            &chips,
+            &filters,
             &mut sources,
             &mut nav,
             &mut focus,
@@ -1408,14 +1892,13 @@ mod tests {
         assert!(model.nth(0).is_none());
         assert!(sources.is_empty());
         assert!(!focus.focused(false));
-        assert!(chips
-            .iter()
-            .all(|c| !c.label.as_str().contains("editor.exe")));
-        // No collection name stays after the popup closed.
+        // No app or collection name stays after the popup closed.
+        assert_eq!(filters.extras.row_count(), 0);
         assert!(nav.collections.is_empty());
-        assert!(chips
+        assert!(filters
+            .segment
             .iter()
-            .all(|c| !c.label.as_str().contains("Private project")));
+            .all(|t| t.id == chips::CHIP_ALL || !t.on));
         // The answer of the refresh that was running at hide is dropped.
         assert!(matches!(
             model.apply(in_flight.gen, false, Ok(page(vec![view(1, "editor.exe")]))),
@@ -1426,30 +1909,123 @@ mod tests {
     }
 
     #[test]
-    fn favorites_and_collections_are_chips_right_after_pinned() {
-        let col = |n: i64, name: &str, system: bool| darkclip_app::api::CollectionView {
-            id: darkclip_core::CollectionId::new_v7(darkclip_core::Timestamp(NOW.0 + n)),
-            name: name.to_string(),
-            system,
-            clip_count: 0,
-        };
+    fn the_segment_names_only_its_first_active_tab_and_extras_are_chips() {
         let nav = Nav {
-            collections: vec![col(0, "Favorites", true), col(1, "Work", false)],
+            collections: vec![
+                darkclip_app::api::CollectionView {
+                    id: darkclip_core::CollectionId::new_v7(Timestamp(NOW.0 + 1)),
+                    name: "Favorites".to_string(),
+                    system: true,
+                    clip_count: 0,
+                },
+                user_collection("Work"),
+            ],
             tags: Vec::new(),
         };
-        let chips = chip_rows(&Filters::default(), &["Code".to_string()], &nav, Lang::En);
-        let labels: Vec<String> = chips.iter().map(|c| c.label.to_string()).collect();
-        let pinned = labels.iter().position(|l| l == "Pinned").unwrap();
-        assert_eq!(labels[pinned + 1], "Favorites");
-        assert_eq!(labels[pinned + 2], "Work");
-        assert_eq!(labels[pinned + 3], "Today");
-        // Selecting Favorites turns its chip on.
-        let f = nav::toggle_nav(&Filters::default(), nav::NAV_FAVORITES, &nav).unwrap();
-        let on: Vec<String> = chip_rows(&f, &[], &nav, Lang::En)
+        let (seg, extras) = filter_models(&Filters::default(), &[], &nav, Lang::En);
+        assert_eq!(seg.iter().filter(|t| t.show_label).count(), 1);
+        assert!(seg.first().is_some_and(|t| t.on && t.show_label), "All");
+        assert!(extras.is_empty());
+        // Favorites and Pinned on: the first one shows its name, the other is icon only.
+        let f = Filters {
+            pinned_only: true,
+            collection: nav.favorites_id(),
+            ..Filters::default()
+        };
+        let (seg, _) = filter_models(&f, &[], &nav, Lang::En);
+        let named: Vec<&str> = seg
             .iter()
-            .filter(|c| c.on)
-            .map(|c| c.label.to_string())
+            .filter(|t| t.show_label)
+            .map(|t| t.label.as_str())
             .collect();
-        assert_eq!(on, ["Favorites"]);
+        assert_eq!(named, ["Pinned"]);
+        assert_eq!(seg.iter().filter(|t| t.on).count(), 2);
+        assert_eq!(seg.iter().filter(|t| t.divider).count(), 1);
+    }
+
+    #[test]
+    fn a_masked_row_carries_only_the_i18n_text() {
+        let secret_preview = "abc…•••• (Password)";
+        let item = Item {
+            id: ClipId::new_v7(NOW),
+            kind: ClipType::Text,
+            preview: secret_preview.to_string(),
+            pinned: true,
+            masked: true,
+            source: Some("Vault".to_string()),
+            at: NOW,
+            favorite: false,
+            tags: Vec::new(),
+        };
+        for lang in [Lang::En, Lang::Vi] {
+            // Even a query that matches the stored preview highlights nothing.
+            let row = common::popup_clip_row(&item, 0, lang, "abc");
+            let masked_text = t(lang, Msg::UiMaskedRowText);
+            assert_eq!(row.label.as_str(), masked_text);
+            let pieces: Vec<(String, bool)> = row
+                .segs
+                .iter()
+                .map(|s| (s.text.to_string(), s.hit))
+                .collect();
+            assert_eq!(pieces, [(masked_text.to_string(), false)]);
+            assert_eq!(row.segs2.row_count(), 0);
+            for text in [
+                row.label.as_str(),
+                row.meta.as_str(),
+                row.description.as_str(),
+            ] {
+                assert!(!text.contains("abc"), "{text}");
+                assert!(!text.contains("Password"), "{text}");
+                assert!(!text.contains('•'), "{text}");
+            }
+            assert!(row.masked && !row.mono);
+            assert!(row.description.contains(t(lang, Msg::UiMaskedBadge)));
+        }
+        // The history window's row is not part of this task: it keeps its own builder.
+        let plain = Item {
+            masked: false,
+            preview: "hello".to_string(),
+            ..item
+        };
+        let row = common::popup_clip_row(&plain, 0, Lang::En, "");
+        assert_eq!(row.label.as_str(), "hello");
+        assert_eq!(row.number.as_str(), "1");
+    }
+
+    #[test]
+    fn the_status_line_names_the_tray_state() {
+        assert_eq!(
+            capture_shown(Some(TrayState::Active)),
+            CaptureShown::Capturing
+        );
+        assert_eq!(
+            capture_shown(Some(TrayState::Paused(Timestamp(5)))),
+            CaptureShown::Paused
+        );
+        assert_eq!(
+            capture_shown(Some(TrayState::Private)),
+            CaptureShown::Private
+        );
+        assert_eq!(capture_shown(Some(TrayState::Off)), CaptureShown::Off);
+        assert_eq!(capture_shown(Some(TrayState::Failed)), CaptureShown::Off);
+        // No tray (a platform without one): not claimed to be capturing.
+        assert_eq!(capture_shown(None), CaptureShown::Off);
+    }
+
+    #[test]
+    fn menu_entries_never_offer_paste() {
+        for pinned in [false, true] {
+            for fav in [false, true] {
+                for can in [false, true] {
+                    for a in menu::row_menu_items(pinned, fav, can) {
+                        let label = menu::row_menu_label(a, pinned, fav);
+                        for lang in [Lang::En, Lang::Vi] {
+                            let text = t(lang, label).to_lowercase();
+                            assert!(!text.contains("paste") && !text.contains("dán"), "{text}");
+                        }
+                    }
+                }
+            }
+        }
     }
 }

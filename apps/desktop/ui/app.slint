@@ -1,10 +1,13 @@
 import { ListView, Palette } from "std-widgets.slint";
 import { Theme, Strings } from "theme.slint";
-import { IconName } from "kit/icon.slint";
+import { Icon, IconName } from "kit/icon.slint";
 import { IconButton } from "kit/icon_button.slint";
-import { TipAlign, TooltipLayer } from "kit/tooltip.slint";
+import { KeyCap } from "kit/key_cap.slint";
+import { Menu, MenuEntry } from "kit/menu.slint";
+import { TipAlign, TooltipHub, TooltipLayer } from "kit/tooltip.slint";
 import { KitGallery } from "kit/gallery.slint";
-import { Seg, ClipRow, FileRow, Chip, ChipView, ActionButton, RowView, DetailPane, DetailState, RowMetrics } from "popup.slint";
+import { Seg, ClipRow, FileRow, Chip, ChipView, DetailPane, DetailState, SegTab, SegmentBar, StatusHint, StatusLine, Toast } from "popup.slint";
+import { PopupRow, PopupRowMetrics } from "popup_row.slint";
 
 import { HistoryWindow, FilterItem } from "history.slint";
 import { TransformPanel } from "transform.slint";
@@ -12,7 +15,7 @@ import { SettingsWindow, SText, AppRow, KindItem } from "settings.slint";
 import { WelcomeWindow, WText } from "welcome.slint";
 import { OrgStrings, OrgDialogState } from "organize.slint";
 
-export { KitGallery, Theme, Strings, Seg, ClipRow, FileRow, Chip, DetailState, HistoryWindow, FilterItem, SettingsWindow, SText, AppRow, KindItem, WelcomeWindow, WText, OrgStrings, OrgDialogState }
+export { KitGallery, IconName, MenuEntry, SegTab, StatusHint, Theme, Strings, Seg, ClipRow, FileRow, Chip, DetailState, HistoryWindow, FilterItem, SettingsWindow, SText, AppRow, KindItem, WelcomeWindow, WText, OrgStrings, OrgDialogState }
 
 // The popup (Task 204): created once at start and kept hidden; shown near the cursor by the
 // shortcut, the tray or `--toggle`. All data and every decision come from Rust
@@ -23,25 +26,38 @@ export component MainWindow inherits Window {
     no-frame: true;
     always-on-top: true;
     background: transparent;
-    width: 420px;
-    height: 560px;
+    width: 440px;
+    height: 520px;
     default-font-size: 13px;
 
     in property <[ClipRow]> rows;
+    // The extra filters that are on (Today, Rich text, ...), shown as removable chips.
     in property <[Chip]> chips;
+    in property <[SegTab]> segment;
     in property <int> selected;
     // 0 rows, 1 loading, 2 empty history, 3 no results, 4 error.
     in property <int> view-state;
     in property <string> toast;
     in property <bool> toast-undo;
-    in property <bool> selected-pinned;
     in property <bool> has-selection;
+    // The overlines (PINNED n / RECENT n) and the rows that start them (-1: none).
+    in property <string> pinned-heading;
+    in property <string> recent-heading;
+    in property <int> pinned-at: -1;
+    in property <int> recent-at: -1;
+    // Status line: capture state (tone 1 capturing, 2 paused, 3 private, 0 off) and hints.
+    in property <int> status-tone;
+    in property <string> status-text;
+    in property <[StatusHint]> hints;
+    // The open menu (row menu or More filters): entries and the highlighted one, driven by Rust.
+    in property <[MenuEntry]> menu-entries;
+    in property <int> menu-highlighted;
+    in property <length> menu-width: 220px;
     // Detail pane (Task 206). kind: 0 text, 1 image, 2 files, 3 masked.
     in property <bool> detail-open;
     in property <DetailState> detail;
     in property <string> detail-text;
     // "Copy as..." panel (Task 404).
-    in property <bool> can-transform;
     in property <bool> tf-open;
     in property <[string]> tf-labels;
     in property <int> tf-selected;
@@ -51,27 +67,33 @@ export component MainWindow inherits Window {
     in property <bool> tf-can-copy;
     in-out property <string> query;
     // Whole rows that fit in the list (for Page Up / Page Down).
-    out property <int> page-rows: max(1, floor(clip-list.visible-height / RowMetrics.height));
+    out property <int> page-rows: max(1, floor(clip-list.visible-height / PopupRowMetrics.height));
 
     callback query-edited(string);
     // Returns true when the key was handled (the search box does not see it then).
     callback key(string, bool, bool, bool, bool, bool) -> bool;
-    // A chip gained (true) or lost (false) the keyboard focus.
+    // A chip, the filter segment or a header button gained (true) or lost (false) the keyboard
+    // focus. Header buttons are 9000..9003, the segment 9100, the More filters button 9101.
     callback chip-focus(int, bool);
     callback chip-toggled(int);
     callback row-clicked(int);
     callback row-activated(int);
-    callback act-copy();
-    callback act-copy-plain();
-    callback act-copy-as();
+    // A row action (0 copy, 1 pin or unpin, 2 more) and a right click (window coordinates).
+    callback row-action(int, int);
+    callback row-context(int, length, length);
+    callback more-filters();
+    callback menu-key(string) -> bool;
+    callback menu-hovered(int);
+    callback menu-activated(int);
+    callback menu-dismissed();
     callback tf-chosen(int);
     callback tf-copy();
     callback tf-cancel();
-    callback act-pin();
-    callback act-delete();
     callback act-undo();
     callback act-close();
     callback act-settings();
+    callback act-history();
+    callback act-preview();
     callback load-full-text();
     callback load-full-image();
     // The last row index on screen changed (Rust loads the next page near the end).
@@ -81,21 +103,63 @@ export component MainWindow inherits Window {
         search.focus();
     }
 
+    public function select-search() {
+        search.select-all();
+    }
+
+    // A tooltip must not flash on the next show.
+    public function reset-tooltip() {
+        TooltipHub.shown = false;
+    }
+
+    // Opens the open-menu entries at a window position (right click).
+    public function open-menu-at(x: length, y: length) {
+        menu.open(x, y);
+    }
+
+    // Opens them under the selected row (keys and the row's more button).
+    public function open-row-menu() {
+        menu.open(clip-list.absolute-position.x + clip-list.width - menu.menu-width - 4px,
+            clip-list.absolute-position.y + root.row-top(root.selected) + root.cell-height(root.selected) + clip-list.content-y);
+    }
+
+    // Opens them under the More filters button.
+    public function open-more-menu() {
+        menu.open(more-btn.absolute-position.x + more-btn.width - menu.menu-width,
+            more-btn.absolute-position.y + more-btn.height + 4px);
+    }
+
+    public function close-menu() {
+        menu.close();
+    }
+
+    // Top of row `i` in the list: rows are 48 px, plus 22 px for each overline above it.
+    function row-top(i: int) -> length {
+        return i * PopupRowMetrics.height
+            + ((root.pinned-at >= 0 && root.pinned-at < i) ? PopupRowMetrics.section-height : 0px)
+            + ((root.recent-at >= 0 && root.recent-at < i) ? PopupRowMetrics.section-height : 0px);
+    }
+
+    function cell-height(i: int) -> length {
+        return PopupRowMetrics.height
+            + ((i == root.pinned-at || i == root.recent-at) ? PopupRowMetrics.section-height : 0px);
+    }
+
     // Scrolls the list so that row `i` is visible.
     public function scroll-to(i: int) {
         if (i <= 0) {
             clip-list.content-y = 0;
             return;
         }
-        if (i * RowMetrics.height < -clip-list.content-y) {
-            clip-list.content-y = -(i * RowMetrics.height);
-        } else if ((i + 1) * RowMetrics.height > -clip-list.content-y + clip-list.visible-height) {
-            clip-list.content-y = -((i + 1) * RowMetrics.height - clip-list.visible-height);
+        if (root.row-top(i) < -clip-list.content-y) {
+            clip-list.content-y = -root.row-top(i);
+        } else if (root.row-top(i) + root.cell-height(i) > -clip-list.content-y + clip-list.visible-height) {
+            clip-list.content-y = -(root.row-top(i) + root.cell-height(i) - clip-list.visible-height);
         }
     }
 
     function report-shown() {
-        root.shown-until(floor((-clip-list.content-y + clip-list.visible-height) / RowMetrics.height));
+        root.shown-until(floor((-clip-list.content-y + clip-list.visible-height) / PopupRowMetrics.height));
     }
 
     init => {
@@ -121,113 +185,195 @@ export component MainWindow inherits Window {
             clip: true;
 
             VerticalLayout {
-                padding: 10px;
-                spacing: 8px;
+                spacing: 0px;
 
-                // Search box and close button.
+                // Header (48 px): search field and the four buttons.
                 HorizontalLayout {
-                    spacing: 6px;
-                    height: 36px;
+                    height: 48px;
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    spacing: 4px;
 
-                    Rectangle {
+                    VerticalLayout {
+                        alignment: center;
                         horizontal-stretch: 1;
-                        border-radius: 6px;
-                        background: Theme.surface;
-                        border-width: 1px;
-                        border-color: search.has-focus ? Theme.accent : Theme.line;
+                        Rectangle {
+                            height: 32px;
+                            border-radius: 6px;
+                            background: Theme.surface;
+                            border-width: 1px;
+                            border-color: search.has-focus ? Theme.accent : Theme.border-strong;
 
-                        HorizontalLayout {
-                            padding-left: 10px;
-                            padding-right: 10px;
-                            Rectangle {
-                                search := TextInput {
-                                    single-line: true;
-                                    text <=> root.query;
-                                    color: Theme.text;
-                                    selection-background-color: Theme.accent;
-                                    selection-foreground-color: Theme.bg;
-                                    font-size: 14px;
-                                    vertical-alignment: center;
-                                    accessible-label: Strings.search-label;
-                                    accessible-placeholder-text: Strings.search-placeholder;
-                                    accessible-description: Strings.key-hints;
-                                    edited => {
-                                        root.query-edited(self.text);
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                spacing: 8px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    Icon {
+                                        name: IconName.search;
+                                        tint: Theme.text-2;
                                     }
                                 }
-                                Text {
-                                    visible: root.query == "";
-                                    text: Strings.search-placeholder;
-                                    color: Theme.text-muted;
-                                    font-size: 14px;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                    width: 100%;
-                                    accessible-role: none;
+                                Rectangle {
+                                    horizontal-stretch: 1;
+                                    min-width: 0px;
+                                    search := TextInput {
+                                        single-line: true;
+                                        text <=> root.query;
+                                        color: Theme.text;
+                                        selection-background-color: Theme.accent;
+                                        selection-foreground-color: Theme.bg;
+                                        font-size: 14px;
+                                        vertical-alignment: center;
+                                        accessible-label: Strings.search-label;
+                                        accessible-placeholder-text: Strings.search-hint;
+                                        accessible-description: Strings.key-hints;
+                                        edited => {
+                                            root.query-edited(self.text);
+                                        }
+                                    }
+                                    Text {
+                                        visible: root.query == "";
+                                        text: Strings.search-hint;
+                                        color: Theme.text-3;
+                                        font-size: 14px;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                        width: 100%;
+                                        accessible-role: none;
+                                    }
+                                }
+                                if root.query == "": VerticalLayout {
+                                    alignment: center;
+                                    KeyCap {
+                                        text: Strings.key-ctrl-k;
+                                    }
                                 }
                             }
                         }
                     }
 
-                    IconButton {
-                        name: IconName.settings;
-                        width: 32px;
-                        height: 36px;
-                        label: Strings.settings-open;
-                        tooltip: Strings.tip-settings;
-                        tip-align: TipAlign.end;
-                        // Not in the Tab order until the popup key map knows it (Task 701).
-                        focusable: false;
-                        clicked => {
-                            root.act-settings();
+                    VerticalLayout {
+                        alignment: center;
+                        IconButton {
+                            name: IconName.panel-right;
+                            label: Strings.tip-preview;
+                            description: Strings.key-space;
+                            shortcut: Strings.key-space;
+                            active: root.detail-open;
+                            changed has-focus => {
+                                root.chip-focus(9000, self.has-focus);
+                            }
+                            clicked => {
+                                root.act-preview();
+                            }
                         }
                     }
-
-                    IconButton {
-                        name: IconName.x;
-                        width: 32px;
-                        height: 36px;
-                        label: Strings.close;
-                        tooltip: Strings.tip-close;
-                        shortcut: Strings.key-esc;
-                        tip-align: TipAlign.end;
-                        focusable: false;
-                        clicked => {
-                            root.act-close();
+                    VerticalLayout {
+                        alignment: center;
+                        IconButton {
+                            name: IconName.history;
+                            label: Strings.tip-history;
+                            description: Strings.key-ctrl-h;
+                            shortcut: Strings.key-ctrl-h;
+                            changed has-focus => {
+                                root.chip-focus(9001, self.has-focus);
+                            }
+                            clicked => {
+                                root.act-history();
+                            }
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        IconButton {
+                            name: IconName.settings;
+                            label: Strings.settings-open;
+                            description: Strings.key-ctrl-comma;
+                            tooltip: Strings.tip-settings;
+                            shortcut: Strings.key-ctrl-comma;
+                            tip-align: TipAlign.end;
+                            changed has-focus => {
+                                root.chip-focus(9002, self.has-focus);
+                            }
+                            clicked => {
+                                root.act-settings();
+                            }
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        IconButton {
+                            name: IconName.x;
+                            label: Strings.close;
+                            description: Strings.key-esc;
+                            tooltip: Strings.tip-close;
+                            shortcut: Strings.key-esc;
+                            tip-align: TipAlign.end;
+                            changed has-focus => {
+                                root.chip-focus(9003, self.has-focus);
+                            }
+                            clicked => {
+                                root.act-close();
+                            }
                         }
                     }
                 }
 
-                // Filter chips, scrolled sideways when they do not fit.
-                chip-flick := Flickable {
-                    height: 28px;
-                    content-width: max(self.width, chip-row.preferred-width);
-                    accessible-role: groupbox;
-                    accessible-label: Strings.filters-label;
-                    chip-row := HorizontalLayout {
-                        spacing: 6px;
-                        padding-top: 1px;
-                        padding-bottom: 1px;
-                        for c in root.chips: ChipView {
-                            chip: c;
-                            toggled => {
-                                root.chip-toggled(c.id);
-                            }
-                            focused(x, w) => {
-                                if (x < -chip-flick.content-x) {
-                                    chip-flick.content-x = -x;
-                                } else if (x + w > -chip-flick.content-x + chip-flick.width) {
-                                    chip-flick.content-x = -(x + w - chip-flick.width);
+                // Filter segment (30 px), the More filters button and the active extras.
+                HorizontalLayout {
+                    height: 34px;
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-bottom: 4px;
+                    spacing: 4px;
+
+                    SegmentBar {
+                        tabs: root.segment;
+                        group-label: Strings.filters-label;
+                        toggled(id) => {
+                            root.chip-toggled(id);
+                        }
+                        focus-report(on) => {
+                            root.chip-focus(9100, on);
+                        }
+                    }
+                    more-btn := IconButton {
+                        name: IconName.chevron-down;
+                        label: Strings.more-filters;
+                        tooltip: Strings.more-filters;
+                        changed has-focus => {
+                            root.chip-focus(9101, self.has-focus);
+                        }
+                        clicked => {
+                            root.more-filters();
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        min-width: 0px;
+                        clip: true;
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 4px;
+                            for c in root.chips: VerticalLayout {
+                                alignment: center;
+                                ChipView {
+                                    chip: c;
+                                    toggled => {
+                                        root.chip-toggled(c.id);
+                                    }
+                                    focus-report(on) => {
+                                        root.chip-focus(c.id, on);
+                                    }
                                 }
                             }
-                            focus-report(on) => {
-                                root.chip-focus(c.id, on);
-                            }
                         }
                     }
                 }
 
-                // The list, or a state message in its place.
+                // The list, or a state message in its place. The toast floats over its bottom.
                 Rectangle {
                     vertical-stretch: 1;
 
@@ -239,21 +385,36 @@ export component MainWindow inherits Window {
                         visible: root.view-state == 0;
 
                         Rectangle {
+                            x: 4px;
+                            width: parent.width - 8px;
                             border-radius: 6px;
                             border-width: list-focus.has-focus ? 1px : 0px;
-                            border-color: Theme.accent;
+                            border-color: Theme.focus;
                         }
 
                         clip-list := ListView {
-                            for r[i] in root.rows: RowView {
+                            x: 8px;
+                            width: parent.width - 16px;
+                            height: parent.height;
+                            for r[i] in root.rows: PopupRow {
                                 data: r;
                                 index: i;
                                 selected: i == root.selected;
+                                heading: r.section == 1 ? root.pinned-heading : root.recent-heading;
+                                copy-label: Strings.copy;
+                                pin-label: r.pinned ? Strings.unpin : Strings.pin;
+                                more-label: Strings.row-more;
                                 clicked => {
                                     root.row-clicked(i);
                                 }
                                 activated => {
                                     root.row-activated(i);
+                                }
+                                context(x, y) => {
+                                    root.row-context(i, x, y);
+                                }
+                                action(a) => {
+                                    root.row-action(i, a);
                                 }
                             }
                             changed content-y => {
@@ -277,92 +438,71 @@ export component MainWindow inherits Window {
                         vertical-alignment: center;
                         wrap: word-wrap;
                     }
-                }
 
-                // Detail of the selected clip (toggle with Right or Space).
-                if root.detail-open && root.has-selection: DetailPane {
-                    height: 220px;
-                    state: root.detail;
-                    text: root.detail-text;
-                    load-text => {
-                        root.load-full-text();
-                    }
-                    load-image => {
-                        root.load-full-image();
-                    }
-                }
-
-                // Footer: actions for the selected clip, or the toast (with Undo).
-                Rectangle {
-                    height: 1px;
-                    background: Theme.line;
-                }
-                if root.toast == "": HorizontalLayout {
-                    height: 28px;
-                    spacing: 4px;
-
-                    ActionButton {
-                        text: Strings.copy;
-                        visible: root.has-selection;
-                        clicked => {
-                            root.act-copy();
-                        }
-                    }
-                    ActionButton {
-                        text: Strings.footer-copy-plain;
-                        accessible-label: Strings.copy-plain;
-                        visible: root.has-selection;
-                        clicked => {
-                            root.act-copy-plain();
-                        }
-                    }
-                    ActionButton {
-                        text: Strings.footer-copy-as;
-                        accessible-label: Strings.copy-as;
-                        visible: root.has-selection && root.can-transform;
-                        clicked => {
-                            root.act-copy-as();
-                        }
-                    }
-                    ActionButton {
-                        text: root.selected-pinned ? Strings.unpin : Strings.pin;
-                        visible: root.has-selection;
-                        clicked => {
-                            root.act-pin();
-                        }
-                    }
-                    ActionButton {
-                        text: Strings.delete;
-                        visible: root.has-selection;
-                        clicked => {
-                            root.act-delete();
-                        }
-                    }
-                    Rectangle {
-                        horizontal-stretch: 1;
-                    }
-                }
-                if root.toast != "": HorizontalLayout {
-                    height: 28px;
-                    spacing: 8px;
-
-                    Text {
+                    if root.toast != "": Toast {
+                        x: 12px;
+                        y: parent.height - self.height - 12px;
+                        width: parent.width - 24px;
                         text: root.toast;
-                        color: Theme.text;
-                        vertical-alignment: center;
-                        overflow: elide;
-                        horizontal-stretch: 1;
-                        accessible-role: text;
-                    }
-                    ActionButton {
-                        text: Strings.undo;
-                        visible: root.toast-undo;
-                        clicked => {
+                        undo: root.toast-undo;
+                        undo-label: Strings.undo;
+                        undo-key: Strings.key-ctrl-z;
+                        undo-clicked => {
                             root.act-undo();
                         }
                     }
                 }
+
+                // Detail of the selected clip (toggle with Right or Space). It sits below the
+                // list until the side pane of Task 702.
+                if root.detail-open && root.has-selection: Rectangle {
+                    height: 228px;
+                    DetailPane {
+                        x: 12px;
+                        y: 0px;
+                        width: parent.width - 24px;
+                        height: 220px;
+                        state: root.detail;
+                        text: root.detail-text;
+                        load-text => {
+                            root.load-full-text();
+                        }
+                        load-image => {
+                            root.load-full-image();
+                        }
+                    }
+                }
+
+                // Status line (30 px): capture state and key hints. No text footer buttons.
+                Rectangle {
+                    height: 1px;
+                    background: Theme.line;
+                }
+                StatusLine {
+                    tone: root.status-tone;
+                    text: root.status-text;
+                    hints: root.hints;
+                }
             }
+        }
+    }
+
+    // The row menu and More filters: an in-window menu whose keys Rust decides (D-079, F-31).
+    menu := Menu {
+        entries: root.menu-entries;
+        menu-width: root.menu-width;
+        highlighted: root.menu-highlighted;
+        key(text) => {
+            return root.menu-key(text);
+        }
+        hovered(i) => {
+            root.menu-hovered(i);
+        }
+        activated(i) => {
+            root.menu-activated(i);
+        }
+        dismissed => {
+            root.menu-dismissed();
         }
     }
 

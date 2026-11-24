@@ -116,6 +116,161 @@ pub fn row_text(item: &Item, index: usize, lang: Lang, now: Timestamp) -> RowTex
     }
 }
 
+// ---- The 48 px popup row (Task 701) ----------------------------------------------------------
+
+/// Which kit icon a row shows for its kind (the host maps it to an `IconName`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KindIcon {
+    FileText,
+    Link,
+    Code,
+    Image,
+    File,
+    Type,
+}
+
+pub fn kind_icon_name(k: ClipType) -> KindIcon {
+    match k {
+        ClipType::Text | ClipType::RichText => KindIcon::FileText,
+        ClipType::Url => KindIcon::Link,
+        ClipType::Code => KindIcon::Code,
+        ClipType::Image => KindIcon::Image,
+        ClipType::Files => KindIcon::File,
+        ClipType::Color => KindIcon::Type,
+    }
+}
+
+/// The texts of one popup row besides its preview: a meta line of source and age (no kind word,
+/// no Alt prefix), the Alt+N number, the badges and the screen-reader description.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PopupText {
+    pub kind_icon: KindIcon,
+    /// "Notepad · 5 min ago", or just the age when the source is unknown.
+    pub meta: String,
+    /// Screen-reader description: kind, source, age and the badges as words.
+    pub description: String,
+    /// "1".."9" for the first nine rows, empty after.
+    pub number: String,
+    pub pinned: bool,
+    pub favorite: bool,
+    pub masked: bool,
+    pub mono: bool,
+}
+
+/// Never prints the source name (GC-06).
+impl std::fmt::Debug for PopupText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PopupText")
+            .field("kind_icon", &self.kind_icon)
+            .field("masked", &self.masked)
+            .finish_non_exhaustive()
+    }
+}
+
+pub fn popup_text(item: &Item, index: usize, lang: Lang, now: Timestamp) -> PopupText {
+    let age = relative_time(lang, now, item.at);
+    let (meta, mut description) = match &item.source {
+        Some(src) => (
+            format!("{src} · {age}"),
+            format!("{} · {src} · {age}", t(lang, kind_msg(item.kind))),
+        ),
+        None => (
+            age.clone(),
+            format!("{} · {age}", t(lang, kind_msg(item.kind))),
+        ),
+    };
+    let badges = [
+        item.pinned.then(|| t(lang, Msg::UiFilterPinned)),
+        item.favorite.then(|| t(lang, Msg::OrgFavoriteBadge)),
+        item.masked.then(|| t(lang, Msg::UiMaskedBadge)),
+    ];
+    for b in badges.into_iter().flatten() {
+        description.push_str(" · ");
+        description.push_str(b);
+    }
+    PopupText {
+        kind_icon: kind_icon_name(item.kind),
+        meta,
+        description,
+        number: if index < 9 {
+            (index + 1).to_string()
+        } else {
+            String::new()
+        },
+        pinned: item.pinned,
+        favorite: item.favorite,
+        masked: item.masked,
+        mono: item.kind == ClipType::Code,
+    }
+}
+
+/// The preview line of a masked clip: a fixed i18n text. The stored masked preview (the first
+/// characters of the secret and its label) is never shown in the popup. `None` for a clip that
+/// is not masked: its own preview is used.
+pub fn popup_preview_text(item: &Item, lang: Lang) -> Option<&'static str> {
+    item.masked.then(|| t(lang, Msg::UiMaskedRowText))
+}
+
+/// Where an overline (PINNED n / RECENT n) goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    None,
+    FirstPinned,
+    FirstRecent,
+}
+
+impl Section {
+    /// The value of `ClipRow.section` (0 none, 1 first pinned, 2 first recent).
+    pub fn code(self) -> i32 {
+        match self {
+            Section::None => 0,
+            Section::FirstPinned => 1,
+            Section::FirstRecent => 2,
+        }
+    }
+}
+
+/// The overline of every row: the first pinned row and the first recent row. With no pinned clip
+/// the list is one flat list.
+pub fn section_for(items: &[&Item]) -> Vec<Section> {
+    let mut out = vec![Section::None; items.len()];
+    if !items.iter().any(|i| i.pinned) {
+        return out;
+    }
+    if let Some(at) = items.iter().position(|i| i.pinned) {
+        if let Some(s) = out.get_mut(at) {
+            *s = Section::FirstPinned;
+        }
+    }
+    if let Some(at) = items.iter().position(|i| !i.pinned) {
+        if let Some(s) = out.get_mut(at) {
+            *s = Section::FirstRecent;
+        }
+    }
+    out
+}
+
+/// (pinned, recent) rows among `items`.
+pub fn section_counts(items: &[&Item]) -> (usize, usize) {
+    let pinned = items.iter().filter(|i| i.pinned).count();
+    (pinned, items.len() - pinned)
+}
+
+/// "PINNED 2" / "RECENT 128" for the overline of `s`; empty for no overline.
+pub fn section_title(s: Section, pinned: usize, recent: usize, lang: Lang) -> String {
+    let n = |v: usize| u64::try_from(v).unwrap_or(u64::MAX);
+    match s {
+        Section::None => String::new(),
+        Section::FirstPinned => fill(t(lang, Msg::UiSectionPinned), n(pinned)),
+        Section::FirstRecent => fill(t(lang, Msg::UiSectionRecent), n(recent)),
+    }
+}
+
+/// Overlines show only in the plain list: no search text and no filter (then one flat list).
+pub fn sections_visible(f: &super::list::Filters) -> bool {
+    f.is_empty()
+}
+
 /// Splits highlighted segments into at most two lines of `line_chars` characters. The break is
 /// the last space in the second half of the first line, else a hard cut; the space is dropped.
 /// Highlight flags are kept. The second line is empty when everything fits on the first.
@@ -319,5 +474,181 @@ mod tests {
             (5, 7)
         );
         assert!(a.iter().chain(&b).all(|s| s.hit));
+    }
+
+    // ---- Task 701: the 48 px popup row ----
+
+    fn pinned_item(pinned: bool) -> Item {
+        let mut i = item(ClipType::Text);
+        i.pinned = pinned;
+        i
+    }
+
+    #[test]
+    fn kind_icons_follow_the_design() {
+        assert_eq!(kind_icon_name(ClipType::Text), KindIcon::FileText);
+        assert_eq!(kind_icon_name(ClipType::RichText), KindIcon::FileText);
+        assert_eq!(kind_icon_name(ClipType::Url), KindIcon::Link);
+        assert_eq!(kind_icon_name(ClipType::Code), KindIcon::Code);
+        assert_eq!(kind_icon_name(ClipType::Image), KindIcon::Image);
+        assert_eq!(kind_icon_name(ClipType::Files), KindIcon::File);
+        assert_eq!(kind_icon_name(ClipType::Color), KindIcon::Type);
+    }
+
+    #[test]
+    fn popup_meta_is_source_and_age_without_kind_word_or_alt() {
+        let mut i = item(ClipType::Url);
+        i.source = Some("Edge".into());
+        for lang in [Lang::En, Lang::Vi] {
+            let p = popup_text(&i, 0, lang, NOW);
+            assert!(!p.meta.contains("Alt+"), "{}", p.meta);
+            assert!(!p.meta.contains(t(lang, kind_msg(ClipType::Url))));
+            assert!(p.meta.starts_with("Edge · "), "{}", p.meta);
+        }
+        assert_eq!(popup_text(&i, 0, Lang::En, NOW).meta, "Edge · 5 min ago");
+        assert_eq!(popup_text(&i, 0, Lang::Vi, NOW).meta, "Edge · 5 phút trước");
+        i.source = None;
+        assert_eq!(popup_text(&i, 3, Lang::En, NOW).meta, "5 min ago");
+        // The screen-reader description keeps the kind word.
+        assert!(popup_text(&i, 3, Lang::En, NOW)
+            .description
+            .starts_with("Link · "));
+    }
+
+    #[test]
+    fn the_alt_number_is_only_for_the_first_nine_rows() {
+        let i = item(ClipType::Text);
+        for n in 0..9 {
+            assert_eq!(popup_text(&i, n, Lang::En, NOW).number, (n + 1).to_string());
+        }
+        assert_eq!(popup_text(&i, 9, Lang::En, NOW).number, "");
+        assert_eq!(popup_text(&i, 500, Lang::En, NOW).number, "");
+    }
+
+    #[test]
+    fn badges_say_pinned_favorite_masked_in_the_description() {
+        let mut i = item(ClipType::Text);
+        i.pinned = true;
+        i.favorite = true;
+        i.masked = true;
+        let p = popup_text(&i, 0, Lang::En, NOW);
+        assert!(p.pinned && p.favorite && p.masked);
+        assert!(p.description.ends_with("Pinned · Favorite · Masked"));
+        let vi = popup_text(&i, 0, Lang::Vi, NOW);
+        assert!(vi.description.ends_with("Đã ghim · Yêu thích · Đã che"));
+        assert!(!popup_text(&item(ClipType::Code), 0, Lang::En, NOW).pinned);
+        assert!(popup_text(&item(ClipType::Code), 0, Lang::En, NOW).mono);
+    }
+
+    #[test]
+    fn a_masked_row_shows_only_the_i18n_text_never_the_stored_preview() {
+        let mut i = item(ClipType::Text);
+        i.masked = true;
+        i.source = Some("Vault".into());
+        // What storage holds for a masked clip: the first characters of the secret and a label.
+        i.preview = "abc…•••• (Password)".into();
+        for lang in [Lang::En, Lang::Vi] {
+            let line = popup_preview_text(&i, lang);
+            assert_eq!(line, Some(t(lang, Msg::UiMaskedRowText)));
+            let p = popup_text(&i, 0, lang, NOW);
+            for text in [&p.meta, &p.description] {
+                assert!(!text.contains("abc"), "{text}");
+                assert!(!text.contains("Password"), "{text}");
+                assert!(!text.contains('•'), "{text}");
+            }
+        }
+        // A clip that is not masked uses its own preview.
+        assert_eq!(popup_preview_text(&item(ClipType::Text), Lang::En), None);
+    }
+
+    #[test]
+    fn debug_of_the_row_texts_never_prints_the_source() {
+        let mut i = item(ClipType::Text);
+        i.source = Some("SecretApp.exe".into());
+        let s = format!(
+            "{:?} {:?}",
+            row_text(&i, 0, Lang::En, NOW),
+            popup_text(&i, 0, Lang::En, NOW)
+        );
+        assert!(!s.contains("SecretApp"), "{s}");
+    }
+
+    #[test]
+    fn sections_split_pinned_and_recent_rows() {
+        let items = [
+            pinned_item(true),
+            pinned_item(true),
+            pinned_item(false),
+            pinned_item(false),
+            pinned_item(false),
+        ];
+        let refs: Vec<&Item> = items.iter().collect();
+        assert_eq!(
+            section_for(&refs),
+            [
+                Section::FirstPinned,
+                Section::None,
+                Section::FirstRecent,
+                Section::None,
+                Section::None
+            ]
+        );
+        assert_eq!(section_counts(&refs), (2, 3));
+        // No pinned clip: one flat list, no overlines.
+        let flat: Vec<&Item> = items[2..].iter().collect();
+        assert!(section_for(&flat).iter().all(|s| *s == Section::None));
+        // Only pinned clips: just the pinned overline.
+        let only: Vec<&Item> = items[..2].iter().collect();
+        assert_eq!(section_for(&only)[0], Section::FirstPinned);
+        assert!(section_for(&only)[1..].iter().all(|s| *s == Section::None));
+        assert!(section_for(&[]).is_empty());
+        assert_eq!(section_counts(&[]), (0, 0));
+    }
+
+    #[test]
+    fn section_titles_carry_their_count_in_both_languages() {
+        assert_eq!(
+            section_title(Section::FirstPinned, 2, 5, Lang::En),
+            "PINNED 2"
+        );
+        assert_eq!(
+            section_title(Section::FirstRecent, 2, 5, Lang::En),
+            "RECENT 5"
+        );
+        assert_eq!(section_title(Section::None, 2, 5, Lang::En), "");
+        assert_eq!(
+            section_title(Section::FirstPinned, 2, 5, Lang::Vi),
+            "ĐÃ GHIM 2"
+        );
+        assert_eq!(
+            section_title(Section::FirstRecent, 2, 5, Lang::Vi),
+            "GẦN ĐÂY 5"
+        );
+        assert_eq!(Section::None.code(), 0);
+        assert_eq!(Section::FirstPinned.code(), 1);
+        assert_eq!(Section::FirstRecent.code(), 2);
+    }
+
+    #[test]
+    fn overlines_show_only_without_a_search_or_filter() {
+        use crate::popup::list::{Filters, TimeFilter};
+        assert!(sections_visible(&Filters::default()));
+        assert!(!sections_visible(&Filters {
+            text: "a".into(),
+            ..Filters::default()
+        }));
+        assert!(!sections_visible(&Filters {
+            pinned_only: true,
+            ..Filters::default()
+        }));
+        assert!(!sections_visible(&Filters {
+            time: TimeFilter::Week,
+            ..Filters::default()
+        }));
+        // Whitespace only is not a search.
+        assert!(sections_visible(&Filters {
+            text: "  ".into(),
+            ..Filters::default()
+        }));
     }
 }

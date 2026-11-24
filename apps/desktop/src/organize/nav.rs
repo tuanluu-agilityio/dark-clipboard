@@ -16,7 +16,8 @@ pub const NAV_FAVORITES: i32 = 105;
 pub const NAV_COLLECTION: i32 = 1000;
 /// Tag chips are `NAV_TAG + index` into the tags.
 pub const NAV_TAG: i32 = 2000;
-/// Collections shown as popup chips at most.
+/// Collections shown as popup chips at most (the popup lists them in "More filters" now).
+#[allow(dead_code)]
 pub const POPUP_MAX_COLLECTIONS: usize = 6;
 
 /// What the list pane knows about the organisation: loaded on the worker, never from clip content.
@@ -111,7 +112,8 @@ fn index_id(base: i32, i: usize) -> i32 {
     base + i32::try_from(i).unwrap_or(0)
 }
 
-/// The popup's chips: Favorites, then at most `POPUP_MAX_COLLECTIONS` user collections.
+/// The popup's old chips: Favorites, then at most `POPUP_MAX_COLLECTIONS` user collections.
+#[allow(dead_code)]
 pub fn popup_nav_chips(f: &Filters, nav: &Nav, lang: Lang) -> Vec<ChipSpec> {
     let mut v = Vec::new();
     if let Some(fav) = nav.favorites() {

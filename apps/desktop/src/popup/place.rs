@@ -2,7 +2,7 @@
 //! monitor's work area. Pure, in physical pixels; the Win32 queries live in `winsys.rs`.
 
 /// Popup size in logical pixels (scaled by the monitor's DPI).
-pub const POPUP_LOGICAL: (u32, u32) = (420, 560);
+pub const POPUP_LOGICAL: (u32, u32) = (440, 520);
 /// Gap between the cursor and the popup, in logical pixels.
 const GAP_LOGICAL: i32 = 12;
 
@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn centered_in_the_work_area_and_never_outside_it() {
-        assert_eq!(center_origin((420, 560), WORK), (750, 240));
+        assert_eq!(center_origin((440, 520), WORK), (740, 260));
         // Another monitor, with negative coordinates.
         let left = Rect {
             left: -1920,
@@ -75,7 +75,7 @@ mod tests {
             right: 0,
             bottom: 1040,
         };
-        assert_eq!(center_origin((420, 560), left), (-1170, 240));
+        assert_eq!(center_origin((440, 520), left), (-1180, 260));
         // Larger than the work area: the top-left corner stays visible.
         let tiny = Rect {
             left: 0,
@@ -83,41 +83,41 @@ mod tests {
             right: 300,
             bottom: 300,
         };
-        assert_eq!(center_origin((420, 560), tiny), (0, 0));
+        assert_eq!(center_origin((440, 520), tiny), (0, 0));
     }
 
     #[test]
     fn scales_by_dpi() {
-        assert_eq!(scale(420, 96), 420);
-        assert_eq!(scale(420, 144), 630);
-        assert_eq!(scale(560, 120), 700);
+        assert_eq!(scale(440, 96), 440);
+        assert_eq!(scale(440, 144), 660);
+        assert_eq!(scale(520, 120), 650);
         assert_eq!(scale(12, 168), 21);
         // A DPI of 0 (query failed) counts as 100 %.
-        assert_eq!(scale(420, 0), 420);
+        assert_eq!(scale(440, 0), 440);
     }
 
     #[test]
     fn below_and_centered_on_the_cursor() {
-        assert_eq!(popup_origin((960, 200), (420, 560), WORK, 96), (750, 212));
+        assert_eq!(popup_origin((960, 200), (440, 520), WORK, 96), (740, 212));
     }
 
     #[test]
     fn above_the_cursor_when_there_is_no_room_below() {
-        assert_eq!(popup_origin((960, 900), (420, 560), WORK, 96), (750, 328));
+        assert_eq!(popup_origin((960, 900), (440, 520), WORK, 96), (740, 368));
     }
 
     #[test]
     fn clamped_into_the_work_area() {
         // Right edge.
-        assert_eq!(popup_origin((1910, 100), (420, 560), WORK, 96), (1500, 112));
+        assert_eq!(popup_origin((1910, 100), (440, 520), WORK, 96), (1480, 112));
         // Left edge.
-        assert_eq!(popup_origin((5, 100), (420, 560), WORK, 96), (0, 112));
+        assert_eq!(popup_origin((5, 100), (440, 520), WORK, 96), (0, 112));
         // Middle of a short screen: neither below nor above fits.
         let short = Rect {
             bottom: 700,
             ..WORK
         };
-        assert_eq!(popup_origin((960, 350), (420, 560), short, 96), (750, 140));
+        assert_eq!(popup_origin((960, 350), (440, 520), short, 96), (740, 180));
         // Larger than the work area: the top-left corner stays visible.
         let tiny = Rect {
             left: 0,
@@ -125,7 +125,7 @@ mod tests {
             right: 300,
             bottom: 300,
         };
-        assert_eq!(popup_origin((150, 150), (420, 560), tiny, 96), (0, 0));
+        assert_eq!(popup_origin((150, 150), (440, 520), tiny, 96), (0, 0));
     }
 
     #[test]
@@ -137,10 +137,10 @@ mod tests {
             right: 0,
             bottom: 1560,
         };
-        let size = (scale(420, 144), scale(560, 144));
-        assert_eq!(size, (630, 840));
+        let size = (scale(440, 144), scale(520, 144));
+        assert_eq!(size, (660, 780));
         // Gap of 12 logical px = 18 physical px.
-        assert_eq!(popup_origin((-1440, 300), size, left, 144), (-1755, 318));
-        assert_eq!(popup_origin((-10, 1500), size, left, 144), (-630, 642));
+        assert_eq!(popup_origin((-1440, 300), size, left, 144), (-1770, 318));
+        assert_eq!(popup_origin((-10, 1500), size, left, 144), (-660, 702));
     }
 }

@@ -4,6 +4,9 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme, Strings } from "theme.slint";
 import { Icon, IconName } from "kit/icon.slint";
+import { Button, ButtonKind } from "kit/button.slint";
+import { KeyCap } from "kit/key_cap.slint";
+import { Tooltip } from "kit/tooltip.slint";
 
 // One piece of a preview line; `hit` pieces matched the search.
 export struct Seg {
@@ -30,6 +33,12 @@ export struct ClipRow {
     pinned: bool,
     // Marked for a multi-selection (history window, Task 211); false in the popup.
     marked: bool,
+    // The popup row (Task 701): kind icon, Alt+N number ("1".."9", empty after), overline (0 none,
+    // 1 first pinned, 2 first recent) and the masked flag. The history rows ignore them.
+    kind-icon: IconName,
+    number: string,
+    section: int,
+    masked: bool,
 }
 
 // One file of a file clip.
@@ -76,7 +85,10 @@ export component ChipView inherits FocusScope {
 
     focus-on-click: false;
     height: 26px;
-    min-width: label.preferred-width + 22px;
+    // Extras shrink (the label elides) when the segment leaves little room.
+    min-width: 56px;
+    preferred-width: label.preferred-width + (chip.on ? 38px : 22px);
+    max-width: 120px;
     accessible-role: checkbox;
     accessible-checkable: true;
     accessible-checked: chip.on;
@@ -100,17 +112,31 @@ export component ChipView inherits FocusScope {
         root.focus-report(false);
     }
 
+    // An active extra filter (Task 701): a removable chip, `x` takes it off.
     Rectangle {
         border-radius: 13px;
-        background: chip.on ? Theme.accent : (touch.has-hover ? Theme.line : Theme.surface);
+        background: chip.on ? Theme.selected : (touch.has-hover ? Theme.raised : Theme.surface);
         border-width: root.has-focus ? 2px : 1px;
-        border-color: root.has-focus ? Theme.text : (chip.on ? Theme.accent : Theme.line);
-        label := Text {
-            text: chip.label;
-            color: chip.on ? Theme.bg : Theme.text;
-            font-size: 12px;
-            vertical-alignment: center;
-            horizontal-alignment: center;
+        border-color: root.has-focus ? Theme.focus : (chip.on ? Theme.accent : Theme.border);
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: chip.on ? 6px : 10px;
+            spacing: 4px;
+            label := Text {
+                text: chip.label;
+                color: Theme.text;
+                font-size: 12px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if chip.on: VerticalLayout {
+                alignment: center;
+                Icon {
+                    name: IconName.x;
+                    size: 12px;
+                    tint: Theme.text-2;
+                }
+            }
         }
     }
 
@@ -433,6 +459,278 @@ export component DetailPane inherits Rectangle {
             color: Theme.text-muted;
             font-size: 11px;
             wrap: word-wrap;
+        }
+    }
+}
+
+// ---- The popup layout (Task 701) ---------------------------------------------------------------
+
+// One tab of the filter segment; `id` is the chip id Rust toggles. `show-label` is set for the
+// first active tab only, so the segment never outgrows its width budget.
+export struct SegTab {
+    id: int,
+    label: string,
+    icon: IconName,
+    on: bool,
+    show-label: bool,
+    divider: bool,
+}
+
+// A key cap and its meaning in the status line.
+export struct StatusHint {
+    key: string,
+    label: string,
+}
+
+// The filter segment: one Tab stop (the bar), Left/Right move the cursor, Enter and Space toggle
+// the tab under it. While the bar has the focus Rust's key map leaves those keys alone
+// (`KeyCtx.control_focused`). Every tab is a `checkbox` with its name as label.
+export component SegmentBar inherits FocusScope {
+    in property <[SegTab]> tabs;
+    in property <string> group-label;
+    callback toggled(int);
+    // Every focus change, so Rust knows a control has the focus.
+    callback focus-report(bool);
+    property <int> cursor;
+
+    focus-on-click: false;
+    height: 30px;
+    width: bar.preferred-width + 2px;
+    accessible-role: groupbox;
+    accessible-label: root.group-label;
+
+    key-pressed(e) => {
+        if (e.text == Key.LeftArrow) {
+            root.cursor = max(0, root.cursor - 1);
+            return accept;
+        }
+        if (e.text == Key.RightArrow) {
+            root.cursor = min(root.tabs.length - 1, root.cursor + 1);
+            return accept;
+        }
+        if (e.text == " " || e.text == Key.Return) {
+            if (root.cursor >= 0 && root.cursor < root.tabs.length) {
+                root.toggled(root.tabs[root.cursor].id);
+            }
+            return accept;
+        }
+        reject
+    }
+    focus-gained(reason) => {
+        root.focus-report(true);
+    }
+    focus-lost(reason) => {
+        root.focus-report(false);
+    }
+
+    Rectangle {
+        border-radius: 8px;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: Theme.border;
+    }
+
+    bar := HorizontalLayout {
+        padding: 1px;
+        spacing: 0px;
+        for tab[i] in root.tabs: HorizontalLayout {
+            spacing: 0px;
+            if tab.divider: Rectangle {
+                width: 9px;
+                Rectangle {
+                    x: 4px;
+                    y: 7px;
+                    width: 1px;
+                    height: parent.height - 14px;
+                    background: Theme.border-strong;
+                }
+            }
+            Rectangle {
+                width: tab.show-label ? 28px + tab-label.preferred-width + 4px : 28px;
+                height: 28px;
+                border-radius: 6px;
+                background: tab.on ? Theme.selected : (tab-touch.has-hover ? Theme.raised : transparent);
+                accessible-role: checkbox;
+                accessible-checkable: true;
+                accessible-checked: tab.on;
+                accessible-label: tab.label;
+                accessible-action-default => {
+                    root.toggled(tab.id);
+                }
+
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    spacing: 4px;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            name: tab.icon;
+                            tint: tab.on ? Theme.accent : (tab-touch.has-hover ? Theme.text : Theme.text-2);
+                        }
+                    }
+                    tab-label := Text {
+                        visible: tab.show-label;
+                        text: tab.show-label ? tab.label : "";
+                        color: Theme.text;
+                        font-size: 12px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // The keyboard cursor: a 2 px focus ring while the bar has the focus.
+                Rectangle {
+                    visible: root.has-focus && i == root.cursor;
+                    x: -1px;
+                    y: -1px;
+                    width: parent.width + 2px;
+                    height: parent.height + 2px;
+                    border-radius: 7px;
+                    border-width: 2px;
+                    border-color: Theme.focus;
+                    background: transparent;
+                }
+
+                tab-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.cursor = i;
+                        root.toggled(tab.id);
+                    }
+                }
+
+                Tooltip {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: parent.height;
+                    text: tab.label;
+                    active: tab-touch.has-hover || (root.has-focus && i == root.cursor);
+                }
+            }
+        }
+    }
+}
+
+// The status line (30 px): capture state (a dot and its name) and at most three key hints.
+export component StatusLine inherits Rectangle {
+    // 1 capturing, 2 paused, 3 private, 0 off.
+    in property <int> tone;
+    in property <string> text;
+    in property <[StatusHint]> hints;
+
+    height: 30px;
+    accessible-role: groupbox;
+    accessible-label: root.text;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.tone == 1 ? Theme.success
+                    : root.tone == 2 ? Theme.warning
+                    : root.tone == 3 ? Theme.text-2
+                    : Theme.text-3;
+            }
+        }
+        Text {
+            text: root.text;
+            color: Theme.text-2;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+            min-width: 0px;
+        }
+        for h in root.hints: HorizontalLayout {
+            spacing: 4px;
+            VerticalLayout {
+                alignment: center;
+                KeyCap {
+                    text: h.key;
+                }
+            }
+            Text {
+                text: h.label;
+                color: Theme.text-2;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// The toast (Task 701): floats above the status line inside the list area and never hides a
+// control. `undo` shows the Undo button (ghost, with its key cap). The text is also the
+// accessible text of a `text` element.
+export component Toast inherits Rectangle {
+    in property <string> text;
+    in property <bool> undo;
+    in property <string> undo-label;
+    in property <string> undo-key;
+    callback undo-clicked();
+
+    height: 40px;
+    border-radius: 8px;
+    background: Theme.raised;
+    border-width: 1px;
+    border-color: Theme.border-strong;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 6px;
+        spacing: 8px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                name: root.undo ? IconName.trash-2 : IconName.info;
+                tint: Theme.text-2;
+            }
+        }
+        Text {
+            text: root.text;
+            color: Theme.text;
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+            min-width: 0px;
+            accessible-role: AccessibleRole.text;
+            accessible-label: root.text;
+        }
+        if root.undo: HorizontalLayout {
+            spacing: 4px;
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    name: IconName.undo-2;
+                    tint: Theme.text-2;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    text: root.undo-label;
+                    kind: ButtonKind.ghost;
+                    height: 28px;
+                    clicked => {
+                        root.undo-clicked();
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                KeyCap {
+                    text: root.undo-key;
+                }
+            }
         }
     }
 }

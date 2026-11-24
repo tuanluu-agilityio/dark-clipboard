@@ -67,6 +67,70 @@ pub fn key_hints(can_paste: bool, enter_pastes: bool) -> Msg {
     }
 }
 
+/// One hint of the popup's status line: a key cap and what it does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Hint {
+    pub key: Msg,
+    pub label: Msg,
+}
+
+/// The status line's hints (at most three), by the same rule as `key_hints`: Ctrl+Enter is
+/// mentioned only where pasting works and Enter does not already paste. F1 is not advertised.
+pub fn status_hints(can_paste: bool, enter_pastes: bool) -> Vec<Hint> {
+    let enter = |label| Hint {
+        key: Msg::UiKeyEnter,
+        label,
+    };
+    let preview = Hint {
+        key: Msg::UiKeySpace,
+        label: Msg::UiHintPreview,
+    };
+    match (can_paste, enter_pastes) {
+        (true, true) => vec![enter(Msg::UiHintPaste), preview],
+        (true, false) => vec![
+            enter(Msg::UiCopy),
+            Hint {
+                key: Msg::UiKeyCtrlEnter,
+                label: Msg::UiHintPaste,
+            },
+            preview,
+        ],
+        (false, _) => vec![enter(Msg::UiCopy), preview],
+    }
+}
+
+/// The capture state the status line names (from the tray's state, read when the popup shows).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureShown {
+    Capturing,
+    Paused,
+    Private,
+    /// Off, not started or failed.
+    Off,
+}
+
+impl CaptureShown {
+    /// The dot's colour: 1 success, 2 warning (paused), 3 text-2 (private), 0 text-3 (off).
+    /// The state is always named in words too: colour is never the only cue.
+    pub fn tone(self) -> i32 {
+        match self {
+            CaptureShown::Capturing => 1,
+            CaptureShown::Paused => 2,
+            CaptureShown::Private => 3,
+            CaptureShown::Off => 0,
+        }
+    }
+}
+
+pub fn capture_label(s: CaptureShown) -> Msg {
+    match s {
+        CaptureShown::Capturing => Msg::UiStatusCapturing,
+        CaptureShown::Paused => Msg::UiStatusPaused,
+        CaptureShown::Private => Msg::UiStatusPrivate,
+        CaptureShown::Off => Msg::UiStatusOff,
+    }
+}
+
 /// The toast after a refused or failed paste (the clip is on the clipboard either way).
 pub fn paste_toast(err: &PlatformError) -> Msg {
     match err {
@@ -227,5 +291,84 @@ mod tests {
         assert_eq!(previous_after_focus_loss(prev, true), prev);
         assert_eq!(previous_after_focus_loss(prev, false), None);
         assert_eq!(previous_after_focus_loss(None, false), None);
+    }
+
+    // ---- Task 701: the status line ----
+
+    fn pairs(h: &[Hint]) -> Vec<(Msg, Msg)> {
+        h.iter().map(|h| (h.key, h.label)).collect()
+    }
+
+    #[test]
+    fn status_hints_follow_the_key_hint_rule() {
+        // Paste works, "Enter pastes" off: Enter copies, Ctrl+Enter pastes.
+        assert_eq!(
+            pairs(&status_hints(true, false)),
+            [
+                (Msg::UiKeyEnter, Msg::UiCopy),
+                (Msg::UiKeyCtrlEnter, Msg::UiHintPaste),
+                (Msg::UiKeySpace, Msg::UiHintPreview)
+            ]
+        );
+        // "Enter pastes" on: Enter pastes and there is no Ctrl+Enter hint.
+        assert_eq!(
+            pairs(&status_hints(true, true)),
+            [
+                (Msg::UiKeyEnter, Msg::UiHintPaste),
+                (Msg::UiKeySpace, Msg::UiHintPreview)
+            ]
+        );
+        // Paste unavailable: nothing mentions pasting, whatever the setting.
+        for enter_pastes in [false, true] {
+            assert_eq!(
+                pairs(&status_hints(false, enter_pastes)),
+                [
+                    (Msg::UiKeyEnter, Msg::UiCopy),
+                    (Msg::UiKeySpace, Msg::UiHintPreview)
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn status_hints_are_at_most_three_and_never_advertise_f1() {
+        for can in [false, true] {
+            for enter in [false, true] {
+                let h = status_hints(can, enter);
+                assert!(h.len() <= 3);
+                assert!(!h.is_empty());
+                for lang in [darkclip_core::i18n::Lang::En, darkclip_core::i18n::Lang::Vi] {
+                    for hint in &h {
+                        let key = darkclip_core::i18n::t(lang, hint.key);
+                        assert!(!key.contains("F1"), "{key}");
+                        assert!(!darkclip_core::i18n::t(lang, hint.label).is_empty());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_capture_state_has_a_name_for_every_state() {
+        for lang in [darkclip_core::i18n::Lang::En, darkclip_core::i18n::Lang::Vi] {
+            for s in [
+                CaptureShown::Capturing,
+                CaptureShown::Paused,
+                CaptureShown::Private,
+                CaptureShown::Off,
+            ] {
+                assert!(!darkclip_core::i18n::t(lang, capture_label(s)).is_empty());
+            }
+        }
+        assert_eq!(
+            capture_label(CaptureShown::Capturing),
+            Msg::UiStatusCapturing
+        );
+        assert_eq!(capture_label(CaptureShown::Off), Msg::UiStatusOff);
+        // Only an active capture is a "good" dot.
+        assert_eq!(CaptureShown::Capturing.tone(), 1);
+        assert_eq!(CaptureShown::Paused.tone(), 2);
+        assert_eq!(CaptureShown::Private.tone(), 3);
+        assert_eq!(CaptureShown::Off.tone(), 0);
     }
 }

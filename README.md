@@ -42,7 +42,7 @@ An alpha: there is no installer and no signed binary. Download it (above) or bui
 ### What works (implemented)
 
 - Tray icon with menu (pause, private mode, history, settings, quit) and a global shortcut (default `Ctrl+Shift+V`).
-- Popup near the cursor: search as you type (accent-insensitive), filters, previews for text, images and file lists, pin, delete with undo.
+- Popup near the cursor (440 x 520): a search field and four icon buttons (preview, history, settings, close), a filter segment with a More filters menu, 48 px rows with copy, pin and more buttons, a right-click row menu, previews for text, images and file lists, pin, delete with undo, and a status line with the capture state and key hints. `Ctrl+K` focuses the search, `Ctrl+,` opens Settings, `Shift+F10` (or the Menu key) opens the row menu, `Ctrl+1` to `Ctrl+9` pick a filter tab and `Ctrl+Shift+F` opens More filters. The menus and buttons only copy; paste stays `Ctrl+Enter`.
 - Copy back with Enter; paste into the previous app with Ctrl+Enter (opt-in "Enter also pastes"). Paste is refused for elevated apps, the taskbar and windows it cannot identify.
 - History window with filters, multi-select, pin, delete (always asks first) and a detail pane.
 - Settings window (shortcut, language, start at login, capture mode, retention, excluded apps, about and licences) and a first-run welcome. English and Vietnamese.
@@ -107,7 +107,7 @@ The history window's left pane lists **Favorites**, your **collections** and you
 | `Ctrl+Shift+N` | New collection |
 | `Ctrl+Shift+R` / `Ctrl+Shift+Del` | Rename / delete the collection the list is filtered to (deleting asks first and names it; its clips stay in your history) |
 
-The same actions are buttons and context-menu entries; the detail pane shows the favorite star, the note and the tags of the selected clip, and each tag has a remove button. In the popup, a star marks favorite rows, the chip row has **Favorites** and your collections (the first six), and `Ctrl+D` favorites or unfavorites the selected row. Favorites are kept by "Clear history" and "Delete old clips" (see below).
+The same actions are buttons and context-menu entries; the detail pane shows the favorite star, the note and the tags of the selected clip, and each tag has a remove button. In the popup, a star marks favorite rows, the filter segment has a **Favorites** tab, **More filters** lists your collections, and `Ctrl+D` favorites or unfavorites the selected row. Favorites are kept by "Clear history" and "Delete old clips" (see below).
 
 A masked clip (one that may contain a secret) takes no add action: it cannot be favorited, noted, tagged or added to a collection, so a secret can never become a favorite that retention skips. Unfavoriting and removing it from a collection still work. A multi-select that includes masked clips leaves them out and says how many.
 

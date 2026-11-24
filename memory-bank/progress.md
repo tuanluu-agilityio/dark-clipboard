@@ -103,7 +103,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | Design package (audit agent sonnet 204,608; builder check sonnet 74,866) | docs/ui-redesign-design | orchestrator + general-purpose | opus + sonnet | done | 279,474 | | | 279,474 |
 | 700 Foundation kit (tokens, SVG icons, components) | task/700-ui-foundation-kit | builder | sonnet | done (Lucide 1.79.0, 43 SVGs; P4 +0.12 MiB, P6 +36 KiB; D-079 menus) | 218,922 | 61,065 (reviewer sonnet: APPROVED, 3 should-fix: empty-menu guard fixed; key-map split and tooltip reset → F-31) | 2,862 | 282,849 |
 | 710 App icon (option A) | task/710-app-icon | builder | sonnet | done (ICO 8 sizes 57 KB; tray RGBA per state via `nearest_tray_size`; `embed-resource` 3.0.12 Windows build-dep) | 124,033 | 41,771 (reviewer sonnet: APPROVED, nits only) | 0 | 165,804 |
-| 701 Popup layout | | builder | sonnet | pending | | | | |
+| 701 Popup layout (package: scaffolder sonnet 140,626) | task/701-popup-layout | builder | sonnet | done (440×520, 48 px rows, row actions + kit row menu, filter segment + More filters, status line, floating toast; masked rows show only i18n text; F-31 closed) | 549,290 (incl. package) | 93,271 (reviewer opus: APPROVED, 1 should-fix → F-32) | 0 | 642,561 |
 | 702 Popup preview pane | | builder | sonnet | pending | | | | |
 | 703 History layout | | builder | sonnet | pending | | | | |
 | 704 History interaction | | builder | sonnet | pending | | | | |
@@ -117,7 +117,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 
 | Model | Tokens |
 |---|---|
-| opus | 12,092,341 |
-| sonnet | 6,271,399 |
+| opus | 12,185,612 |
+| sonnet | 6,820,689 |
 | haiku | 0 |
-| **Total** | **18,363,740** (subagents only; orchestrator not measured) |
+| **Total** | **19,006,301** (subagents only; orchestrator not measured) |
