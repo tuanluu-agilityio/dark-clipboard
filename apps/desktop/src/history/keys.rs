@@ -72,7 +72,7 @@ pub enum HistoryAction {
     /// F6 and Shift+F6: the next and the previous visible region.
     NextRegion,
     PrevRegion,
-    /// Right arrow or Enter on a drawer-width window: the detail drawer opens.
+    /// Right arrow on a drawer-width window: the detail drawer opens (Enter still copies).
     OpenDrawer,
     /// Left arrow with the drawer open.
     CloseDrawer,
@@ -199,10 +199,8 @@ pub fn map_key_in(k: Key, m: Mods, ctx: HistoryCtx, layers: Layers) -> Option<Hi
             nav(k).map(HistoryAction::MoveKeep)
         }
         Key::Char(' ') if plain && !m.shift && list_keys => Some(HistoryAction::ToggleMark),
-        // The narrow layout shows the detail as a drawer: Right and Enter open it, Left closes it.
-        Key::Right | Key::Enter
-            if plain && !m.shift && list_keys && layers.narrow && !layers.drawer_open =>
-        {
+        // The narrow layout shows the detail as a drawer: Right opens it, Left closes it.
+        Key::Right if plain && !m.shift && list_keys && layers.narrow && !layers.drawer_open => {
             Some(HistoryAction::OpenDrawer)
         }
         Key::Left if plain && !m.shift && list_keys && layers.drawer_open => {
@@ -560,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn right_arrow_and_enter_open_the_drawer_only_in_the_narrow_layout() {
+    fn right_arrow_opens_the_drawer_only_in_the_narrow_layout_and_enter_still_copies() {
         let narrow = Layers {
             narrow: true,
             ..Layers::default()
@@ -569,11 +567,12 @@ mod tests {
             map_key_in(Key::Right, NONE, LIST, narrow),
             Some(A::OpenDrawer)
         );
+        // Enter keeps copying in every layout (every existing key keeps its action).
         assert_eq!(
             map_key_in(Key::Enter, NONE, LIST, narrow),
-            Some(A::OpenDrawer)
+            Some(A::Copy(CopyKind::Original))
         );
-        // Shift+Enter still copies as plain text; wide layouts keep Enter as Copy.
+        // Shift+Enter still copies as plain text.
         assert_eq!(
             map_key_in(Key::Enter, SHIFT, LIST, narrow),
             Some(A::Copy(CopyKind::Plain))

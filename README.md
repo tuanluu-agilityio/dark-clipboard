@@ -111,7 +111,7 @@ The history window's left pane lists **Favorites**, your **collections** and you
 | `Ctrl+B` | Collapse the sidebar to a rail of icons, or show it again (on a narrow window it opens over the list) |
 | `F6` / `Shift+F6` | Move the keyboard to the next / previous part of the window (sidebar, list, details) |
 | `Ctrl+,` | Open Settings |
-| `Right` or `Enter` on a narrow window | Show the details as a drawer over the list (`Esc` or `Left` closes it) |
+| `Right` on a narrow window | Show the details as a drawer over the list (`Esc` or `Left` closes it) |
 
 The same actions are buttons in the detail panel's toolbar and context-menu entries; the panel shows the note, the tags and the collections of the selected clip, each tag and collection has a remove button, and the sidebar's Collections header has a New collection button. In the popup, a star marks favorite rows, the filter segment has a **Favorites** tab, **More filters** lists your collections, and `Ctrl+D` favorites or unfavorites the selected row. Favorites are kept by "Clear history" and "Delete old clips" (see below).
 
