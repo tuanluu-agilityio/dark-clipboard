@@ -7,6 +7,7 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 ### Added
 
 - Task 700: new design tokens (darker canvas, blue-violet accent, raised and selected surfaces, focus colour) and the Lucide icon set with a small shared UI kit (icon, icon button, button, key cap, tooltip, switch, menu). The popup's settings and close icons are Lucide icons with tooltips. No layout changed yet; the redesign of each window follows.
+- Task 710: new app icon (a clipboard on the dark tile, shared with Darkshot) for the exe, the taskbar and Alt+Tab, the window title bars and the tray. The tray keeps the same icon and adds a small coloured badge for paused or off (amber), private (grey) and capture unavailable (red).
 
 ## [0.1.2] - 2026-11-24
 

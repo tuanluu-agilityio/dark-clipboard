@@ -35,6 +35,7 @@ Updated: 2026-11-22
 | `objc2-app-kit` | darkclip-macos | NSPasteboard (Phase 4) |
 | `x11rb`, `wayland-client`, `wayland-protocols(-wlr)` | darkclip-linux | X11/Wayland (Phase 4) |
 | `slint` / `slint-build` **~1.19.0** (pinned: feature `unstable-winit-030` is outside semver, used only for focus loss, bring-to-front and popup timing in `popup_host.rs`); Windows default renderer: Slint **software** renderer on the winit backend (D-055, Task 212), `SLINT_BACKEND` overrides, `global-hotkey` 0.10, `tray-icon` 0.26 (Windows), `ksni` (Linux, later) | apps/desktop | UI shell (ADR-0001) |
+| `embed-resource` 3.0.12, MIT (Task 710): **build-dependency**, `[target.'cfg(windows)'.build-dependencies]`, used in `apps/desktop/build.rs` to embed `res/app.rc` (the exe icon). Not compiled on macOS/Linux; `cargo deny check` passes with no `deny.toml` change. Pulls `cc`, `toml`, `vswhom`, `winreg` (build-time only) | apps/desktop (build) | Windows exe icon |
 | Lucide icons `lucide-static` **1.79.0** (43 SVG files, vendored unmodified in `apps/desktop/ui/icons/`, ISC + MIT for Feather-derived icons; not a crate, embedded with `@image-url`; licence in `about.hbs`, Task 700) | apps/desktop | UI icons (D-078, D-079) |
 | `unicode-normalization` 0.1.26 | core (Task 401) | NFC for tag names |
 | `darkclip-storage` (workspace) | apps/desktop | demo seeding and the search cursor type (Task 204) |
