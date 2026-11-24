@@ -1,6 +1,6 @@
 # Dark Clipboard 0.1.x for Windows: user guide
 
-This is the guide for Dark Clipboard 0.1.x (0.1.0 and the 0.1.1 bug-fix release), an **alpha** for Windows 11 x64 (the file keeps its old name so that links to it still work). macOS and Linux have no app yet. The logic behind the screens below is covered by automated tests, but the screens have **not yet been checked by hand on a real desktop**: those rows are listed as untested in the [platform checklist](../testing/platform-checklist.md). If something here does not match what you see, the guide is wrong, not you. The binary is unsigned.
+This is the guide for Dark Clipboard 0.1.x (0.1.0 and the 0.1.1 and 0.1.2 bug-fix releases), an **alpha** for Windows 11 x64 (the file keeps its old name so that links to it still work). macOS and Linux have no app yet. The logic behind the screens below is covered by automated tests, but the screens have **not yet been checked by hand on a real desktop**: those rows are listed as untested in the [platform checklist](../testing/platform-checklist.md). If something here does not match what you see, the guide is wrong, not you. The binary is unsigned.
 
 ## Install and start
 
@@ -9,7 +9,7 @@ There is no installer. Download the zip from the GitHub release, check its SHA-2
     cargo build --release -p dark-clipboard
     target\release\dark-clipboard.exe
 
-The app starts hidden. Look for its icon in the notification area (you may need to open the overflow arrow). Settings > About shows the version (for example 0.1.1).
+The app starts hidden. Look for its icon in the notification area (you may need to open the overflow arrow). Settings > About shows the version (for example 0.1.2).
 
 ## First run
 

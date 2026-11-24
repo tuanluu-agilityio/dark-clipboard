@@ -4,6 +4,10 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-24
+
+Privacy bug-fix release for Windows x64 (alpha, unsigned). The Known issues of 0.1.0 still apply. Release notes for the 0.1 line: https://github.com/tuanluu-agilityio/dark-clipboard/blob/v0.1.2/docs/user/release-notes-0.1.0.md
+
 ### Fixed
 
 - Task 416: temporary data that SQLite uses for large searches and maintenance no longer goes to the system temp folder; it stays in memory on every connection to the history. The safety copy made before a database upgrade no longer keeps search words of removed items.
