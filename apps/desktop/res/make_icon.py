@@ -4,7 +4,9 @@
 
 Needs Pillow. Writes next to this file:
   dark-clipboard.ico   16 20 24 32 40 48 64 256 (256 = PNG, others = 32-bit DIB)
-  window-64.png        the window icon (Slint `icon:`)
+  window-64.png        the window icon, source picture
+  window-64.rgba       the same, raw RGBA, embedded in the exe (Task 711: a PNG in `.slint` pulls in
+                       the image decoders, +116 KiB)
   tray/<state>-<size>.png and .rgba   states normal, paused, private, unavailable; sizes 16 20 24 32
   preview.png          contact sheet (light and dark backgrounds, zoomed and real size)
 Sizes 16/20/24 are drawn on the pixel grid (explicit pixel rects); the others are drawn at 8x and
@@ -343,6 +345,8 @@ def main():
     with open(os.path.join(here, "dark-clipboard.ico"), "wb") as f:
         f.write(ico)
     dict(base)[64].save(os.path.join(here, "window-64.png"), optimize=True)
+    with open(os.path.join(here, "window-64.rgba"), "wb") as f:
+        f.write(dict(base)[64].convert("RGBA").tobytes())
     for (st, s), im in tray.items():
         im.save(os.path.join(tray_dir, f"{st}-{s}.png"), optimize=True)
         with open(os.path.join(tray_dir, f"{st}-{s}.rgba"), "wb") as f:

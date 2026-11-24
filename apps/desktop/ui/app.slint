@@ -21,7 +21,7 @@ export { SheetLine, SheetStrings, IconName, MenuEntry, SegTab, StatusHint, Theme
 // shortcut, the tray or `--toggle`. All data and every decision come from Rust
 // (`src/ui/popup_host.rs`); this file only lays things out and forwards input.
 export component MainWindow inherits Window {
-    icon: @image-url("../res/window-64.png");
+    icon: Theme.window-icon;
     title: Strings.app-name;
     no-frame: true;
     always-on-top: true;

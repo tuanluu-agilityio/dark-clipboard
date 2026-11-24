@@ -59,3 +59,46 @@ fn window_icon_png_exists() {
     let png = res("window-64.png");
     assert_eq!(&png[..png.len().min(8)], b"\x89PNG\r\n\x1a\n");
 }
+
+/// Task 711: the window icon is raw RGBA set from Rust. A PNG named in a `.slint` file pulls the
+/// image decoders into the exe (+116 KiB), so no `.slint` file may embed a raster image.
+#[test]
+fn window_icon_rgba_is_a_64_square() {
+    assert_eq!(res("window-64.rgba").len(), 64 * 64 * 4);
+}
+
+#[test]
+fn no_slint_file_embeds_a_raster_image() {
+    fn walk(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+        for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "slint") {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ui"),
+        &mut files,
+    );
+    assert!(!files.is_empty());
+    for f in files {
+        let src = fs::read_to_string(&f).unwrap_or_default();
+        for line in src.lines().filter(|l| l.contains("@image-url")) {
+            let l = line.to_ascii_lowercase();
+            assert!(
+                !(l.contains(".png\"")
+                    || l.contains(".jpg\"")
+                    || l.contains(".jpeg\"")
+                    || l.contains(".gif\"")
+                    || l.contains(".bmp\"")
+                    || l.contains(".webp\"")),
+                "{}: raster image in markup: {line}",
+                f.display()
+            );
+        }
+    }
+}
