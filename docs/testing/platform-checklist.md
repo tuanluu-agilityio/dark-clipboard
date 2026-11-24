@@ -442,3 +442,19 @@ All rows **untested** (no hardware, Q-04).
 ## Linux (X11, KDE Wayland, wlroots, GNOME)
 
 All rows **untested** (no hardware, Q-04).
+
+## Task 706: secondary surfaces and the F1 shortcuts sheet (Windows)
+
+| Check | Expect | Status |
+|---|---|---|
+| Welcome at 100, 150 and 200 % (EN and VI): open it from Settings > About | One card with the clipboard icon, the title, two short paragraphs, a line with a switch (start at login) and the "nothing is captured until Start" note; Not now and Start under it; nothing clipped at the 480 x 520 minimum | **untested** |
+| Welcome keys and capture | `Enter` presses Start (it has the focus), `Esc` and the window close button are Not now, `Tab` reaches the switch, `Space` flips it; capture stays off until Start is pressed (check the tray) | **untested** |
+| Welcome without start-at-login support, and with a custom `--data-dir` | The switch row is hidden without support; with a custom folder it is dimmed with its note | **untested** |
+| Copy as... (popup `Ctrl+T`, history `Ctrl+T`) and Edit a copy (history `Ctrl+E`) | List on the left (36 px rows, selected row with an accent bar), result in a box on the right, Cancel and Copy (primary) or Save as new clip; Up/Down, Enter and Esc work as before; nothing clipped in the 440 px popup | **untested** |
+| History organisation dialogs: tags, note, add to collection, new, rename and delete collection, delete confirmation | By keys and mouse: Enter confirms, Esc cancels, the input has the focus on open, a name error shows under the field, the picker rows follow the arrows | **untested** |
+| Empty history, no results and load error in the popup and the history window (EN and VI) | An icon, one line and one hint (copy something, clear the search or filters, close and reopen) centred; the error line is red | **untested** |
+| `F1` and `Ctrl+/` in the popup and in the history window | A panel lists that window's keys in two columns (Navigate, Copy, Organize, Window), each with a key cap; every listed key does what it says; the history list has no popup-only key (Alt+1, Ctrl+Enter) and the popup list no history-only key (Ctrl+E, Ctrl+N) | **untested** |
+| While the sheet is open | `Esc` closes the sheet first (then a second `Esc` closes the window); `F1` and `Ctrl+/` toggle it; typing, Enter and arrows do nothing behind it; a click on the dark area closes it; it closes when the window hides | **untested** |
+| Hover the status line | A tooltip "Shortcuts" with `F1` after half a second | **untested** |
+| History window at 640 x 460 | The sheet's rows scroll with the mouse wheel when the window is too short | **untested** |
+| Narrator and Tab walk through the sheet and the dialogs; Vietnamese pass | The sheet reads as one group named "Keyboard shortcuts" with "label: key" lines; nothing is cut off | **untested** |

@@ -392,3 +392,54 @@ fn the_new_texts_exist_in_both_languages_and_are_short() {
         }
     }
 }
+
+// ---- Task 706: empty states ----
+
+#[test]
+fn the_history_empty_states_fit_on_one_line_each_in_the_narrowest_list() {
+    // The narrowest list column is the medium layout's: 820 - 216 - 300 = 304 px; the
+    // `EmptyState` keeps 20 px of padding on each side (`ui/kit/empty_state.slint`).
+    let room = list_px(820, false, 300, false) - 40.0;
+    assert_eq!(room, 264.0);
+    for lang in [Lang::En, Lang::Vi] {
+        for m in [
+            Msg::UiEmptyHistory,
+            Msg::UiNoResults,
+            Msg::UiLoadFailed,
+            Msg::StateHintEmpty,
+            Msg::StateHintNoResults,
+            Msg::StateHintFailed,
+        ] {
+            let px = text_px(t(lang, m));
+            assert!(px <= room, "{lang:?} {m:?} needs {px} px of {room}");
+        }
+    }
+}
+
+#[test]
+fn the_status_line_names_the_sheet_in_a_tooltip_not_a_hint() {
+    // D-084: at the medium layout (304 px list) the count and the two hints leave no room for
+    // an F1 hint, so the line carries a tooltip. The count, two hints and an F1 hint:
+    let inner = list_px(820, false, 300, false) - 24.0;
+    for lang in [Lang::En, Lang::Vi] {
+        let count = t(lang, Msg::UiClipsMany).replace("{n}", "9999+");
+        let hints = [
+            (Msg::UiKeySpace, Msg::UiHintMark),
+            (Msg::UiKeyMenu, Msg::UiHintActions),
+            (Msg::UiKeyEsc, Msg::SheetShortcuts),
+        ];
+        let hint_px: f32 = hints
+            .iter()
+            .map(|(k, l)| cap_px(t(lang, *k)) + 4.0 + text_px(t(lang, *l)) + 8.0)
+            .sum();
+        assert!(
+            text_px(&count) + hint_px > inner,
+            "{lang:?}: an F1 hint would fit, so D-084 must be revisited"
+        );
+    }
+    let panes = fs::read_to_string(manifest().join("ui/history_panes.slint")).unwrap_or_default();
+    assert!(
+        panes.contains("tip-key"),
+        "the history status line has the tooltip"
+    );
+}
