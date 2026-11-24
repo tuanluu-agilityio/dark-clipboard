@@ -62,8 +62,91 @@ pub struct MenuItem {
 
 /// The row menu's entries, in order. Disabled entries stay in the list (`04` section 1.8).
 pub fn history_menu_items(c: &MenuCtx) -> Vec<MenuItem> {
-    let _ = c;
-    Vec::new()
+    let item = |cmd, label, key, enabled| MenuItem {
+        cmd,
+        label,
+        key,
+        enabled,
+        submenu: false,
+        danger: false,
+    };
+    let pin = if c.will_unpin { Msg::UiUnpin } else { Msg::UiPin };
+    let fav = if c.will_unfavorite {
+        Msg::UiMenuUnfavorite
+    } else {
+        Msg::UiMenuFavorite
+    };
+    vec![
+        item(RowCmd::Copy, Msg::UiCopy, Some(Msg::UiKeyEnter), c.can_copy),
+        item(RowCmd::CopyPlain, Msg::HistMenuCopyPlain, None, c.can_copy),
+        item(RowCmd::CopyAs, Msg::TfCopyAs, None, c.can_transform),
+        item(
+            RowCmd::Edit,
+            Msg::UiTipEditCopy,
+            Some(Msg::UiKeyCtrlE),
+            c.can_transform,
+        ),
+        item(
+            RowCmd::TogglePin,
+            pin,
+            Some(Msg::UiKeyCtrlP),
+            c.has_selection,
+        ),
+        item(
+            RowCmd::ToggleFavorite,
+            fav,
+            Some(Msg::UiKeyCtrlD),
+            c.can_favorite,
+        ),
+        MenuItem {
+            submenu: true,
+            ..item(
+                RowCmd::AddToCollection,
+                Msg::HistMenuAddToCollection,
+                None,
+                c.can_add,
+            )
+        },
+        item(
+            RowCmd::RemoveFromCollection,
+            Msg::HistMenuRemoveFromCollection,
+            None,
+            c.can_remove,
+        ),
+        item(
+            RowCmd::Tags,
+            Msg::OrgTagsEdit,
+            Some(Msg::HistKeyCtrlG),
+            c.can_add,
+        ),
+        item(
+            RowCmd::Note,
+            Msg::OrgEditNote,
+            Some(Msg::HistKeyCtrlN),
+            c.can_edit,
+        ),
+        item(
+            RowCmd::Export,
+            Msg::HistMenuExport,
+            Some(Msg::HistKeyCtrlShiftE),
+            c.can_export,
+        ),
+        item(
+            RowCmd::SelectAll,
+            Msg::UiSelectAll,
+            Some(Msg::HistKeyCtrlA),
+            true,
+        ),
+        MenuItem {
+            danger: true,
+            ..item(
+                RowCmd::Delete,
+                Msg::UiDelete,
+                Some(Msg::UiKeyDel),
+                c.has_selection,
+            )
+        },
+    ]
 }
 
 /// What a key or a click did to the open menu.
@@ -86,6 +169,8 @@ pub struct RowMenu {
     pub open: OpenMenu,
     items: Vec<MenuItem>,
     collections: usize,
+    /// The first-level entry the second level was opened from.
+    parent: usize,
 }
 
 impl RowMenu {
@@ -94,6 +179,7 @@ impl RowMenu {
             open: OpenMenu::new(MenuKind::Row, items.len()),
             items,
             collections,
+            parent: 0,
         }
     }
 
@@ -118,15 +204,70 @@ impl RowMenu {
 
     /// One key. `labels` are the texts of the entries of the current level (for the letter jump).
     pub fn key(&mut self, key: MenuKey, labels: &[&str]) -> RowMenuEvent {
-        let _ = (key, labels, self.collections);
-        let _ = (letter_jump, menu_key, MenuAction::None);
-        RowMenuEvent::Unhandled
+        let m = self.open;
+        let action = match key {
+            MenuKey::Letter(c) => match letter_jump(labels, m.highlighted, c) {
+                Some(i) => MenuAction::Move(i),
+                None => return RowMenuEvent::Unhandled,
+            },
+            k => menu_key(k, m.highlighted, m.count),
+        };
+        match action {
+            MenuAction::Move(i) => {
+                self.set_highlight(i);
+                RowMenuEvent::Handled
+            }
+            MenuAction::Activate(i) => self.activate(i),
+            // Esc leaves the second level first, then the menu.
+            MenuAction::Close if self.open.level > 0 => self.back(),
+            MenuAction::Close => RowMenuEvent::Close,
+            MenuAction::Back => self.back(),
+            MenuAction::Submenu(i) => {
+                let opens = self.open.level == 0
+                    && self.collections > 0
+                    && self.items.get(i).is_some_and(|it| it.submenu && it.enabled);
+                if opens {
+                    self.enter_collections(i);
+                }
+                RowMenuEvent::Handled
+            }
+            MenuAction::None => RowMenuEvent::Unhandled,
+        }
     }
 
     /// A click, or Enter, on entry `i` of the current level.
     pub fn activate(&mut self, i: usize) -> RowMenuEvent {
-        let _ = i;
-        RowMenuEvent::Unhandled
+        if self.open.level > 0 {
+            return if i < self.collections {
+                RowMenuEvent::AddTo(i)
+            } else {
+                RowMenuEvent::Handled
+            };
+        }
+        let Some(item) = self.items.get(i).copied() else {
+            return RowMenuEvent::Handled;
+        };
+        if !item.enabled {
+            return RowMenuEvent::Handled;
+        }
+        if item.submenu && self.collections > 0 {
+            self.enter_collections(i);
+            return RowMenuEvent::Handled;
+        }
+        // A submenu entry with no collection to list falls back to the picker dialog.
+        RowMenuEvent::Run(item.cmd)
+    }
+
+    fn enter_collections(&mut self, from: usize) {
+        self.parent = from;
+        self.open.enter_level(1, self.collections);
+    }
+
+    fn back(&mut self) -> RowMenuEvent {
+        if self.open.back() {
+            self.open.highlighted = self.parent;
+        }
+        RowMenuEvent::Handled
     }
 }
 
