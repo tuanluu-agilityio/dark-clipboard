@@ -8,9 +8,9 @@ use darkclip_app::settings::{WindowRect, MAX_REMEMBERED_MONITORS};
 use std::collections::BTreeMap;
 
 /// Size of a first-time window, in logical pixels.
-pub const DEFAULT_LOGICAL: (u32, u32) = (980, 640);
+pub const DEFAULT_LOGICAL: (u32, u32) = (1060, 660);
 /// The smallest size the window can be resized to, in logical pixels (matches the markup).
-pub const MIN_LOGICAL: (u32, u32) = (760, 460);
+pub const MIN_LOGICAL: (u32, u32) = (640, 460);
 
 /// Where to put the window: physical position and size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,13 +134,14 @@ mod tests {
     #[test]
     fn the_first_open_is_centred_at_the_default_size() {
         let p = initial(None, WORK, 96);
-        assert_eq!((p.width, p.height, p.x, p.y), (980, 640, 470, 200), "{p:?}");
+        assert_eq!((p.width, p.height, p.x, p.y), (1060, 660, 430, 190), "{p:?}");
+        assert!(p.width >= 1000, "the default is the wide layout");
     }
 
     #[test]
     fn the_default_size_scales_with_the_dpi() {
         let p = initial(None, WORK, 144);
-        assert_eq!((p.width, p.height), (1470, 960));
+        assert_eq!((p.width, p.height), (1590, 990));
     }
 
     #[test]
@@ -178,7 +179,34 @@ mod tests {
         assert_eq!((p.width, p.height), (800, 600));
         // A tiny saved size grows to the minimum.
         let p = initial(Some(saved(0, 0, 100, 100)), WORK, 96);
-        assert_eq!((p.width, p.height), (760, 460));
+        assert_eq!((p.width, p.height), (640, 460));
+    }
+
+    #[test]
+    fn a_saved_size_below_the_minimum_is_clamped_up_and_larger_ones_are_kept() {
+        // F-34: 500 x 300 was allowed once; now it opens at the 640 x 460 minimum.
+        let p = initial(Some(saved(10, 10, 500, 300)), WORK, 96);
+        assert_eq!((p.width, p.height), (640, 460));
+        // Only the side below its minimum grows.
+        let p = initial(Some(saved(10, 10, 500, 700)), WORK, 96);
+        assert_eq!((p.width, p.height), (640, 700));
+        // The minimum itself and anything above it stays as saved.
+        let p = initial(Some(saved(10, 10, 640, 460)), WORK, 96);
+        assert_eq!((p.width, p.height), (640, 460));
+        let p = initial(Some(saved(10, 10, 820, 500)), WORK, 96);
+        assert_eq!((p.width, p.height), (820, 500));
+        // The minimum scales with the DPI.
+        let p = initial(Some(saved(10, 10, 500, 300)), WORK, 144);
+        assert_eq!((p.width, p.height), (960, 690));
+        // The work area still wins over the minimum on a small screen.
+        let tiny = Rect {
+            left: 0,
+            top: 0,
+            right: 600,
+            bottom: 400,
+        };
+        let p = initial(Some(saved(0, 0, 500, 300)), tiny, 96);
+        assert_eq!((p.width, p.height), (600, 400));
     }
 
     #[test]
@@ -204,7 +232,9 @@ mod tests {
         );
         // A DPI of 0 counts as 100 %; a window below the minimum is saved as the minimum.
         assert_eq!(to_saved((0, 0), (1000, 700), 0), saved(0, 0, 1000, 700));
-        assert_eq!(to_saved((0, 0), (10, 10), 96), saved(0, 0, 760, 460));
+        assert_eq!(to_saved((0, 0), (10, 10), 96), saved(0, 0, 640, 460));
+        assert_eq!(to_saved((0, 0), (500, 300), 96), saved(0, 0, 640, 460));
+        assert_eq!(to_saved((0, 0), (700, 500), 96), saved(0, 0, 700, 500));
     }
 
     #[test]
