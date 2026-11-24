@@ -1,0 +1,24 @@
+// A key hint such as "Ctrl+P" (Task 700): 11 px text on `raised`, radius 4 (`02` section 6).
+// `text-2` on `raised` is 6.2:1; `text-3` is never used on `raised`.
+
+import { Theme } from "../theme.slint";
+
+export component KeyCap inherits Rectangle {
+    in property <string> text;
+
+    height: 18px;
+    width: max(18px, label.preferred-width + 10px);
+    border-radius: 4px;
+    background: Theme.raised;
+    border-width: 1px;
+    border-color: Theme.border-strong;
+    accessible-role: none;
+
+    label := Text {
+        text: root.text;
+        color: Theme.text-2;
+        font-size: 11px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}

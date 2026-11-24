@@ -1,0 +1,107 @@
+// Lucide icons (Task 700): one SVG per name, embedded with `@image-url` and tinted with
+// `colorize`. Files live in `ui/icons/` (see its README); they are never text glyphs (Task 414).
+// Default tint is `text-2`; hosts pass `text` on hover, `accent` when active, `danger` for
+// destructive actions. The image is rasterised at the element size, so it stays crisp at any DPI.
+
+import { Theme } from "../theme.slint";
+
+export enum IconName {
+    search,
+    settings,
+    x,
+    pin,
+    pin-off,
+    star,
+    lock,
+    shield-check,
+    eye-off,
+    trash-2,
+    copy,
+    clipboard-paste,
+    type,
+    wand-sparkles,
+    pencil,
+    sticky-note,
+    tag,
+    folder,
+    folder-plus,
+    layers,
+    file-text,
+    link,
+    code,
+    image,
+    file,
+    clock,
+    history,
+    more-horizontal,
+    check,
+    undo-2,
+    keyboard,
+    pause,
+    play,
+    database,
+    hard-drive-download,
+    upload,
+    download,
+    info,
+    refresh-cw,
+    panel-right,
+    list-checks,
+    chevron-right,
+    chevron-down,
+}
+
+export component Icon inherits Image {
+    in property <IconName> name;
+    in property <length> size: 16px;
+    in property <color> tint: Theme.text-2;
+
+    width: root.size;
+    height: root.size;
+    image-fit: contain;
+    colorize: root.tint;
+    accessible-role: none;
+    source: root.name == IconName.search ? @image-url("../icons/search.svg")
+        : root.name == IconName.settings ? @image-url("../icons/settings.svg")
+        : root.name == IconName.x ? @image-url("../icons/x.svg")
+        : root.name == IconName.pin ? @image-url("../icons/pin.svg")
+        : root.name == IconName.pin-off ? @image-url("../icons/pin-off.svg")
+        : root.name == IconName.star ? @image-url("../icons/star.svg")
+        : root.name == IconName.lock ? @image-url("../icons/lock.svg")
+        : root.name == IconName.shield-check ? @image-url("../icons/shield-check.svg")
+        : root.name == IconName.eye-off ? @image-url("../icons/eye-off.svg")
+        : root.name == IconName.trash-2 ? @image-url("../icons/trash-2.svg")
+        : root.name == IconName.copy ? @image-url("../icons/copy.svg")
+        : root.name == IconName.clipboard-paste ? @image-url("../icons/clipboard-paste.svg")
+        : root.name == IconName.type ? @image-url("../icons/type.svg")
+        : root.name == IconName.wand-sparkles ? @image-url("../icons/wand-sparkles.svg")
+        : root.name == IconName.pencil ? @image-url("../icons/pencil.svg")
+        : root.name == IconName.sticky-note ? @image-url("../icons/sticky-note.svg")
+        : root.name == IconName.tag ? @image-url("../icons/tag.svg")
+        : root.name == IconName.folder ? @image-url("../icons/folder.svg")
+        : root.name == IconName.folder-plus ? @image-url("../icons/folder-plus.svg")
+        : root.name == IconName.layers ? @image-url("../icons/layers.svg")
+        : root.name == IconName.file-text ? @image-url("../icons/file-text.svg")
+        : root.name == IconName.link ? @image-url("../icons/link.svg")
+        : root.name == IconName.code ? @image-url("../icons/code.svg")
+        : root.name == IconName.image ? @image-url("../icons/image.svg")
+        : root.name == IconName.file ? @image-url("../icons/file.svg")
+        : root.name == IconName.clock ? @image-url("../icons/clock.svg")
+        : root.name == IconName.history ? @image-url("../icons/history.svg")
+        : root.name == IconName.more-horizontal ? @image-url("../icons/more-horizontal.svg")
+        : root.name == IconName.check ? @image-url("../icons/check.svg")
+        : root.name == IconName.undo-2 ? @image-url("../icons/undo-2.svg")
+        : root.name == IconName.keyboard ? @image-url("../icons/keyboard.svg")
+        : root.name == IconName.pause ? @image-url("../icons/pause.svg")
+        : root.name == IconName.play ? @image-url("../icons/play.svg")
+        : root.name == IconName.database ? @image-url("../icons/database.svg")
+        : root.name == IconName.hard-drive-download ? @image-url("../icons/hard-drive-download.svg")
+        : root.name == IconName.upload ? @image-url("../icons/upload.svg")
+        : root.name == IconName.download ? @image-url("../icons/download.svg")
+        : root.name == IconName.info ? @image-url("../icons/info.svg")
+        : root.name == IconName.refresh-cw ? @image-url("../icons/refresh-cw.svg")
+        : root.name == IconName.panel-right ? @image-url("../icons/panel-right.svg")
+        : root.name == IconName.list-checks ? @image-url("../icons/list-checks.svg")
+        : root.name == IconName.chevron-right ? @image-url("../icons/chevron-right.svg")
+        : @image-url("../icons/chevron-down.svg");
+}

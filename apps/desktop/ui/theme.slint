@@ -1,15 +1,27 @@
-// Dark palette (D-037: dark only). The values are set from `src/theme.rs` at start-up, which is
-// the single source of truth; the defaults below only matter before that call.
+// Dark palette (D-037: dark only), tokens of `docs/specs/ui-redesign/02-design-system.md`
+// section 2. The values are set from `src/theme.rs` at start-up, which is the single source of
+// truth; the defaults below only matter before that call. The old names (bg, line, text-muted)
+// are aliases of the new tokens, so every window written before Task 700 follows the palette.
 export global Theme {
-    in property <color> bg: #1C1E22;
-    in property <color> surface: #24272C;
-    in property <color> line: #383C43;
-    in property <color> text: #E7E9EC;
-    in property <color> text-muted: #A3A9B2;
-    in property <color> accent: #4C8DFF;
-    in property <color> danger: #FF7B72;
-    in property <color> success: #4ADE80;
-    in property <color> warning: #F5C04A;
+    in property <color> canvas: #111318;
+    in property <color> surface: #1B2028;
+    in property <color> raised: #232935;
+    in property <color> selected: #262C45;
+    in property <color> border: #2D3440;
+    in property <color> border-strong: #4A5263;
+    in property <color> text: #F3F5F9;
+    in property <color> text-2: #A1AAB8;
+    in property <color> text-3: #8F98A8;
+    in property <color> accent: #7887FF;
+    in property <color> on-accent: #111318;
+    in property <color> focus: #9AA6FF;
+    in property <color> success: #5FD4AA;
+    in property <color> warning: #F2C14E;
+    in property <color> danger: #FF7A85;
+    // Aliases (old name -> token): bg -> canvas, line -> border, text-muted -> text-2.
+    out property <color> bg: self.canvas;
+    out property <color> line: self.border;
+    out property <color> text-muted: self.text-2;
     // Monospace font for code clips; set from src/theme.rs (a different face per OS).
     in property <string> mono-font: "Consolas";
 }
@@ -64,4 +76,11 @@ export global Strings {
     in property <string> confirm-hints;
     // Settings (Task 207)
     in property <string> settings-open;
+    // Tooltips of the icon buttons (Task 700): name and key.
+    in property <string> tip-settings;
+    in property <string> tip-close;
+    in property <string> tip-favorite;
+    // Key caps shown in tooltips (identical in both languages).
+    in property <string> key-esc;
+    in property <string> key-ctrl-d;
 }

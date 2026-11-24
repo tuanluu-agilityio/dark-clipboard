@@ -136,6 +136,12 @@ messages! {
     UiDeleted => ("Clip deleted", "Đã xóa mục"),
     UiUndo => ("Undo", "Hoàn tác"),
     UiClose => ("Close", "Đóng"),
+    // Tooltips of the icon buttons (Task 700): the name; key caps are separate strings.
+    UiTipSettings => ("Settings", "Cài đặt"),
+    UiTipClose => ("Close", "Đóng"),
+    UiTipFavorite => ("Favorite", "Yêu thích"),
+    UiKeyEsc => ("Esc", "Esc"),
+    UiKeyCtrlD => ("Ctrl+D", "Ctrl+D"),
     UiKeyHints => (
         "Enter copy · Shift+Enter plain · Ctrl+P pin · Ctrl+D favorite · Del delete · → details · Esc close",
         "Enter sao chép · Shift+Enter văn bản thuần · Ctrl+P ghim · Ctrl+D yêu thích · Del xóa · → chi tiết · Esc đóng"
@@ -861,6 +867,8 @@ messages! {
 pub const SAME_IN_BOTH: &[Msg] = &[
     Msg::CategoryEmail,
     Msg::UiAppName,
+    Msg::UiKeyEsc,
+    Msg::UiKeyCtrlD,
     Msg::SettingsLangEn,
     Msg::SettingsLangVi,
     Msg::PlatformWindows,

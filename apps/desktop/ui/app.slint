@@ -1,7 +1,10 @@
 import { ListView, Palette } from "std-widgets.slint";
 import { Theme, Strings } from "theme.slint";
-import { IconKind } from "icons.slint";
-import { Seg, ClipRow, FileRow, Chip, ChipView, ActionButton, IconButton, RowView, DetailPane, DetailState, RowMetrics } from "popup.slint";
+import { IconName } from "kit/icon.slint";
+import { IconButton } from "kit/icon_button.slint";
+import { TipAlign, TooltipLayer } from "kit/tooltip.slint";
+import { KitGallery } from "kit/gallery.slint";
+import { Seg, ClipRow, FileRow, Chip, ChipView, ActionButton, RowView, DetailPane, DetailState, RowMetrics } from "popup.slint";
 
 import { HistoryWindow, FilterItem } from "history.slint";
 import { TransformPanel } from "transform.slint";
@@ -9,7 +12,7 @@ import { SettingsWindow, SText, AppRow, KindItem } from "settings.slint";
 import { WelcomeWindow, WText } from "welcome.slint";
 import { OrgStrings, OrgDialogState } from "organize.slint";
 
-export { Theme, Strings, Seg, ClipRow, FileRow, Chip, DetailState, HistoryWindow, FilterItem, SettingsWindow, SText, AppRow, KindItem, WelcomeWindow, WText, OrgStrings, OrgDialogState }
+export { KitGallery, Theme, Strings, Seg, ClipRow, FileRow, Chip, DetailState, HistoryWindow, FilterItem, SettingsWindow, SText, AppRow, KindItem, WelcomeWindow, WText, OrgStrings, OrgDialogState }
 
 // The popup (Task 204): created once at start and kept hidden; shown near the cursor by the
 // shortcut, the tray or `--toggle`. All data and every decision come from Rust
@@ -166,20 +169,28 @@ export component MainWindow inherits Window {
                     }
 
                     IconButton {
-                        kind: IconKind.gear;
+                        name: IconName.settings;
                         width: 32px;
                         height: 36px;
                         label: Strings.settings-open;
+                        tooltip: Strings.tip-settings;
+                        tip-align: TipAlign.end;
+                        // Not in the Tab order until the popup key map knows it (Task 701).
+                        focusable: false;
                         clicked => {
                             root.act-settings();
                         }
                     }
 
                     IconButton {
-                        kind: IconKind.close;
+                        name: IconName.x;
                         width: 32px;
                         height: 36px;
                         label: Strings.close;
+                        tooltip: Strings.tip-close;
+                        shortcut: Strings.key-esc;
+                        tip-align: TipAlign.end;
+                        focusable: false;
                         clicked => {
                             root.act-close();
                         }
@@ -372,4 +383,7 @@ export component MainWindow inherits Window {
             root.tf-cancel();
         }
     }
+
+    // The tooltip bubble: last, so it draws above everything (Task 700).
+    TooltipLayer { }
 }

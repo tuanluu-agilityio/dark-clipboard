@@ -1,0 +1,97 @@
+// Every kit component in every state, in one window (Task 700). Nothing creates it at run time:
+// it exists so that `slint-build` compiles and type-checks the whole kit (Slint skips components
+// that no window instantiates), and so that a later task can open it under `--data-dir` for a
+// visual check. Strings are placeholders for that check only and are never shown to users.
+
+import { Theme } from "../theme.slint";
+import { Icon, IconName } from "icon.slint";
+import { IconButton } from "icon_button.slint";
+import { Button, ButtonKind } from "button.slint";
+import { KeyCap } from "key_cap.slint";
+import { Switch } from "switch.slint";
+import { Menu, MenuEntry } from "menu.slint";
+import { TipAlign, TooltipLayer } from "tooltip.slint";
+
+export component KitGallery inherits Window {
+    width: 480px;
+    height: 320px;
+    background: Theme.canvas;
+
+    in property <[MenuEntry]> entries: [
+        { label: "a", icon: IconName.copy, shortcut: "Ctrl+C", danger: false },
+        { label: "b", icon: IconName.trash-2, shortcut: "", danger: true },
+    ];
+    callback chosen(int);
+    in-out property <bool> flag;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        HorizontalLayout {
+            spacing: 8px;
+            IconButton {
+                name: IconName.settings;
+                label: "settings";
+                shortcut: "Ctrl+,";
+                clicked => {
+                    menu.open(self.x, self.y + self.height);
+                }
+            }
+            IconButton {
+                name: IconName.trash-2;
+                label: "delete";
+                danger: true;
+                tip-align: TipAlign.start;
+            }
+            IconButton {
+                name: IconName.pin;
+                label: "pin";
+                active: root.flag;
+                focusable: false;
+            }
+            Icon {
+                name: IconName.star;
+                tint: Theme.warning;
+                size: 14px;
+            }
+            KeyCap {
+                text: "Esc";
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Button {
+                text: "primary";
+                kind: ButtonKind.primary;
+            }
+            Button {
+                text: "secondary";
+            }
+            Button {
+                text: "ghost";
+                kind: ButtonKind.ghost;
+            }
+            Button {
+                text: "danger";
+                kind: ButtonKind.danger;
+            }
+            Button {
+                text: "disabled";
+                enabled: false;
+            }
+        }
+        Switch {
+            label: "switch";
+            checked <=> root.flag;
+        }
+    }
+
+    menu := Menu {
+        entries: root.entries;
+        activated(i) => {
+            root.chosen(i);
+        }
+    }
+
+    TooltipLayer { }
+}

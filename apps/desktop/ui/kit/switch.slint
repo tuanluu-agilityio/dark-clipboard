@@ -1,0 +1,73 @@
+// On/off switch (Task 700): 32 x 18 track, `checkbox` role (screen readers say checked or not
+// checked). Off track uses `border-strong` on a `surface` fill (component boundary, 2.4:1).
+
+import { Theme } from "../theme.slint";
+
+export component Switch inherits FocusScope {
+    in-out property <bool> checked;
+    // Accessible name (i18n); the visible label lives in the setting row next to it.
+    in property <string> label;
+    in property <string> description;
+    callback toggled(bool);
+
+    width: 32px;
+    height: 18px;
+    focus-on-click: false;
+    accessible-role: checkbox;
+    accessible-checkable: true;
+    accessible-checked: root.checked;
+    accessible-label: root.label;
+    accessible-description: root.description;
+    accessible-action-default => {
+        root.flip();
+    }
+
+    function flip() {
+        root.checked = !root.checked;
+        root.toggled(root.checked);
+    }
+
+    key-pressed(e) => {
+        if (root.enabled && e.text == " ") {
+            root.flip();
+            return accept;
+        }
+        reject
+    }
+
+    Rectangle {
+        border-radius: 9px;
+        background: root.checked ? Theme.accent : Theme.surface;
+        border-width: root.checked ? 0px : 1px;
+        border-color: Theme.border-strong;
+
+        Rectangle {
+            width: 12px;
+            height: 12px;
+            y: 3px;
+            x: root.checked ? 17px : 3px;
+            border-radius: 6px;
+            background: root.checked ? Theme.on-accent : Theme.text-2;
+        }
+    }
+
+    Rectangle {
+        visible: root.has-focus;
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: 12px;
+        border-width: 2px;
+        border-color: Theme.focus;
+        background: transparent;
+    }
+
+    TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.flip();
+        }
+    }
+}

@@ -1,0 +1,79 @@
+// Text button (Task 700, `02` section 6): primary (accent fill), secondary (surface with a
+// strong border), ghost (text only) and danger. 32 px high, radius 6, 2 px `focus` ring when
+// focused. The label comes from i18n.
+
+import { Theme } from "../theme.slint";
+
+export enum ButtonKind {
+    primary,
+    secondary,
+    ghost,
+    danger,
+}
+
+export component Button inherits FocusScope {
+    in property <string> text;
+    in property <ButtonKind> kind: ButtonKind.secondary;
+    in property <string> description;
+    callback clicked();
+
+    height: 32px;
+    min-width: label.preferred-width + 24px;
+    focus-on-click: false;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-description: root.description;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    key-pressed(e) => {
+        if (root.enabled && (e.text == " " || e.text == Key.Return)) {
+            root.clicked();
+            return accept;
+        }
+        reject
+    }
+
+    Rectangle {
+        border-radius: 6px;
+        border-width: root.kind == ButtonKind.secondary ? 1px : 0px;
+        border-color: Theme.border-strong;
+        background: !root.enabled ? Theme.surface
+            : root.kind == ButtonKind.primary ? (touch.has-hover ? Theme.focus : Theme.accent)
+            : root.kind == ButtonKind.danger ? (touch.has-hover ? Theme.focus : Theme.danger)
+            : root.kind == ButtonKind.secondary ? (touch.has-hover ? Theme.raised : Theme.surface)
+            : (touch.has-hover ? Theme.surface : transparent);
+
+        label := Text {
+            text: root.text;
+            font-size: 13px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            color: !root.enabled ? Theme.text-3
+                : (root.kind == ButtonKind.primary || root.kind == ButtonKind.danger) ? Theme.on-accent
+                : Theme.text;
+        }
+    }
+
+    Rectangle {
+        visible: root.has-focus;
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: 8px;
+        border-width: 2px;
+        border-color: Theme.focus;
+        background: transparent;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}

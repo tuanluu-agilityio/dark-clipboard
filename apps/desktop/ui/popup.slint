@@ -3,7 +3,7 @@
 
 import { ScrollView } from "std-widgets.slint";
 import { Theme, Strings } from "theme.slint";
-import { Icon, IconKind } from "icons.slint";
+import { Icon, IconName } from "kit/icon.slint";
 
 // One piece of a preview line; `hit` pieces matched the search.
 export struct Seg {
@@ -152,39 +152,6 @@ export component ActionButton inherits Rectangle {
     }
 }
 
-// A square button that shows a vector icon instead of text (Task 414). `label` is the
-// accessible name; the icon is never read out.
-export component IconButton inherits Rectangle {
-    in property <IconKind> kind;
-    in property <string> label;
-    callback clicked();
-
-    border-radius: 5px;
-    background: touch.has-hover ? Theme.surface : transparent;
-    accessible-role: button;
-    accessible-label: root.label;
-    accessible-action-default => {
-        root.clicked();
-    }
-
-    Icon {
-        kind: root.kind;
-        tint: touch.has-hover ? Theme.text : Theme.text-muted;
-        width: 16px;
-        height: 16px;
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-        accessible-role: none;
-    }
-
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => {
-            root.clicked();
-        }
-    }
-}
-
 // A small pill (pinned, masked).
 component Badge inherits Rectangle {
     in property <string> text;
@@ -304,11 +271,9 @@ export component RowView inherits Rectangle {
                     width: 13px;
                     alignment: center;
                     Icon {
-                        kind: IconKind.star;
+                        name: IconName.star;
                         tint: Theme.warning;
-                        width: 13px;
-                        height: 13px;
-                        accessible-role: none;
+                        size: 13px;
                     }
                 }
                 if data.pin-badge != "": Badge {
