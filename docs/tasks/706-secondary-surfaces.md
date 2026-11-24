@@ -1,0 +1,46 @@
+# Task 706: Secondary surfaces (welcome, Copy as / Edit panels, org dialogs, EmptyState, F1 shortcuts sheet)
+
+**Agent:** `builder` · **Model:** sonnet · **Branch:** `task/706-secondary-surfaces` (from `main` after 704 and 705 merge) · **Review:** `reviewer` (sonnet) · **Risk:** Low
+**Global Constraints:** GC-03, GC-06, GC-08, GC-11, GC-14, GC-15, GC-17, GC-18, **GC-19**. **Source:** `docs/plans/phase-7-ui-redesign.md` (row 706), D-078, D-079, D-083 (704), the 705 decisions. **Review Focus:** 4 (every key keeps its action), 6 (EN + VI, glyph scan, width budgets), welcome stays capture-off until Start.
+Scope: restyle with kit components and add the shortcuts sheet. **No behaviour change** except F1 / Ctrl+/ in the history window and the sheet itself. Popup and history layouts (701-704) and settings (705) are not redesigned here.
+
+## Read first
+`CLAUDE.md`, `docs/specs/ui-redesign/README.md`, `02-design-system.md` §6, `03-wireframes.md` (§1 Copy as… note, end of §3 welcome note), `04-interaction-keyboard.md` (F1 rows), `05-acceptance.md` (A3, A6, A7), `memory-bank/systemPatterns.md`, D-079, then the code: `ui/{welcome,transform,organize,app,history,history_panes}.slint`, `ui/kit/*` (incl. from 705: `Select`, `Field`, `ConfirmDialog`, `DialogScrim`, `Switch`, `Button`, `KeyCap`), `src/ui/{welcome_host,popup_host,history_host,common}.rs`, `src/popup/{keys,menu}.rs`, `src/history/keys.rs`, `tests/{kit,popup_budget,history_budget,no_font_glyphs}.rs`.
+
+## Requirements
+1. **Welcome** (`welcome.slint`): card style of settings: `Icon` (`clipboard-paste` or the app mark) + title + two short paragraphs + a line with kit `Switch` (start at login; hidden or disabled exactly when `can-login` is false today) + the capture-off note + primary `Button` Start and secondary Not now. **Behaviour unchanged:** capture stays off until Start (the existing welcome test stays green and unedited), Esc = Not now, Enter on Start, window close = Esc. Callbacks and `welcome_host.rs` logic unchanged; only property wiring may change.
+2. **Copy as… and Edit a copy** (`transform.slint`): list on the left with kit row styling (36 px rows, `selected` fill + 3 px accent bar, `text` / `text-2`), preview on the right in a `surface` box, kit `Button`s (Copy primary, Cancel secondary; Edit keeps its extra buttons). Same keys and same callbacks; `popup/transform.rs` and the history key map are not touched.
+3. **Org dialogs** (`organize.slint`: tags, note, add to collection, new/rename collection, delete confirm): finish with kit `Button`, `Field` (inputs, inline error under the field) and `DialogScrim` / `ConfirmDialog` for confirmations. Callbacks, Enter/Esc handling and focus-on-open unchanged. Overlays are children of the window root, in the tree, never `PopupWindow`.
+4. **`ui/kit/empty_state.slint`** (new, added to `gallery.slint`): `EmptyState { icon: IconName; text: string; hint: string; }` = 32 px `Icon` tint `text-3`, one line `text-2` 13 px, one hint `text-3` 12 px, centred, one accessible label (`text. hint`). Used for popup empty history / no results / error (`app.slint`, `view-state` 2/3/4) and history list empty / no results / error (`history.slint`, same states). State ids and the meaning of the lines stay; the hints are new `Msg`s that name a real action (copy something; clear the filters; reopen the window).
+5. **Shortcuts sheet.** New pure `src/shortcuts.rs`: tables `POPUP_SHORTCUTS` and `HISTORY_SHORTCUTS`, each row `{ key: Key, mods: Mods, action: SheetAction, label: Msg }` grouped Navigate / Copy / Organize / Window; `rows(window, lang) -> Vec<SheetRow>` (header rows + key rows) with one `key_label()` that matches the tooltip key format (Ctrl is shown as it is elsewhere on each OS). History gets `HistoryAction::Shortcuts` (F1 and Ctrl+/, same modifier rules as popup `Action::Shortcuts`); the popup stub `show_shortcuts()` in `popup_host.rs` is implemented. The sheet is an in-window overlay (`DialogScrim` + `surface` panel, title, two columns of group header + `KeyCap` rows, footer "Esc closes"), a child of each window root placed **before** `TooltipLayer`. Esc closes it first (then the normal unwind); while open every other key is swallowed except F1 and Ctrl+/ (toggle). Open state lives in the host, is not persisted and resets when the window hides. The history sheet lists no popup-only key and the reverse.
+6. **Hint.** The history status line and the popup footer get a `KeyCap F1` + "Shortcuts" hint only if the width budget allows; otherwise the tooltip of an existing control names F1. Decide by the budget test and record the choice in `decisions.md`.
+7. **i18n.** New `Msg` EN + VI: sheet title, group names, one label per listed action (reuse existing action names where they exist), "Esc closes", EmptyState hints, changed welcome strings. Identical strings go to `SAME_IN_BOTH`. No literal in `.slint`. Glyph scan applies to all new text.
+8. **Docs.** `docs/testing/platform-checklist.md` owner rows; `CHANGELOG.md` `[Unreleased]`: Added F1 / Ctrl+/ shortcuts sheet; Changed welcome, Copy as / Edit panels, dialogs and empty states restyled.
+
+## Files this task may edit
+`apps/desktop/ui/{welcome,transform,organize,app,history,history_panes,popup}.slint`, `ui/kit/{empty_state(new),gallery}.slint`, `ui/icons/*` (only if an icon is missing: vendored Lucide with its LICENSE as in 700, kept in the unused-icon scan), `src/shortcuts.rs` (new) and its `mod` line, `src/history/keys.rs` (additive: `Shortcuts`), `src/ui/{welcome_host,popup_host,history_host,common}.rs`, `tests/{shortcuts(new),popup_budget,history_budget,kit,no_font_glyphs}.rs`, `crates/darkclip-core/src/i18n.rs`, `docs/testing/platform-checklist.md`, `CHANGELOG.md`, `memory-bank/decisions.md`. Not touched: capture, policy, storage, `theme.rs` colours, any other key map.
+
+## Tests (first, seen failing)
+- `tests/shortcuts.rs` (no drift): for **each** row of both tables, the row's key through the real `map_key` (popup and history, with a context that lets the key through) gives the row's `SheetAction`; **every** `Action` / `HistoryAction` variant that has a key appears in a table or in an explicit `NOT_LISTED` list with a reason (typing, mouse only), checked with an exhaustive `match` so a new action fails the test until it is listed. Every row has non-empty EN and VI labels. Both windows list F1 / Ctrl+/ itself.
+- Sheet state (pure fn): F1 opens; F1, Ctrl+/ or Esc closes; other keys swallowed while open; Esc closes the sheet before the window; reset on hide.
+- Welcome: the existing capture-off-until-Start test unchanged and green; Esc and Enter mapping as before (table).
+- `popup_budget.rs` / `history_budget.rs`: sheet row (widest key text + widest label in the column width), EmptyState line and hint in the narrowest list width, welcome title and paragraphs, Copy as list labels; EN and VI, 7 px/char, caps 6 px/char + 8.
+- `kit.rs`: `EmptyState` is in the gallery; scans (no hex colours, no literal text, no `PopupWindow` for sheet or dialogs) pass. i18n completeness, glyph scan, unused-`IconName` scan pass; no `unwrap` / `expect`.
+
+## Owner checklist rows (add, **untested**)
+Welcome at 100/150/200 % (Switch, Start, Esc, Enter; capture stays off until Start; EN and VI). Copy as… and Edit a copy: keys, list/preview layout, nothing clipped. Org dialogs (tags, note, collection create/rename/delete, delete confirm) by keys and mouse. Empty history, no results and error in popup and history (icon, line, hint). F1 and Ctrl+/ in popup and history: the sheet lists the window's keys, they behave as listed, Esc closes, typing is swallowed; Tab walk and Narrator read the sheet; Vietnamese pass.
+
+## Known pitfalls
+- **Keys go to an open `PopupWindow`** (D-079): the sheet and dialogs are in-tree overlays, not `PopupWindow`s; they take focus on open (`changed open`, as `ConfirmDialog`) and give it back on close. Keys are decided in Rust (`shortcuts.rs`, the key maps), never in Slint.
+- **`TooltipLayer` stays the last child of each window root**, after the sheet, menus and dialogs. Reset `TooltipHub.shown` when a window hides.
+- The sheet text comes from the table, not from copied hint strings; the old long hint strings stay accessible descriptions only. Never log key or clip text.
+- Icons only via `Icon` / `IconName`; no symbol glyphs. Software renderer (D-055): no blur, shadow or gradient; no timer while hidden.
+- `HistoryAction` gains a variant: update every exhaustive `match`. Windows-only code must lint on macOS/Linux (clippy `-D warnings`).
+- Welcome must not enable capture on open, on Esc or on close; only Start does.
+- Run the app only with `--data-dir <temp>` and `--exit-after-ms`; no screenshots, no input simulation, no real clipboard, no `#[ignore]` tests (GC-19).
+
+## Acceptance
+Welcome capture-off test green; the shortcuts test proves sheet = key maps in both windows; every old key keeps its action; A3, A6, A7 (sheet, EmptyState, welcome budgets) pass; `cargo fmt --all`, then `powershell -File scripts/check.ps1` prints `ALL CHECKS PASSED`.
+
+## Not doing
+New shortcuts other than F1 / Ctrl+/ in history, key rebinding or a user-editable sheet, settings and tray surfaces (705, 708), accessibility pass beyond labels (707), any change to welcome's capture behaviour.

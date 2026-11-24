@@ -302,10 +302,22 @@ export component SettingsWindow inherits Window {
         Palette.color-scheme = ColorScheme.dark;
     }
 
-    // Closing a dialog or the picker: the focus goes back to the window, not to a hidden control.
+    // The control that opened the layer (0: none or not known, 1 picker, 2 orphans, 3 compact,
+    // 4 clear, 5 restore, 6 save, 100 + i the remove button of exclusion row i), and the one that
+    // gets the focus back when the layer closes (each of them has a `want` property that
+    // focuses it when `return-to` names it; Slint cannot name the element that had the focus).
+    property <int> opener;
+    property <int> return-to;
+
+    // Opening a layer clears the last return (so the same opener works twice); closing it puts
+    // the focus on the window first, then on the opener (D-082, Task 707).
     changed layer-open => {
-        if (!root.layer-open) {
+        if (root.layer-open) {
+            root.return-to = 0;
+        } else {
             main.focus();
+            root.return-to = root.opener;
+            root.opener = 0;
         }
     }
 
@@ -696,7 +708,14 @@ export component SettingsWindow inherits Window {
                                             text: SText.remove;
                                             kind: ButtonKind.ghost;
                                             y: (parent.height - self.height) / 2;
+                                            property <bool> want: root.return-to == 100 + i;
+                                            changed want => {
+                                                if (self.want) {
+                                                    self.focus();
+                                                }
+                                            }
                                             clicked => {
+                                                root.opener = 100 + i;
                                                 root.remove-app(i);
                                             }
                                         }
@@ -725,7 +744,14 @@ export component SettingsWindow inherits Window {
                                     }
                                     Button {
                                         text: SText.pick-running;
+                                        property <bool> want: root.return-to == 1;
+                                        changed want => {
+                                            if (self.want) {
+                                                self.focus();
+                                            }
+                                        }
                                         clicked => {
+                                            root.opener = 1;
                                             root.open-picker();
                                         }
                                     }
@@ -867,13 +893,27 @@ export component SettingsWindow inherits Window {
                                     padding-bottom: 6px;
                                     Button {
                                         text: SText.orphans-do;
+                                        property <bool> want: root.return-to == 2;
+                                        changed want => {
+                                            if (self.want) {
+                                                self.focus();
+                                            }
+                                        }
                                         clicked => {
+                                            root.opener = 2;
                                             root.orphans-ask();
                                         }
                                     }
                                     Button {
                                         text: SText.compact-do;
+                                        property <bool> want: root.return-to == 3;
+                                        changed want => {
+                                            if (self.want) {
+                                                self.focus();
+                                            }
+                                        }
                                         clicked => {
+                                            root.opener = 3;
                                             root.compact-ask();
                                         }
                                     }
@@ -889,7 +929,14 @@ export component SettingsWindow inherits Window {
                                     Button {
                                         text: SText.clear;
                                         kind: ButtonKind.danger;
+                                        property <bool> want: root.return-to == 4;
+                                        changed want => {
+                                            if (self.want) {
+                                                self.focus();
+                                            }
+                                        }
                                         clicked => {
+                                            root.opener = 4;
                                             root.clear-ask();
                                         }
                                     }
@@ -922,7 +969,14 @@ export component SettingsWindow inherits Window {
                                     Button {
                                         text: SText.restore-do;
                                         enabled: !root.transfer-busy;
+                                        property <bool> want: root.return-to == 5;
+                                        changed want => {
+                                            if (self.want) {
+                                                self.focus();
+                                            }
+                                        }
                                         clicked => {
+                                            root.opener = 5;
                                             root.restore-ask();
                                         }
                                     }
@@ -1099,7 +1153,14 @@ export component SettingsWindow inherits Window {
                             text: SText.save;
                             key: SText.key-ctrl-s;
                             enabled: root.can-save;
+                            property <bool> want: root.return-to == 6;
+                            changed want => {
+                                if (self.want) {
+                                    self.focus();
+                                }
+                            }
                             clicked => {
+                                root.opener = 6;
                                 root.save();
                             }
                         }

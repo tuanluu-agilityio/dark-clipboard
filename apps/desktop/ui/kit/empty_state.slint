@@ -1,0 +1,49 @@
+// EmptyState (Task 706): what a list shows in place of its rows (empty history, no results, an
+// error). A 32 px icon in `text-3`, one line in `text-2` (13 px), one hint in `text-3` (12 px),
+// centred, read as one thing: "text. hint". Both strings come from i18n; `danger` colours the line
+// for an error. The hint names a real action (copy something, clear the filters, reopen).
+
+import { Theme } from "../theme.slint";
+import { Icon, IconName } from "icon.slint";
+
+export component EmptyState inherits Rectangle {
+    in property <IconName> icon;
+    in property <string> text;
+    in property <string> hint;
+    in property <bool> danger;
+
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.hint != "" ? root.text + ". " + root.hint : root.text;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 6px;
+        padding-left: 20px;
+        padding-right: 20px;
+
+        HorizontalLayout {
+            alignment: center;
+            Icon {
+                name: root.icon;
+                size: 32px;
+                tint: Theme.text-3;
+            }
+        }
+        Text {
+            text: root.text;
+            color: root.danger ? Theme.danger : Theme.text-2;
+            font-size: 13px;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+            accessible-role: none;
+        }
+        if root.hint != "": Text {
+            text: root.hint;
+            color: Theme.text-3;
+            font-size: 12px;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+            accessible-role: none;
+        }
+    }
+}

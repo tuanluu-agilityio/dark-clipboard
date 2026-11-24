@@ -281,3 +281,94 @@ fn the_preview_pane_facts_fit_in_both_languages() {
         }
     }
 }
+
+// ---- Task 706: empty states, Copy as... list, welcome ----
+
+/// The `EmptyState` text area: the list width minus 20 px of padding on each side
+/// (`ui/kit/empty_state.slint`).
+const EMPTY_PAD_PX: f32 = 40.0;
+
+#[test]
+fn the_popup_empty_states_fit_on_one_line_each() {
+    // The popup list is the 440 px column.
+    let room = WINDOW_PX - EMPTY_PAD_PX;
+    for lang in [Lang::En, Lang::Vi] {
+        for m in [
+            Msg::UiEmptyHistory,
+            Msg::UiNoResults,
+            Msg::UiLoadFailed,
+            Msg::StateHintEmpty,
+            Msg::StateHintNoResults,
+            Msg::StateHintFailed,
+        ] {
+            let px = text_px(t(lang, m));
+            assert!(px <= room, "{lang:?} {m:?} needs {px} px of {room}");
+        }
+    }
+}
+
+#[test]
+fn the_copy_as_list_labels_fit_their_rows() {
+    // The list is 204 px wide and a row's text has 12 px before it and 8 after (`TfItem`).
+    let room = 204.0 - 20.0;
+    let slint = fs::read_to_string(manifest().join("ui/transform.slint")).unwrap_or_default();
+    assert!(slint.contains("width: 204px;"), "the Copy as list width");
+    for lang in [Lang::En, Lang::Vi] {
+        for tf in darkclip_core::transform::Transform::ALL {
+            let label = t(lang, tf.label());
+            let px = text_px(label);
+            assert!(px <= room, "{lang:?} {label:?} needs {px} px of {room}");
+        }
+    }
+}
+
+#[test]
+fn the_welcome_card_fits_the_window_minimum_in_both_languages() {
+    // `ui/welcome.slint`: 480 x 520 minimum, 24 px window padding, a 1 px border and 20 px card
+    // padding, so the card text is 480 - 48 - 2 - 40 wide; the title shares its line with a
+    // 28 px icon and a 12 px gap and is drawn at 20 px (7 px per character at 13 px, so
+    // 20 / 13 of that).
+    let slint = fs::read_to_string(manifest().join("ui/welcome.slint")).unwrap_or_default();
+    assert!(slint.contains("min-width: 480px;") && slint.contains("min-height: 520px;"));
+    let text_w = 480.0 - 48.0 - 2.0 - 40.0;
+    let lines = |px: f32, width: f32| (px / width).ceil().max(1.0);
+    for lang in [Lang::En, Lang::Vi] {
+        let title_px = text_px(t(lang, Msg::WelcomeTitle)) * 20.0 / 13.0;
+        let title_lines = lines(title_px, text_w - 28.0 - 12.0);
+        assert!(
+            title_lines <= 2.0,
+            "{lang:?} title needs {title_lines} lines"
+        );
+        // A long data folder: 80 characters on top of the sentence.
+        let data = t(lang, Msg::WelcomeData).replace("{path}", &"x".repeat(80));
+        let paragraphs = [
+            t(lang, Msg::WelcomeShortcut).replace("{shortcut}", "Ctrl+Alt+Shift+V"),
+            t(lang, Msg::WelcomeNever).to_string(),
+            data,
+            t(lang, Msg::WelcomeNoCloud).to_string(),
+        ];
+        let para_lines: f32 = paragraphs.iter().map(|p| lines(text_px(p), text_w)).sum();
+        let note_lines = lines(
+            text_px(t(lang, Msg::WelcomeCaptureOff)) * 12.0 / 13.0,
+            text_w,
+        ) + lines(
+            text_px(t(lang, Msg::SettingsStartAtLoginCustomProfile)) * 12.0 / 13.0,
+            text_w,
+        );
+        // Window padding 48, card padding 40 and border 2, the title block, four paragraphs,
+        // the separator and the switch row, the two notes, 16 px between card and buttons, the
+        // 32 px button row, and 12 px between the card's rows (seven of them).
+        let height = 48.0
+            + 42.0
+            + (title_lines * 26.0).max(28.0)
+            + para_lines * 18.0
+            + 4.0 * 2.0
+            + 1.0
+            + 18.0
+            + note_lines * 16.0
+            + 16.0
+            + 32.0
+            + 7.0 * 12.0;
+        assert!(height <= 520.0, "{lang:?} welcome needs {height} px of 520");
+    }
+}

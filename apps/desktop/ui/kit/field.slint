@@ -21,6 +21,11 @@ export component Field inherits VerticalLayout {
 
     spacing: 4px;
 
+    // The caller gives the field the keyboard focus (a dialog that opens on its input, Task 706).
+    public function focus-input() {
+        input.focus();
+    }
+
     Rectangle {
         height: 32px;
         border-radius: 6px;

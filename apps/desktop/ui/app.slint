@@ -6,16 +6,17 @@ import { KeyCap } from "kit/key_cap.slint";
 import { Menu, MenuEntry } from "kit/menu.slint";
 import { TipAlign, TooltipHub, TooltipLayer } from "kit/tooltip.slint";
 import { KitGallery } from "kit/gallery.slint";
+import { EmptyState } from "kit/empty_state.slint";
 import { Seg, ClipRow, FileRow, Chip, ChipView, PreviewPane, DetailState, SegTab, SegmentBar, StatusHint, StatusLine, Toast } from "popup.slint";
 import { PopupRow, PopupRowMetrics } from "popup_row.slint";
 
 import { HistoryWindow, FilterItem } from "history.slint";
-import { TransformPanel } from "transform.slint";
+import { TransformPanel, ShortcutSheet, SheetLine, SheetStrings } from "transform.slint";
 import { SettingsWindow, SText, AppRow, KindItem } from "settings.slint";
 import { WelcomeWindow, WText } from "welcome.slint";
 import { OrgStrings, OrgDialogState } from "organize.slint";
 
-export { KitGallery, IconName, MenuEntry, SegTab, StatusHint, Theme, Strings, Seg, ClipRow, FileRow, Chip, DetailState, HistoryWindow, FilterItem, SettingsWindow, SText, AppRow, KindItem, WelcomeWindow, WText, OrgStrings, OrgDialogState }
+export { KitGallery, SheetLine, SheetStrings, IconName, MenuEntry, SegTab, StatusHint, Theme, Strings, Seg, ClipRow, FileRow, Chip, DetailState, HistoryWindow, FilterItem, SettingsWindow, SText, AppRow, KindItem, WelcomeWindow, WText, OrgStrings, OrgDialogState }
 
 // The popup (Task 204): created once at start and kept hidden; shown near the cursor by the
 // shortcut, the tray or `--toggle`. All data and every decision come from Rust
@@ -68,6 +69,10 @@ export component MainWindow inherits Window {
     in property <string> tf-note;
     in property <bool> tf-note-error;
     in property <bool> tf-can-copy;
+    // The F1 shortcuts sheet (Task 706): open state and the two columns of lines, from Rust.
+    in property <bool> sheet-open;
+    in property <[SheetLine]> sheet-left;
+    in property <[SheetLine]> sheet-right;
     in-out property <string> query;
     // Whole rows that fit in the list (for Page Up / Page Down).
     out property <int> page-rows: max(1, floor(clip-list.visible-height / PopupRowMetrics.height));
@@ -92,6 +97,7 @@ export component MainWindow inherits Window {
     callback tf-chosen(int);
     callback tf-copy();
     callback tf-cancel();
+    callback sheet-close();
     callback act-undo();
     callback act-close();
     callback act-settings();
@@ -434,17 +440,29 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    Text {
-                        visible: root.view-state != 0;
+                    if root.view-state == 1: Text {
                         width: parent.width - 40px;
-                        text: root.view-state == 1 ? Strings.loading
-                            : root.view-state == 2 ? Strings.empty-history
-                            : root.view-state == 3 ? Strings.no-results
-                            : Strings.load-failed;
-                        color: root.view-state == 4 ? Theme.danger : Theme.text-muted;
+                        x: 20px;
+                        text: Strings.loading;
+                        color: Theme.text-2;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                         wrap: word-wrap;
+                    }
+                    // Empty history, no results, load error (Task 706).
+                    if root.view-state >= 2: EmptyState {
+                        width: parent.width;
+                        height: parent.height;
+                        icon: root.view-state == 2 ? IconName.clipboard-paste
+                            : root.view-state == 3 ? IconName.search
+                            : IconName.info;
+                        text: root.view-state == 2 ? Strings.empty-history
+                            : root.view-state == 3 ? Strings.no-results
+                            : Strings.load-failed;
+                        hint: root.view-state == 2 ? SheetStrings.hint-empty
+                            : root.view-state == 3 ? SheetStrings.hint-no-results
+                            : SheetStrings.hint-failed;
+                        danger: root.view-state == 4;
                     }
 
                     if root.toast != "": Toast {
@@ -470,6 +488,8 @@ export component MainWindow inherits Window {
                     tone: root.status-tone;
                     text: root.status-text;
                     hints: root.hints;
+                    tip: SheetStrings.tip;
+                    tip-key: SheetStrings.tip-key;
                 }
             }
 
@@ -525,6 +545,7 @@ export component MainWindow inherits Window {
 
     // "Copy as..." (Task 404): covers the popup and takes every click; keys are Rust's.
     if root.tf-open: TransformPanel {
+        border-radius: 10px;
         labels: root.tf-labels;
         selected: root.tf-selected;
         preview: root.tf-preview;
@@ -539,6 +560,20 @@ export component MainWindow inherits Window {
         }
         cancel => {
             root.tf-cancel();
+        }
+    }
+
+    // The F1 shortcuts sheet (Task 706): an in-window overlay over everything but the tooltip.
+    // Rust owns its open state and its keys (`src/shortcuts.rs`).
+    ShortcutSheet {
+        border-radius: 10px;
+        open: root.sheet-open;
+        title: SheetStrings.title;
+        footer: SheetStrings.footer;
+        left: root.sheet-left;
+        right: root.sheet-right;
+        closed => {
+            root.sheet-close();
         }
     }
 

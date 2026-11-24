@@ -235,3 +235,101 @@ fn a_switch_swallows_enter_so_a_dialog_is_never_confirmed_from_a_toggle() {
         fs::read_to_string(manifest().join("ui/kit/confirm_dialog.slint")).unwrap_or_default();
     assert!(dlg.contains("e.text == Key.Return"));
 }
+
+// ---- Task 706 ----
+
+#[test]
+fn the_empty_state_is_in_the_gallery() {
+    let gallery = fs::read_to_string(manifest().join("ui/kit/gallery.slint")).unwrap_or_default();
+    assert!(
+        gallery.contains("import { EmptyState }"),
+        "EmptyState import"
+    );
+    assert!(gallery.contains("EmptyState {"), "EmptyState instance");
+    let es = fs::read_to_string(manifest().join("ui/kit/empty_state.slint")).unwrap_or_default();
+    // 32 px icon in text-3, 13 px line in text-2, 12 px hint in text-3, one accessible label.
+    assert!(es.contains("size: 32px;") && es.contains("tint: Theme.text-3;"));
+    assert!(es.contains("font-size: 13px;") && es.contains("font-size: 12px;"));
+    assert!(es.contains("accessible-label: root.hint != \"\" ? root.text + \". \" + root.hint"));
+}
+
+/// The windows' secondary surfaces (Task 706) are in-tree overlays, never `PopupWindow`s, and
+/// take their colours from the theme and their text from i18n.
+#[test]
+fn the_secondary_surfaces_are_overlays_with_theme_colours_and_no_literal_text() {
+    for name in [
+        "transform.slint",
+        "organize.slint",
+        "welcome.slint",
+        "kit/empty_state.slint",
+    ] {
+        let src = fs::read_to_string(manifest().join("ui").join(name)).unwrap_or_default();
+        assert!(!src.is_empty(), "{name} is missing");
+        for (i, line) in src.lines().enumerate() {
+            let code = line.split("//").next().unwrap_or_default();
+            assert!(
+                !has_hex_literal(code),
+                "{name}:{}: hex colour literal: {line}",
+                i + 1
+            );
+            assert!(
+                !code.contains("PopupWindow"),
+                "{name}:{}: a PopupWindow would take the keys from the host (D-079)",
+                i + 1
+            );
+            for key in ["text: \"", "label: \"", "placeholder: \""] {
+                assert!(
+                    !code.contains(key) || code.contains("text: \"\""),
+                    "{name}:{}: literal user-visible string: {line}",
+                    i + 1
+                );
+            }
+        }
+    }
+    // The sheet and the dialogs sit on the kit scrim.
+    let tf = fs::read_to_string(manifest().join("ui/transform.slint")).unwrap_or_default();
+    assert!(tf.contains("export component ShortcutSheet inherits DialogScrim"));
+    assert!(tf.contains("export component TransformPanel inherits DialogScrim"));
+    let org = fs::read_to_string(manifest().join("ui/organize.slint")).unwrap_or_default();
+    assert!(org.contains("export component OrgDialog inherits DialogScrim"));
+}
+
+/// The sheet sits before the tooltip layer, which stays the last child of each window root.
+#[test]
+fn the_tooltip_layer_stays_last_and_the_sheet_comes_just_before_it() {
+    for name in ["app.slint", "history.slint"] {
+        let src = fs::read_to_string(manifest().join("ui").join(name)).unwrap_or_default();
+        let sheet = src.find("ShortcutSheet {").unwrap_or(usize::MAX);
+        let tip = src.rfind("TooltipLayer { }").unwrap_or(0);
+        assert!(
+            sheet < tip,
+            "{name}: the sheet must come before TooltipLayer"
+        );
+        assert!(
+            src[tip..].trim_end().ends_with("}\n}") || src[tip + 16..].trim() == "}",
+            "{name}: TooltipLayer must be the last child"
+        );
+    }
+}
+
+/// Welcome: Esc is "Not now", Enter presses the focused button and Start has the focus, the
+/// switch is hidden without `can-login`; nothing but `begin` is wired to the host.
+#[test]
+fn the_welcome_keeps_its_keys_and_its_callbacks() {
+    let w = fs::read_to_string(manifest().join("ui/welcome.slint")).unwrap_or_default();
+    assert!(w.contains("e.text == Key.Escape") && w.contains("root.dismiss();"));
+    assert!(w.contains("if root.can-login && !root.finished: HorizontalLayout"));
+    assert!(w.contains("root.begin();") && w.contains("root.not-now();"));
+    // Start takes the focus when the window opens, so Enter starts; Not now never does.
+    let start = w.find("text: WText.start;").unwrap_or(0);
+    assert!(w[start..].contains("self.focus();"));
+    for callback in [
+        "callback begin();",
+        "callback not-now();",
+        "callback dismiss();",
+    ] {
+        assert!(w.contains(callback), "{callback}");
+    }
+    // The old widgets are gone (the kit has the switch and the buttons).
+    assert!(!w.contains("CheckBox") && !w.contains("std-widgets.slint\";\nimport { Button"));
+}

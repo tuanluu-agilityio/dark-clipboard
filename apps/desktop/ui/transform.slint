@@ -1,31 +1,66 @@
-// "Copy as..." and "Edit..." panels (Task 404), shared by the popup and the history window.
-// Both cover their window and take every click; the keys are handled in Rust (the hosts'
-// `key` callbacks see them first). Every string comes from Rust (`Strings`).
+// The secondary surfaces the popup and the history window share (Tasks 404 and 706): "Copy as..."
+// and "Edit a copy" panels and the F1 shortcuts sheet. Each covers its window with `DialogScrim`
+// and takes every click; the keys are decided in Rust (the hosts' `key` callbacks see them first,
+// `src/ui/*_host.rs`, `src/shortcuts.rs`). None is a `PopupWindow`: Slint sends every key to an
+// open popup, which would break the host's key maps (D-079). Every string comes from Rust.
 import { Theme, Strings } from "theme.slint";
-import { ActionButton } from "popup.slint";
+import { Button, ButtonKind } from "kit/button.slint";
+import { DialogScrim } from "kit/confirm_dialog.slint";
+import { KeyCap } from "kit/key_cap.slint";
 
+// Strings of the surfaces that have no place in `Strings`: the sheet and the empty-state hints.
+export global SheetStrings {
+    in property <string> title;
+    // "Esc closes".
+    in property <string> footer;
+    // The status line's tooltip that names the sheet ("Shortcuts" and its key "F1").
+    in property <string> tip;
+    in property <string> tip-key;
+    in property <string> hint-empty;
+    in property <string> hint-no-results;
+    in property <string> hint-failed;
+}
+
+// One line of the sheet: a group header (no key) or a key with its label (`src/shortcuts.rs`).
+export struct SheetLine {
+    header: bool,
+    key: string,
+    label: string,
+}
+
+// A row of the transform list (36 px, the kit's list row: `selected` fill and a 3 px accent bar).
 component TfItem inherits Rectangle {
     in property <string> text;
     in property <bool> active;
     callback clicked();
 
-    height: 28px;
-    border-radius: 4px;
-    background: root.active ? Theme.accent : (touch.has-hover ? Theme.line : transparent);
+    height: 36px;
+    border-radius: 6px;
+    background: root.active ? Theme.selected : (touch.has-hover ? Theme.raised : transparent);
     accessible-role: button;
     accessible-label: root.text;
     accessible-action-default => {
         root.clicked();
     }
 
+    if root.active: Rectangle {
+        x: 0px;
+        y: 8px;
+        width: 3px;
+        height: parent.height - 16px;
+        border-radius: 1.5px;
+        background: Theme.accent;
+    }
+
     Text {
-        x: 8px;
-        width: parent.width - 16px;
+        x: 12px;
+        width: parent.width - 20px;
         text: root.text;
-        color: root.active ? Theme.bg : Theme.text;
-        font-size: 12px;
+        color: root.active ? Theme.text : Theme.text-2;
+        font-size: 13px;
         vertical-alignment: center;
         overflow: elide;
+        accessible-role: none;
     }
 
     touch := TouchArea {
@@ -37,7 +72,7 @@ component TfItem inherits Rectangle {
 }
 
 // Pick a transform, see its result, copy it. Nothing is stored.
-export component TransformPanel inherits Rectangle {
+export component TransformPanel inherits DialogScrim {
     in property <[string]> labels;
     in property <int> selected;
     in property <string> preview;
@@ -49,28 +84,28 @@ export component TransformPanel inherits Rectangle {
     callback copy();
     callback cancel();
 
-    background: #000000a0;
+    open: true;
     accessible-role: groupbox;
     accessible-label: Strings.copy-as;
-
-    TouchArea { }
 
     Rectangle {
         width: min(600px, parent.width - 24px);
         height: min(460px, parent.height - 24px);
-        background: Theme.surface;
-        border-radius: 8px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: Theme.canvas;
+        border-radius: 10px;
         border-width: 1px;
-        border-color: Theme.line;
+        border-color: Theme.border-strong;
 
         VerticalLayout {
-            padding: 12px;
+            padding: 16px;
             spacing: 8px;
 
             Text {
                 text: Strings.copy-as;
                 color: Theme.text;
-                font-size: 14px;
+                font-size: 15px;
                 font-weight: 700;
                 accessible-role: AccessibleRole.text;
             }
@@ -80,7 +115,7 @@ export component TransformPanel inherits Rectangle {
                 vertical-stretch: 1;
 
                 Flickable {
-                    width: 170px;
+                    width: 204px;
                     content-height: items.preferred-height;
                     items := VerticalLayout {
                         spacing: 2px;
@@ -96,8 +131,10 @@ export component TransformPanel inherits Rectangle {
 
                 Rectangle {
                     horizontal-stretch: 1;
-                    background: Theme.bg;
+                    background: Theme.surface;
                     border-radius: 6px;
+                    border-width: 1px;
+                    border-color: Theme.border;
                     accessible-role: groupbox;
                     accessible-label: Strings.tf-result;
 
@@ -123,16 +160,16 @@ export component TransformPanel inherits Rectangle {
                 visible: root.note != "";
                 height: root.note != "" ? self.preferred-height : 0px;
                 text: root.note;
-                color: root.note-is-error ? Theme.danger : Theme.text-muted;
-                font-size: 11px;
+                color: root.note-is-error ? Theme.danger : Theme.text-2;
+                font-size: 12px;
                 wrap: word-wrap;
                 accessible-role: AccessibleRole.text;
             }
 
             Text {
                 text: Strings.tf-hint;
-                color: Theme.text-muted;
-                font-size: 11px;
+                color: Theme.text-3;
+                font-size: 12px;
                 wrap: word-wrap;
                 accessible-role: none;
             }
@@ -140,16 +177,19 @@ export component TransformPanel inherits Rectangle {
             HorizontalLayout {
                 spacing: 8px;
                 alignment: end;
-                height: 30px;
-                ActionButton {
+                height: 32px;
+                // The keys are the host's: these buttons are for the mouse, as the old ones were.
+                Button {
                     text: Strings.cancel;
+                    focus-on-tab-navigation: false;
                     clicked => {
                         root.cancel();
                     }
                 }
-                ActionButton {
+                if root.can-copy: Button {
                     text: Strings.copy;
-                    visible: root.can-copy;
+                    kind: ButtonKind.primary;
+                    focus-on-tab-navigation: false;
                     clicked => {
                         root.copy();
                     }
@@ -160,45 +200,45 @@ export component TransformPanel inherits Rectangle {
 }
 
 // Edit a copy of a text clip. "Save as new clip" creates a new clip; the original stays.
-export component EditPanel inherits Rectangle {
+export component EditPanel inherits DialogScrim {
     in-out property <string> text;
     // Why the last save did not happen (empty when there is nothing to say).
     in property <string> note;
     callback save();
     callback cancel();
 
-    background: #000000a0;
+    open: true;
     accessible-role: groupbox;
     accessible-label: Strings.edit;
-
-    TouchArea { }
 
     Rectangle {
         width: min(720px, parent.width - 24px);
         height: min(520px, parent.height - 24px);
-        background: Theme.surface;
-        border-radius: 8px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: Theme.canvas;
+        border-radius: 10px;
         border-width: 1px;
-        border-color: Theme.line;
+        border-color: Theme.border-strong;
 
         VerticalLayout {
-            padding: 12px;
+            padding: 16px;
             spacing: 8px;
 
             Text {
                 text: Strings.edit-hint;
-                color: Theme.text-muted;
-                font-size: 12px;
+                color: Theme.text-2;
+                font-size: 13px;
                 wrap: word-wrap;
                 accessible-role: AccessibleRole.text;
             }
 
             Rectangle {
                 vertical-stretch: 1;
-                background: Theme.bg;
+                background: Theme.surface;
                 border-radius: 6px;
                 border-width: 1px;
-                border-color: input.has-focus ? Theme.accent : Theme.line;
+                border-color: input.has-focus ? Theme.focus : Theme.border-strong;
 
                 Flickable {
                     x: 8px;
@@ -228,7 +268,7 @@ export component EditPanel inherits Rectangle {
                 height: root.note != "" ? self.preferred-height : 0px;
                 text: root.note;
                 color: Theme.danger;
-                font-size: 11px;
+                font-size: 12px;
                 wrap: word-wrap;
                 accessible-role: AccessibleRole.text;
             }
@@ -236,19 +276,143 @@ export component EditPanel inherits Rectangle {
             HorizontalLayout {
                 spacing: 8px;
                 alignment: end;
-                height: 30px;
-                ActionButton {
+                height: 32px;
+                Button {
                     text: Strings.cancel;
+                    focus-on-tab-navigation: false;
                     clicked => {
                         root.cancel();
                     }
                 }
-                ActionButton {
+                Button {
                     text: Strings.save-new;
+                    kind: ButtonKind.primary;
+                    focus-on-tab-navigation: false;
                     clicked => {
                         root.save();
                     }
                 }
+            }
+        }
+    }
+}
+
+// One line of a sheet column: a group header, or a label with its key cap on the right.
+component SheetItem inherits Rectangle {
+    in property <SheetLine> line;
+
+    height: root.line.header ? 28px : 22px;
+    accessible-role: text;
+    accessible-label: root.line.header ? root.line.label : root.line.label + ": " + root.line.key;
+
+    if root.line.header: Text {
+        y: 6px;
+        width: parent.width;
+        height: parent.height - 6px;
+        text: root.line.label;
+        color: Theme.text-2;
+        font-size: 12px;
+        font-weight: 700;
+        vertical-alignment: center;
+        overflow: elide;
+        accessible-role: none;
+    }
+    if !root.line.header: HorizontalLayout {
+        spacing: 8px;
+        Text {
+            text: root.line.label;
+            color: Theme.text;
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+            min-width: 0px;
+            accessible-role: none;
+        }
+        VerticalLayout {
+            alignment: center;
+            KeyCap {
+                text: root.line.key;
+            }
+        }
+    }
+}
+
+// The F1 shortcuts sheet (Task 706): an in-window overlay (never a `PopupWindow`) with the
+// window's keys in two columns, each a group header and key caps. The host owns the open state
+// and every key (`src/shortcuts.rs`: F1 and Ctrl+/ toggle, Esc closes, the rest is swallowed);
+// a click on the scrim or the panel is the only input handled here. It does not take the keyboard
+// focus, so the window's key capture keeps seeing every key. Place it before `TooltipLayer`.
+export component ShortcutSheet inherits DialogScrim {
+    in property <string> title;
+    in property <string> footer;
+    in property <[SheetLine]> left;
+    in property <[SheetLine]> right;
+    callback closed();
+
+    accessible-role: groupbox;
+    accessible-label: root.title;
+
+    TouchArea {
+        clicked => {
+            root.closed();
+        }
+    }
+
+    Rectangle {
+        width: min(560px, parent.width - 24px);
+        height: min(32px + 20px + 8px + cols.preferred-height + 8px + 16px + 2px, parent.height - 24px);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: Theme.canvas;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+
+        // The panel swallows clicks so that only the scrim closes the sheet.
+        TouchArea { }
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 8px;
+
+            Text {
+                text: root.title;
+                color: Theme.text;
+                font-size: 15px;
+                font-weight: 700;
+                accessible-role: none;
+            }
+
+            // The rows scroll with the wheel only when the window is too short for them.
+            Flickable {
+                vertical-stretch: 1;
+                content-height: cols.preferred-height;
+                cols := HorizontalLayout {
+                    width: parent.width;
+                    spacing: 16px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: start;
+                        for l in root.left: SheetItem {
+                            line: l;
+                        }
+                    }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: start;
+                        for l in root.right: SheetItem {
+                            line: l;
+                        }
+                    }
+                }
+            }
+
+            Text {
+                text: root.footer;
+                color: Theme.text-3;
+                font-size: 12px;
+                accessible-role: none;
             }
         }
     }

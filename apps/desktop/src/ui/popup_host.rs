@@ -40,6 +40,7 @@ use crate::popup::menu::{self, MenuAction, MenuKey, MenuKind, OpenMenu, RowMenuA
 use crate::popup::paste::{self as paste_rules, AfterCopy, CaptureShown, Via};
 use crate::popup::row::{self as row_rules, Section};
 use crate::popup::transform::{self as tf, PanelKey, Session};
+use crate::shortcuts::{sheet_key, SheetKey, Win};
 use crate::tray::TrayState;
 use darkclip_app::api::{Caller, CopyMode};
 use darkclip_app::{ClipApi, ClipSummaryView, Page};
@@ -87,6 +88,7 @@ impl Trigger {
 /// Sets the popup's strings (called with every status refresh).
 pub fn set_strings(w: &MainWindow, lang: Lang) {
     common::set_shared_strings(w, lang);
+    common::set_sheet_strings(w, lang);
     let (can_paste, enter_pastes) = PASTE_PREFS.get();
     w.global::<Strings>()
         .set_settings_open(t(lang, Msg::SettingsOpen).into());
@@ -155,6 +157,8 @@ struct Host {
     injector: Option<Injector>,
     /// A focus return or paste is running: further copies wait for it.
     pasting: bool,
+    /// The F1 shortcuts sheet is open (Task 706). Not persisted; closed when the popup hides.
+    sheet: bool,
     /// The open "Copy as..." panel (Task 404), if any.
     tf: Option<Session>,
     /// The detail pane's state and its decoded-image cache.
@@ -600,6 +604,7 @@ impl Host {
         self.loading.stop();
         self.commit_delete();
         self.close_copy_as();
+        self.close_sheet();
         // A menu closes with the session (no entry names stay), and no tooltip may flash on the
         // next show.
         self.close_menu();
@@ -1161,9 +1166,35 @@ impl Host {
         true
     }
 
-    /// F1 and Ctrl+/: the shortcuts sheet is Task 706. Until then the keys do nothing, and no
-    /// hint advertises them.
-    fn show_shortcuts(&mut self) {}
+    /// F1 and Ctrl+/: the shortcuts sheet (Task 706). Not while the "Copy as..." panel or a menu
+    /// has the keys. The sheet's lines come from `crate::shortcuts`.
+    fn show_shortcuts(&mut self) {
+        if self.tf.is_some() || self.menu.is_some() {
+            return;
+        }
+        self.sheet = true;
+        self.render_sheet();
+    }
+
+    /// Draws the sheet's state: its two columns in the current language and whether it is open.
+    fn render_sheet(&self) {
+        let Some(w) = self.window() else {
+            return;
+        };
+        if self.sheet {
+            let (left, right) = common::sheet_columns(Win::Popup, self.lang);
+            w.set_sheet_left(left);
+            w.set_sheet_right(right);
+        }
+        w.set_sheet_open(self.sheet);
+    }
+
+    fn close_sheet(&mut self) {
+        if self.sheet {
+            self.sheet = false;
+            self.render_sheet();
+        }
+    }
 
     // ---- Menus (Task 701, D-079, F-31): the host owns the state, Slint only draws ----
 
@@ -1531,6 +1562,7 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
         capture: CaptureShown::Off,
         injector: None,
         pasting: false,
+        sheet: false,
         tf: None,
         detail: DetailModel::default(),
         pane_wide: false,
@@ -1570,6 +1602,20 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
     });
     w.on_key(|text, ctrl, shift, alt, meta, search_focused| {
         with_host(|h| {
+            // The shortcuts sheet is modal: Esc, F1 and Ctrl+/ close it, every other key is
+            // swallowed (so Esc closes the sheet before the popup).
+            if h.sheet {
+                let mods = Mods {
+                    ctrl,
+                    shift,
+                    alt,
+                    meta,
+                };
+                if sheet_key(true, keys::key_from_text(&text), mods) == SheetKey::Close {
+                    h.close_sheet();
+                }
+                return true;
+            }
             // The "Copy as..." panel is modal: it takes every key.
             if h.tf.is_some() {
                 h.panel_key(tf::panel_key(keys::key_from_text(&text)));
@@ -1609,6 +1655,9 @@ pub fn install(w: &MainWindow, poster: Poster, lang: Lang, log: Arc<Log>) {
     });
     w.on_tf_cancel(|| {
         with_host(|h| h.close_copy_as());
+    });
+    w.on_sheet_close(|| {
+        with_host(Host::close_sheet);
     });
     w.on_chip_toggled(|id| {
         with_host(|h| h.toggle_chip(id));
@@ -1714,6 +1763,7 @@ pub fn set_lang(lang: Lang) {
             h.rebuild_rows();
             h.render_status();
             h.render_detail();
+            h.render_sheet();
         }
     });
 }
