@@ -83,7 +83,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 413 Release blockers (407 findings) | task/413-release-blockers | specialist | opus | done | 319,940 | 217,332 (security-reviewer opus ×2: CR (blocking: DACL could reach a user-chosen folder with other files) → APPROVED; CI confirmed the elevated-runner owner rule) | 44,656 | 581,928 |
 | 409 Licence | — | — | — | done in Task 201 (D-045) | | | | |
 | 408 Release workflow | task/408-release-workflow | builder | sonnet | done (workflow first runs after merge: dispatch dry run) | 83,653 | 108,640 (reviewer opus ×2: CR (blocking: release.yml invalid YAML) → APPROVED) | 12,141 | 204,434 |
-| 410 0.1.0 docs and version | task/410-docs-0.1.0 | scaffolder | sonnet | pending | | | | |
+| 410 0.1.0 docs and version | task/410-docs-0.1.0 | scaffolder | sonnet | in progress | | | | |
 
 ## Totals by model
 
