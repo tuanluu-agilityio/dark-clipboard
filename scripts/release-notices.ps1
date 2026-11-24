@@ -17,6 +17,10 @@ $ver = (& cargo about --version) 2>&1 | Out-String
 if ($LASTEXITCODE -ne 0 -or $ver -notmatch [regex]::Escape($AboutVersion)) {
     throw "cargo-about $AboutVersion is required (found: $($ver.Trim())). Run: cargo install cargo-about --locked --version $AboutVersion"
 }
+# `--frozen` keeps cargo-about offline, but `cargo metadata` then needs every locked crate's
+# sources, including other targets' (a fresh CI runner only has the Windows ones): fetch first.
+& cargo fetch --locked
+if ($LASTEXITCODE -ne 0) { throw 'cargo fetch failed' }
 & cargo about generate --frozen -c about.toml about.hbs -o $Out -m apps/desktop/Cargo.toml
 if ($LASTEXITCODE -ne 0) { throw 'cargo about generate failed' }
 
