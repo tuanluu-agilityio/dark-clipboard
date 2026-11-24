@@ -2,7 +2,28 @@
 
 A local-first clipboard manager for Windows, macOS and Linux, written in Rust. It is part of the Darkshot family.
 
-> **Status: Windows alpha (0.1.0-alpha, internal).** A Windows desktop app exists and runs from source; it has not been released, tagged or published. macOS and Linux have no app yet. See [Windows alpha](#windows-alpha-010-alpha-internal) below for what is verified and what is not.
+> **Status: 0.1.0 alpha, Windows only.** Windows 11 x64 has a desktop app you can download (see [Download](#download-windows-x64)). macOS and Linux have no app yet and nothing is claimed for them. The app is **unsigned**, and most of its screens have **not been checked by hand** on a real desktop: see [What is tested](#what-is-tested) and the Known issues in the [CHANGELOG](CHANGELOG.md).
+
+## Download (Windows x64)
+
+Releases are on GitHub: <https://github.com/tuanluu-agilityio/dark-clipboard/releases>. Release notes: [docs/user/release-notes-0.1.0.md](docs/user/release-notes-0.1.0.md).
+
+Assets of a release (see [docs/release.md](docs/release.md)):
+
+- `dark-clipboard-<version>-windows-x64.zip`: `dark-clipboard.exe`, `LICENSE`, `README.md`, `CHANGELOG.md` and `THIRD-PARTY-NOTICES.txt`. For 0.1.0 the name is `dark-clipboard-0.1.0-windows-x64.zip`.
+- `dark-clipboard.exe` on its own.
+- `SHA256SUMS.txt`: the SHA-256 of the zip and of the bare exe.
+
+**Verify the download.** Put `SHA256SUMS.txt` next to the file and, in PowerShell:
+
+    Get-FileHash .\dark-clipboard-0.1.0-windows-x64.zip -Algorithm SHA256
+    Get-Content .\SHA256SUMS.txt
+
+The hash must equal the line for that file. This catches a damaged or swapped download; it does not prove who built it, because the build is unsigned.
+
+**The binary is unsigned.** There is no Authenticode certificate, so Windows SmartScreen may show "Windows protected your PC". Only run a file you have verified as above; to continue, choose "More info" and then "Run anyway". There is no installer and nothing to uninstall (see the [user guide](docs/user/windows-alpha.md#uninstall-and-data-removal)).
+
+**Run it.** Unzip, then start `dark-clipboard.exe`. It starts hidden with an icon in the notification area (open the overflow arrow if you do not see it). Press `Ctrl+Shift+V` for the popup. On the first start a welcome appears and **nothing is captured until you press Start**. The first run on a fresh Windows 11 machine is an owner manual row and has not been checked by hand yet.
 
 ## What it is meant to do (first release)
 
@@ -14,9 +35,9 @@ A local-first clipboard manager for Windows, macOS and Linux, written in Rust. I
 
 On first start a one-screen welcome explains what is never captured and where your data lives. **Nothing is captured until you press Start**; "Not now" keeps capture off, and the welcome stays reachable from Settings > About and the tray. Start at login is off unless you tick it.
 
-## Windows alpha (0.1.0-alpha, internal)
+## Windows alpha (0.1.0)
 
-An internal alpha for the owner's own testing. It is built from source; there is no installer, no signed binary and no release. User guide: [docs/user/windows-alpha.md](docs/user/windows-alpha.md). The exact build that was hashed is in [docs/testing/alpha-artifact.md](docs/testing/alpha-artifact.md).
+An alpha: there is no installer and no signed binary. Download it (above) or build it from source (below). User guide: [docs/user/windows-alpha.md](docs/user/windows-alpha.md). How a release is built and checked: [docs/release.md](docs/release.md); the history of the first hashed alpha build is in [docs/testing/alpha-artifact.md](docs/testing/alpha-artifact.md).
 
 ### What works (implemented)
 
@@ -111,7 +132,7 @@ See "Known issues" in the [CHANGELOG](CHANGELOG.md). In short: the Windows build
 
 ## Platform status
 
-Only Windows has been tested, and only partly (see the alpha section). See `docs/architecture/platform-compatibility.md` for every capability with its evidence (tested, documented, reported or unknown). macOS and Linux are designed but untested. GNOME on Wayland may not support background capture.
+Only Windows (11, x64) has been tested, and only partly (see the alpha section); Windows 10 is untested. See `docs/architecture/platform-compatibility.md` for every capability with its evidence (tested, documented, reported or unknown). macOS and Linux are designed but untested. GNOME on Wayland may not support background capture.
 
 ## Documentation
 

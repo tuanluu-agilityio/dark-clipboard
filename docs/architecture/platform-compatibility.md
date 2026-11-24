@@ -59,6 +59,10 @@ Recorded in `docs/testing/platform-checklist.md`; Windows 11 10.0.26300 only. Wi
 
 Not tested: Bitwarden, 1Password, Office, RDP, elevated source, Win+V after copy-back (manual), Windows 10.
 
+## 2c. 0.1.0 release claims (Task 410, D-068)
+
+Changed by Task 410, 2026-11-24. No cell of section 1 was changed and nothing new is marked **T**. The 0.1.0 release (README, release notes, user guide) claims only: Windows 11 x64, alpha, unsigned; the Windows cells already marked **T** above; the rows verified by script or automated tests are described as such, and every desktop UI row is described as untested by hand. macOS, Linux, Wayland and Windows 10 are not claimed. Start at login, auto-paste, tray, popup near cursor and the global shortcut stay as in section 1 (D, or T only where a spike tested them); the app's own UI behaviour for them is an owner manual row. KeePass 2, Bitwarden and 1Password are not claimed as verified. The update check, backup and file dialogs are Windows only and have no matrix cell.
+
 ## 3. Known restrictions and design responses
 
 | Restriction | Response |
