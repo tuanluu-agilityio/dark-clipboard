@@ -886,6 +886,9 @@ export component HistoryWindow inherits Window {
 
     // The date menu: an in-window `Menu`; its keys are decided in Rust (D-079).
     date-menu := Menu {
+        // Anchor at the window origin: `open(x, y)` takes window positions.
+        x: 0px;
+        y: 0px;
         entries: root.date-entries;
         highlighted: root.date-highlighted;
         key(text) => {
@@ -902,6 +905,9 @@ export component HistoryWindow inherits Window {
     // The row context menu (Task 704): the kit `Menu`; its entries, state and keys are in Rust
     // (`src/history/menu.rs`), so right click, the Menu key and Shift+F10 all end up here.
     row-menu := Menu {
+        // Anchor at the window origin: `open(x, y)` takes window positions.
+        x: 0px;
+        y: 0px;
         entries: root.row-entries;
         disabled-items: root.row-disabled;
         highlighted: root.row-highlighted;
