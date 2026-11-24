@@ -920,6 +920,7 @@ messages! {
     HistKeyCtrlShiftE => ("Ctrl+Shift+E", "Ctrl+Shift+E"),
     HistSelectedCount => ("{n} selected", "Đã chọn {n}"),
     HistBulkTag => ("Tag", "Gắn thẻ"),
+    HistDrawerOpen => ("Show details", "Hiện chi tiết"),
     HistDrawerClose => ("Close details", "Đóng chi tiết"),
     HistCheckLabel => ("Select this clip", "Chọn mục này"),
 }

@@ -134,7 +134,11 @@ mod tests {
     #[test]
     fn the_first_open_is_centred_at_the_default_size() {
         let p = initial(None, WORK, 96);
-        assert_eq!((p.width, p.height, p.x, p.y), (1060, 660, 430, 190), "{p:?}");
+        assert_eq!(
+            (p.width, p.height, p.x, p.y),
+            (1060, 660, 430, 190),
+            "{p:?}"
+        );
         assert!(p.width >= 1000, "the default is the wide layout");
     }
 

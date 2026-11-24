@@ -117,6 +117,7 @@ pub fn esc_layer(l: Layers, has_marks: bool) -> EscLayer {
 }
 
 /// F6 as `history_key` returns it (the popup's `Key` has no F6).
+#[cfg(test)]
 pub fn f6() -> Key {
     Key::Char(char::from(SlintKey::F6))
 }
@@ -133,7 +134,9 @@ pub fn history_key(text: &str) -> Key {
     key_from_text(text)
 }
 
-/// The history action for a key, or `None` to let the focused element handle it.
+/// The history action for a key, or `None` to let the focused element handle it (no layers
+/// open: the wide layout).
+#[cfg(test)]
 pub fn map_key(k: Key, m: Mods, ctx: HistoryCtx) -> Option<HistoryAction> {
     map_key_in(k, m, ctx, Layers::default())
 }

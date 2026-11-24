@@ -6,8 +6,6 @@
 pub const WIDE_MIN: u32 = 1000;
 /// Window width from which the detail panel still sits beside the list (as a 300 px column).
 pub const MEDIUM_MIN: u32 = 820;
-/// The smallest window (`place::MIN_LOGICAL`).
-pub const NARROW_MIN: u32 = 640;
 
 pub const SIDEBAR_FULL: u32 = 216;
 pub const RAIL: u32 = 52;
@@ -127,14 +125,26 @@ mod tests {
     #[test]
     fn each_mode_has_its_pane_widths() {
         let g = geometry(1060, false);
-        assert_eq!((g.sidebar_w, g.detail_w, g.rail, g.drawer), (216, 340, false, false));
+        assert_eq!(
+            (g.sidebar_w, g.detail_w, g.rail, g.drawer),
+            (216, 340, false, false)
+        );
         let g = geometry(900, false);
-        assert_eq!((g.sidebar_w, g.detail_w, g.rail, g.drawer), (52, 300, true, false));
+        assert_eq!(
+            (g.sidebar_w, g.detail_w, g.rail, g.drawer),
+            (52, 300, true, false)
+        );
         let g = geometry(700, false);
-        assert_eq!((g.sidebar_w, g.detail_w, g.rail, g.drawer), (52, 340, true, true));
+        assert_eq!(
+            (g.sidebar_w, g.detail_w, g.rail, g.drawer),
+            (52, 340, true, true)
+        );
         // Ctrl+B at a wide width collapses the sidebar to the rail and nothing else.
         let g = geometry(1060, true);
-        assert_eq!((g.sidebar_w, g.detail_w, g.rail, g.drawer), (52, 340, true, false));
+        assert_eq!(
+            (g.sidebar_w, g.detail_w, g.rail, g.drawer),
+            (52, 340, true, false)
+        );
     }
 
     #[test]
@@ -155,10 +165,22 @@ mod tests {
                 regions(mode, false),
                 [Region::Sidebar, Region::List, Region::Detail]
             );
-            assert_eq!(next_region(mode, false, Region::Sidebar, false), Region::List);
-            assert_eq!(next_region(mode, false, Region::List, false), Region::Detail);
-            assert_eq!(next_region(mode, false, Region::Detail, false), Region::Sidebar);
-            assert_eq!(next_region(mode, false, Region::Sidebar, true), Region::Detail);
+            assert_eq!(
+                next_region(mode, false, Region::Sidebar, false),
+                Region::List
+            );
+            assert_eq!(
+                next_region(mode, false, Region::List, false),
+                Region::Detail
+            );
+            assert_eq!(
+                next_region(mode, false, Region::Detail, false),
+                Region::Sidebar
+            );
+            assert_eq!(
+                next_region(mode, false, Region::Sidebar, true),
+                Region::Detail
+            );
             assert_eq!(next_region(mode, false, Region::Detail, true), Region::List);
         }
     }
@@ -178,7 +200,10 @@ mod tests {
         assert_eq!(next_region(n, false, Region::Sidebar, true), Region::List);
         assert_eq!(next_region(n, true, Region::List, false), Region::Detail);
         // The drawer closed under the focus: the cycle goes on from the list.
-        assert_eq!(next_region(n, false, Region::Detail, false), Region::Sidebar);
+        assert_eq!(
+            next_region(n, false, Region::Detail, false),
+            Region::Sidebar
+        );
     }
 
     #[test]

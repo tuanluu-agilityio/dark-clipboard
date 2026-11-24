@@ -5,7 +5,9 @@
 // `OrgStrings` globals (i18n). Dark only (D-037).
 //
 // The panes sit at fixed positions (not in layouts) so the Tab order is: search, date, select
-// toggle, sidebar, list, detail toolbar, tags, note, collections. Narrow layouts are Task 704.
+// toggle, sidebar (or rail), bulk bar, list, detail toolbar, tags, note, collections. Task 704
+// made the layout responsive: the sidebar becomes a 52 px rail below 1000 px, and below 820 px
+// the detail panel is a drawer over the list; Rust decides the widths (`src/history/layout.rs`).
 
 import { ListView, Palette } from "std-widgets.slint";
 import { Theme, Strings } from "theme.slint";
@@ -18,52 +20,16 @@ import { ClipRow, DetailPane, DetailState, StatusHint } from "popup.slint";
 import { TransformPanel, EditPanel } from "transform.slint";
 import { OrgDialog, OrgDialogState, OrgStrings } from "organize.slint";
 import { HistoryRow, HistoryRowMetrics } from "history_row.slint";
-import { FilterItem, SidebarView, DateButton, DetailToolbar, ChipSection, NoteSection, FactLine, HistoryStatus } from "history_panes.slint";
+import { FilterItem, SidebarView, DateButton, DetailToolbar, ChipSection, NoteSection, FactLine, HistoryStatus, BulkBar } from "history_panes.slint";
 
 export { FilterItem } from "history_panes.slint";
-
-// One entry of the context menu.
-component CtxEntry inherits Rectangle {
-    in property <string> text;
-    in property <bool> danger: false;
-    in property <bool> enabled: true;
-    callback clicked();
-
-    height: 30px;
-    background: touch.has-hover && root.enabled ? Theme.line : transparent;
-    accessible-role: button;
-    accessible-label: root.text;
-    accessible-enabled: root.enabled;
-    accessible-action-default => {
-        if (root.enabled) {
-            root.clicked();
-        }
-    }
-
-    Text {
-        x: 12px;
-        width: parent.width - 24px;
-        text: root.text;
-        color: !root.enabled ? Theme.text-muted.with-alpha(0.6) : (root.danger ? Theme.danger : Theme.text);
-        font-size: 13px;
-        vertical-alignment: center;
-        overflow: elide;
-    }
-
-    touch := TouchArea {
-        enabled: root.enabled;
-        clicked => {
-            root.clicked();
-        }
-    }
-}
 
 export component HistoryWindow inherits Window {
     icon: @image-url("../res/window-64.png");
     title: Strings.history-title;
     background: Theme.bg;
-    // 216 px sidebar + 320 px list + 340 px panel; narrower layouts come with Task 704.
-    min-width: 876px;
+    // The narrow layout (rail + list + drawer) is the smallest one (F-34).
+    min-width: 640px;
     min-height: 460px;
     preferred-width: 1060px;
     preferred-height: 660px;
@@ -132,17 +98,36 @@ export component HistoryWindow inherits Window {
     in property <bool> dlg-open;
     in property <OrgDialogState> dlg;
     in-out property <string> dlg-text;
-    // Where the context menu opens (window coordinates).
-    private property <length> menu-x;
-    private property <length> menu-y;
+    // Responsive layout (Task 704): Rust computes these from the window width.
+    in property <length> sidebar-w: 216px;
+    in property <length> detail-w: 340px;
+    // The sidebar is drawn as the 52 px icon rail.
+    in property <bool> compact;
+    // The detail panel is a drawer over the list (below 820 px).
+    in property <bool> drawer-mode;
+    in property <bool> drawer-open;
+    // The full sidebar is open over the list (rail widths, Ctrl+B).
+    in property <bool> overlay-open;
+    in-out property <int> detail-focus-seq;
+    out property <int> win-width: floor(root.width / 1px);
+    // Select mode checkboxes and the bulk bar (two or more marked rows).
+    in property <bool> show-checks;
+    in property <bool> bulk-visible;
+    in property <string> bulk-text;
+    in property <[bool]> bulk-enabled;
+    // The row context menu: the kit `Menu`, state and keys in Rust.
+    in property <[KitEntry]> row-entries;
+    in property <[bool]> row-disabled;
+    in property <int> row-highlighted;
     out property <int> page-rows: max(1, floor(clip-list.visible-height / HistoryRowMetrics.height));
 
     callback query-edited(string);
     // Returns true when the key was handled (the search box does not see it then).
     callback key(string, bool, bool, bool, bool, bool) -> bool;
     // A control that handles Enter, Space or the arrows itself has (or lost) the focus; Rust's key
-    // map leaves those keys alone then. Ids: -101 date button, -102 select toggle, -50 sidebar,
-    // -110 detail toolbar, -120 tags, -121 note, -122 collections.
+    // map leaves those keys alone then. Ids: -101 date button, -102 select toggle, -103 drawer button,
+    // -50 sidebar, -51 rail, -52 sidebar overlay, -110 detail toolbar, -120 tags, -121 note,
+    // -122 collections, -130 to -136 bulk bar buttons, -140 drawer close.
     callback filter-focus(int, bool);
     callback filter-toggled(int);
     callback group-toggled(int);
@@ -163,6 +148,18 @@ export component HistoryWindow inherits Window {
     callback act-delete();
     callback act-select-all();
     callback act-select-mode();
+    // Task 704: bulk bar, drawer, rail overlay, checkboxes, row menu, window size.
+    callback act-export();
+    callback act-clear-marks();
+    callback act-open-drawer();
+    callback act-close-drawer();
+    callback overlay-dismissed();
+    callback row-checked(int);
+    callback resized(int);
+    callback row-menu-requested(length, length);
+    callback row-menu-key(string) -> bool;
+    callback row-menu-hovered(int);
+    callback row-menu-activated(int);
     callback act-confirm();
     callback act-cancel();
     callback load-full-text();
@@ -205,11 +202,30 @@ export component HistoryWindow inherits Window {
         }
     }
 
-    // The context menu of the selected row (Menu key).
+    // The context menu of the selected row (Menu key, Shift+F10): Rust filled the entries first.
     public function open-menu-at-selected() {
-        root.menu-x = clip-list.absolute-position.x - self.absolute-position.x + 48px;
-        root.menu-y = clip-list.absolute-position.y - self.absolute-position.y + root.selected * HistoryRowMetrics.height + clip-list.content-y + 40px;
-        menu.show();
+        row-menu.open(clip-list.absolute-position.x - self.absolute-position.x + 48px,
+            clip-list.absolute-position.y - self.absolute-position.y + root.selected * HistoryRowMetrics.height + clip-list.content-y + 40px);
+    }
+
+    // The context menu at a window position (right click).
+    public function open-row-menu(x: length, y: length) {
+        row-menu.open(x, y);
+    }
+
+    public function close-row-menu() {
+        row-menu.close();
+    }
+
+    // F6: the keyboard focus to a region (0 sidebar or rail, 1 list, 2 detail or drawer).
+    public function focus-region(r: int) {
+        if (r == 0) {
+            side-view.focus();
+        } else if (r == 1) {
+            list-focus.focus();
+        } else {
+            root.detail-focus-seq += 1;
+        }
     }
 
     // Opens the date menu under the date button (Rust filled the entries first).
@@ -225,8 +241,12 @@ export component HistoryWindow inherits Window {
     // The window is hidden: no menu, no tooltip stays (the hub is per window).
     public function reset-ui() {
         date-menu.close();
-        menu.close();
+        row-menu.close();
         TooltipHub.shown = false;
+    }
+
+    changed win-width => {
+        root.resized(root.win-width);
     }
 
     function report-shown() {
@@ -250,9 +270,9 @@ export component HistoryWindow inherits Window {
 
         // ---- Toolbar (48 px, over the list column) ----
         toolbar := Rectangle {
-            x: 216px;
+            x: root.sidebar-w;
             y: 0px;
-            width: parent.width - 216px - 340px;
+            width: parent.width - root.sidebar-w - (root.drawer-mode ? 0px : root.detail-w);
             height: 48px;
 
             HorizontalLayout {
@@ -346,6 +366,30 @@ export component HistoryWindow inherits Window {
                     }
                 }
 
+                if root.drawer-mode: VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+                    IconButton {
+                        name: IconName.panel-right;
+                        label: Strings.hist-drawer-open;
+                        active: root.drawer-open;
+                        tip-align: TipAlign.end;
+                        focus-gained(reason) => {
+                            root.filter-focus(-103, true);
+                        }
+                        focus-lost(reason) => {
+                            root.filter-focus(-103, false);
+                        }
+                        clicked => {
+                            if (root.drawer-open) {
+                                root.act-close-drawer();
+                            } else {
+                                root.act-open-drawer();
+                            }
+                        }
+                    }
+                }
+
                 VerticalLayout {
                     alignment: center;
                     horizontal-stretch: 0;
@@ -374,21 +418,23 @@ export component HistoryWindow inherits Window {
             }
         }
 
-        // ---- Sidebar (216 px) ----
+        // ---- Sidebar (216 px) or rail (52 px) ----
         Rectangle {
             x: 0px;
             y: 0px;
-            width: 216px;
+            width: root.sidebar-w;
             height: parent.height;
             background: Theme.surface;
 
-            SidebarView {
+            side-view := SidebarView {
                 x: 0px;
                 y: 8px;
                 width: parent.width - 1px;
                 height: parent.height - 16px;
                 items: root.filters;
                 col-shown: root.col-shown;
+                compact: root.compact;
+                focus-id: -50;
                 toggled(id) => {
                     root.filter-toggled(id);
                 }
@@ -404,8 +450,8 @@ export component HistoryWindow inherits Window {
                 delete-clicked => {
                     root.act-delete-collection();
                 }
-                focus-report(on) => {
-                    root.filter-focus(-50, on);
+                focus-report(id, on) => {
+                    root.filter-focus(id, on);
                 }
             }
 
@@ -418,12 +464,48 @@ export component HistoryWindow inherits Window {
 
         // ---- List (flex, min 320 px) ----
         list-col := Rectangle {
-            x: 216px;
+            x: root.sidebar-w;
             y: 48px;
-            width: parent.width - 216px - 340px;
+            width: parent.width - root.sidebar-w - (root.drawer-mode ? 0px : root.detail-w);
             height: parent.height - 48px - 28px;
 
+            // Two or more marked rows: the bulk bar acts on all of them.
+            if root.bulk-visible: BulkBar {
+                x: 8px;
+                y: 4px;
+                width: parent.width - 16px;
+                height: 36px;
+                text: root.bulk-text;
+                enabled: root.bulk-enabled;
+                act-pin => {
+                    root.act-pin();
+                }
+                act-favorite => {
+                    root.act-favorite();
+                }
+                act-add-to-collection => {
+                    root.act-add-collection();
+                }
+                act-tag => {
+                    root.act-tags();
+                }
+                act-export => {
+                    root.act-export();
+                }
+                act-delete => {
+                    root.act-delete();
+                }
+                act-clear => {
+                    root.act-clear-marks();
+                }
+                focus-report(id, on) => {
+                    root.filter-focus(id, on);
+                }
+            }
+
             list-focus := FocusScope {
+                y: root.bulk-visible ? 44px : 0px;
+                height: parent.height - self.y;
                 focus-on-click: false;
                 accessible-role: list;
                 accessible-label: Strings.list-label;
@@ -443,14 +525,17 @@ export component HistoryWindow inherits Window {
                         data: r;
                         index: i;
                         selected: i == root.selected;
+                        show-check: root.show-checks;
+                        check-label: Strings.hist-check-label;
+                        check-toggled => {
+                            root.row-checked(i);
+                        }
                         pressed(ctrl, shift) => {
                             root.row-pressed(i, ctrl, shift);
                         }
                         context(x, y) => {
                             root.row-context(i);
-                            root.menu-x = x - root.absolute-position.x;
-                            root.menu-y = y - root.absolute-position.y;
-                            menu.show();
+                            root.row-menu-requested(x - root.absolute-position.x, y - root.absolute-position.y);
                         }
                         activated => {
                             root.row-activated(i);
@@ -517,9 +602,9 @@ export component HistoryWindow inherits Window {
 
         // ---- Status line (28 px) ----
         HistoryStatus {
-            x: 216px;
+            x: root.sidebar-w;
             y: parent.height - 28px;
-            width: parent.width - 216px - 340px;
+            width: parent.width - root.sidebar-w - (root.drawer-mode ? 0px : root.detail-w);
             text: root.status-text;
             hints: root.status-hints;
             Rectangle {
@@ -529,11 +614,11 @@ export component HistoryWindow inherits Window {
             }
         }
 
-        // ---- Detail panel (340 px) ----
-        Rectangle {
-            x: parent.width - 340px;
+        // ---- Detail panel (340 px wide, 300 px medium) or the drawer over the list ----
+        if !root.drawer-mode || root.drawer-open: Rectangle {
+            x: parent.width - root.detail-w;
             y: 0px;
-            width: 340px;
+            width: root.detail-w;
             height: parent.height;
             background: Theme.bg;
 
@@ -543,10 +628,28 @@ export component HistoryWindow inherits Window {
                 background: Theme.border;
             }
 
+            if root.drawer-mode: IconButton {
+                x: parent.width - 12px - 28px;
+                y: 10px;
+                name: IconName.x;
+                label: Strings.hist-drawer-close;
+                tip-align: TipAlign.end;
+                focus-gained(reason) => {
+                    root.filter-focus(-140, true);
+                }
+                focus-lost(reason) => {
+                    root.filter-focus(-140, false);
+                }
+                clicked => {
+                    root.act-close-drawer();
+                }
+            }
+
             DetailToolbar {
                 x: 12px;
                 y: 10px;
-                width: parent.width - 24px;
+                width: parent.width - 24px - (root.drawer-mode ? 36px : 0px);
+                focus-seq: root.detail-focus-seq;
                 can-copy: root.can-copy;
                 can-transform: root.can-transform;
                 has-selection: root.has-selection;
@@ -705,6 +808,60 @@ export component HistoryWindow inherits Window {
                 accessible-role: text;
             }
         }
+
+        // ---- The full sidebar as an overlay over the list (rail widths, Ctrl+B) ----
+        if root.overlay-open: Rectangle {
+            x: root.sidebar-w;
+            y: 0px;
+            width: parent.width - root.sidebar-w;
+            height: parent.height;
+            background: #00000060;
+            TouchArea {
+                clicked => {
+                    root.overlay-dismissed();
+                }
+            }
+        }
+        if root.overlay-open: Rectangle {
+            x: root.sidebar-w;
+            y: 0px;
+            width: 216px;
+            height: parent.height;
+            background: Theme.surface;
+            SidebarView {
+                x: 0px;
+                y: 8px;
+                width: parent.width - 1px;
+                height: parent.height - 16px;
+                items: root.filters;
+                col-shown: root.col-shown;
+                grab-focus: true;
+                focus-id: -52;
+                toggled(id) => {
+                    root.filter-toggled(id);
+                }
+                group-toggled(g) => {
+                    root.group-toggled(g);
+                }
+                add-clicked => {
+                    root.act-new-collection();
+                }
+                rename-clicked => {
+                    root.act-rename-collection();
+                }
+                delete-clicked => {
+                    root.act-delete-collection();
+                }
+                focus-report(id, on) => {
+                    root.filter-focus(id, on);
+                }
+            }
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                background: Theme.border;
+            }
+        }
     }
 
     // The date menu: an in-window `Menu`; its keys are decided in Rust (D-079).
@@ -722,123 +879,21 @@ export component HistoryWindow inherits Window {
         }
     }
 
-    // The context menu (same actions as the detail toolbar; the keyboard keys work too).
-    Rectangle {
-        x: root.menu-x;
-        y: root.menu-y;
-        width: 0px;
-        height: 0px;
-        menu := PopupWindow {
-            x: 0px;
-            y: 0px;
-            width: 230px;
-            height: menu-col.preferred-height + 2px;
-            close-policy: close-on-click-outside;
-            Rectangle {
-                background: Theme.surface;
-                border-radius: 6px;
-                border-width: 1px;
-                border-color: Theme.line;
-                menu-col := VerticalLayout {
-                    padding: 1px;
-                    CtxEntry {
-                        text: Strings.copy;
-                        enabled: root.can-copy;
-                        clicked => {
-                            menu.close();
-                            root.act-copy();
-                        }
-                    }
-                    CtxEntry {
-                        text: Strings.copy-plain;
-                        enabled: root.can-copy;
-                        clicked => {
-                            menu.close();
-                            root.act-copy-plain();
-                        }
-                    }
-                    CtxEntry {
-                        text: Strings.copy-as;
-                        enabled: root.can-transform;
-                        clicked => {
-                            menu.close();
-                            root.act-copy-as();
-                        }
-                    }
-                    CtxEntry {
-                        text: Strings.edit;
-                        enabled: root.can-transform;
-                        clicked => {
-                            menu.close();
-                            root.act-edit();
-                        }
-                    }
-                    CtxEntry {
-                        text: root.will-unpin ? Strings.unpin : Strings.pin;
-                        enabled: root.has-selection;
-                        clicked => {
-                            menu.close();
-                            root.act-pin();
-                        }
-                    }
-                    CtxEntry {
-                        text: Strings.delete;
-                        danger: true;
-                        enabled: root.has-selection;
-                        clicked => {
-                            menu.close();
-                            root.act-delete();
-                        }
-                    }
-                    CtxEntry {
-                        text: root.org-fav-text;
-                        enabled: root.org-can-favorite;
-                        clicked => {
-                            menu.close();
-                            root.act-favorite();
-                        }
-                    }
-                    CtxEntry {
-                        text: OrgStrings.add-to-collection;
-                        enabled: root.org-can-add;
-                        clicked => {
-                            menu.close();
-                            root.act-add-collection();
-                        }
-                    }
-                    CtxEntry {
-                        text: OrgStrings.remove-from-collection;
-                        enabled: root.org-can-remove;
-                        clicked => {
-                            menu.close();
-                            root.act-remove-collection();
-                        }
-                    }
-                    CtxEntry {
-                        text: OrgStrings.edit-tags;
-                        enabled: root.org-can-add;
-                        clicked => {
-                            menu.close();
-                            root.act-tags();
-                        }
-                    }
-                    CtxEntry {
-                        text: OrgStrings.edit-note;
-                        enabled: root.org-can-edit;
-                        clicked => {
-                            menu.close();
-                            root.act-note();
-                        }
-                    }
-                    CtxEntry {
-                        text: Strings.select-all;
-                        clicked => {
-                            menu.close();
-                            root.act-select-all();
-                        }
-                    }
-                }
-            }
+    // The row context menu (Task 704): the kit `Menu`; its entries, state and keys are in Rust
+    // (`src/history/menu.rs`), so right click, the Menu key and Shift+F10 all end up here.
+    row-menu := Menu {
+        entries: root.row-entries;
+        disabled-items: root.row-disabled;
+        highlighted: root.row-highlighted;
+        menu-width: 230px;
+        key(text) => {
+            return root.row-menu-key(text);
+        }
+        hovered(i) => {
+            root.row-menu-hovered(i);
+        }
+        activated(i) => {
+            root.row-menu-activated(i);
         }
     }
 

@@ -324,7 +324,10 @@ mod layout_tests {
             ("act-edit", "RowCmd::Edit => self.open_edit()"),
             ("act-pin", "RowCmd::TogglePin => self.toggle_pin()"),
             ("act-delete", "RowCmd::Delete => self.request_delete()"),
-            ("act-favorite", "RowCmd::ToggleFavorite => self.act_favorite()"),
+            (
+                "act-favorite",
+                "RowCmd::ToggleFavorite => self.act_favorite()",
+            ),
         ] {
             assert!(
                 SLINT.contains(&format!("root.{cb}();")),

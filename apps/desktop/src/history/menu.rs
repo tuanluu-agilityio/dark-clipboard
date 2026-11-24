@@ -70,7 +70,11 @@ pub fn history_menu_items(c: &MenuCtx) -> Vec<MenuItem> {
         submenu: false,
         danger: false,
     };
-    let pin = if c.will_unpin { Msg::UiUnpin } else { Msg::UiPin };
+    let pin = if c.will_unpin {
+        Msg::UiUnpin
+    } else {
+        Msg::UiPin
+    };
     let fav = if c.will_unfavorite {
         Msg::UiMenuUnfavorite
     } else {
@@ -147,6 +151,73 @@ pub fn history_menu_items(c: &MenuCtx) -> Vec<MenuItem> {
             )
         },
     ]
+}
+
+/// A button of the bulk bar. The id is the callback the window already has for that action (the
+/// old footer's action ids); the bar adds no bulk logic of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BulkId {
+    Pin,
+    Favorite,
+    AddToCollection,
+    Tags,
+    Export,
+    Delete,
+    Clear,
+}
+
+impl BulkId {
+    /// The `history.slint` callback the button calls.
+    #[cfg(test)]
+    pub fn callback(self) -> &'static str {
+        match self {
+            BulkId::Pin => "act-pin",
+            BulkId::Favorite => "act-favorite",
+            BulkId::AddToCollection => "act-add-collection",
+            BulkId::Tags => "act-tags",
+            BulkId::Export => "act-export",
+            BulkId::Delete => "act-delete",
+            BulkId::Clear => "act-clear-marks",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BulkButton {
+    pub id: BulkId,
+    pub enabled: bool,
+}
+
+/// The bulk bar above the list: "N selected" and its buttons, in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BulkBar {
+    pub count: usize,
+    pub buttons: Vec<BulkButton>,
+}
+
+/// The bar for `marked` marked rows: absent below two (one marked row is not a bulk), else every
+/// button, all enabled. Every action works on all the marks; whether it applies to masked clips
+/// is the plans' decision (they skip them and say so), not the bar's.
+pub fn bulk_bar(marked: usize) -> Option<BulkBar> {
+    if marked < 2 {
+        return None;
+    }
+    let ids = [
+        BulkId::Pin,
+        BulkId::Favorite,
+        BulkId::AddToCollection,
+        BulkId::Tags,
+        BulkId::Export,
+        BulkId::Delete,
+        BulkId::Clear,
+    ];
+    Some(BulkBar {
+        count: marked,
+        buttons: ids
+            .into_iter()
+            .map(|id| BulkButton { id, enabled: true })
+            .collect(),
+    })
 }
 
 /// What a key or a click did to the open menu.
@@ -330,7 +401,12 @@ mod tests {
     fn nothing_selected_disables_everything_but_select_all() {
         let c = MenuCtx::default();
         for item in history_menu_items(&c) {
-            assert_eq!(item.enabled, item.cmd == RowCmd::SelectAll, "{:?}", item.cmd);
+            assert_eq!(
+                item.enabled,
+                item.cmd == RowCmd::SelectAll,
+                "{:?}",
+                item.cmd
+            );
         }
     }
 
@@ -565,6 +641,80 @@ mod tests {
             RowMenuEvent::Run(RowCmd::AddToCollection)
         );
         assert_eq!(m.level(), 0);
+    }
+
+    #[test]
+    fn the_bulk_bar_needs_two_marks_and_lists_the_old_footer_actions() {
+        assert_eq!(bulk_bar(0), None);
+        assert_eq!(bulk_bar(1), None);
+        for n in [2, 3, 500] {
+            let bar = bulk_bar(n).unwrap_or_else(|| BulkBar {
+                count: 0,
+                buttons: Vec::new(),
+            });
+            assert_eq!(bar.count, n, "the bar acts on all the marks");
+            let ids: Vec<&str> = bar.buttons.iter().map(|b| b.id.callback()).collect();
+            assert_eq!(
+                ids,
+                [
+                    "act-pin",
+                    "act-favorite",
+                    "act-add-collection",
+                    "act-tags",
+                    "act-export",
+                    "act-delete",
+                    "act-clear-marks"
+                ]
+            );
+            assert!(bar.buttons.iter().all(|b| b.enabled));
+        }
+    }
+
+    #[test]
+    fn the_bulk_bar_callbacks_exist_in_the_window_and_are_handled() {
+        const SLINT: &str = include_str!("../../ui/history.slint");
+        const HOST: &str = include_str!("../ui/history_host.rs");
+        const ORG: &str = include_str!("../ui/history_host/org.rs");
+        for b in bulk_bar(2).map(|b| b.buttons).unwrap_or_default() {
+            let cb = b.id.callback();
+            assert!(
+                SLINT.contains(&format!("callback {cb}(")),
+                "history.slint has no callback {cb}"
+            );
+            let handler = format!("on_{}", cb.replace('-', "_"));
+            assert!(
+                HOST.contains(&handler) || ORG.contains(&handler),
+                "nothing handles {cb}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_entry_fits_the_230_px_menu_with_its_key_cap_in_both_languages() {
+        // Same measure as `tests/history_budget.rs`: 7 px per character, a key cap is 6 px per
+        // character plus 8. The menu is 230 px: border 2, list padding 8, item padding 16, icon
+        // 16 and 8 px gaps before the label, the cap and the chevron.
+        const TEXT_ROOM: f32 = 230.0 - 2.0 - 8.0 - 16.0 - 16.0 - 8.0;
+        let px = |s: &str| s.chars().count() as f32 * 7.0;
+        let cap = |s: &str| 8.0 + s.chars().count() as f32 * 6.0 + 8.0;
+        for ctx in [all_on(), MenuCtx::default()] {
+            for item in history_menu_items(&ctx) {
+                for lang in [Lang::En, Lang::Vi] {
+                    let mut need = px(t(lang, item.label));
+                    if let Some(k) = item.key {
+                        need += cap(t(lang, k));
+                    }
+                    if item.submenu {
+                        need += 8.0 + 16.0;
+                    }
+                    assert!(
+                        need <= TEXT_ROOM,
+                        "{:?} in {lang:?} needs {need} px of {TEXT_ROOM}",
+                        item.cmd
+                    );
+                }
+            }
+        }
     }
 
     #[test]

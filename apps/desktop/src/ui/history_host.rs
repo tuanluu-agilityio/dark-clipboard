@@ -20,9 +20,12 @@
 use super::common::{self, history_clip_row, Px};
 use super::generated::{IconName, MenuEntry, StatusHint};
 use super::{ClipRow, FilterItem, HistoryWindow, OrgDialogState, OrgStrings, Poster, Strings};
-use crate::history::keys::{self as hkeys, HistoryAction, HistoryCtx};
+use crate::history::keys::{self as hkeys, EscLayer, HistoryAction, HistoryCtx, Layers};
+use crate::history::layout::{self, LayoutMode, Region};
+use crate::history::menu::{self as hmenu, MenuCtx, RowCmd, RowMenu, RowMenuEvent};
 use crate::history::select::{can_copy, pin_plan, DeleteFlow, MultiSelect};
 use crate::history::sidebar::{self, Group, SidebarIcon};
+use crate::organize::bulk;
 use crate::popup::detail::{DetailModel, DetailRequest};
 use crate::popup::keys::{self, ChipFocus, CopyKind, Mods};
 use crate::popup::list::{Applied, Filters, Item, ListModel, Request, View};
@@ -34,7 +37,7 @@ use darkclip_app::ApiError;
 use darkclip_app::{ClipApi, ClipSummaryView, Page};
 use darkclip_core::i18n::{t, Lang, Msg};
 use darkclip_core::policy::SkipReason;
-use darkclip_core::ClipId;
+use darkclip_core::{ClipId, CollectionId};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -79,6 +82,22 @@ struct Host {
     collapsed: BTreeSet<Group>,
     /// The open date menu, if any. Holds no text.
     date_menu: Option<OpenMenu>,
+    /// The open row menu (Task 704), if any. Holds no text: labels are rebuilt from i18n.
+    row_menu: Option<RowMenu>,
+    /// The collections of the menu's second level, in order (user data: never logged).
+    row_collections: Vec<(CollectionId, String)>,
+    /// The window width in logical pixels, as `resized` last reported it.
+    width: u32,
+    /// Ctrl+B at a wide width collapsed the sidebar to the rail.
+    rail_forced: bool,
+    /// The full sidebar is open over the list (rail widths).
+    overlay_open: bool,
+    /// The detail drawer is open (narrow layout).
+    drawer_open: bool,
+    /// The toolbar's select mode: checkboxes show even with fewer than two rows marked.
+    select_mode: bool,
+    /// The id of the control that reported the keyboard focus last (`filter-focus`).
+    focus_id: Option<i32>,
     /// The open "Copy as..." panel (Task 404), if any.
     tf: Option<Session>,
     detail: DetailModel<Px>,
@@ -138,6 +157,13 @@ fn set_strings(w: &HistoryWindow, lang: Lang) {
     s.set_hist_key_ctrl_e(t(lang, Msg::UiKeyCtrlE).into());
     s.set_hist_key_ctrl_p(t(lang, Msg::UiKeyCtrlP).into());
     s.set_hist_key_del(t(lang, Msg::UiKeyDel).into());
+    s.set_hist_favorite(t(lang, Msg::UiMenuFavorite).into());
+    s.set_hist_add_to_collection(t(lang, Msg::HistMenuAddToCollection).into());
+    s.set_hist_bulk_tag(t(lang, Msg::HistBulkTag).into());
+    s.set_hist_export(t(lang, Msg::HistMenuExport).into());
+    s.set_hist_drawer_open(t(lang, Msg::HistDrawerOpen).into());
+    s.set_hist_drawer_close(t(lang, Msg::HistDrawerClose).into());
+    s.set_hist_check_label(t(lang, Msg::HistCheckLabel).into());
     org::set_strings(w, lang);
 }
 
@@ -156,7 +182,13 @@ fn sidebar_icon(i: SidebarIcon) -> IconName {
 
 /// One sidebar row as the window's model item. The count is only shown where one exists (D-080).
 fn filter_item(r: sidebar::SidebarRow) -> FilterItem {
+    // The rail shows the icon only: its tooltip and accessible name carry the label and count.
+    let tip = match r.count {
+        Some(c) if !r.header => format!("{} ({c})", r.label),
+        _ => r.label.clone(),
+    };
     FilterItem {
+        tip: tip.into(),
         id: r.id,
         label: r.label.into(),
         on: r.on,
@@ -278,7 +310,7 @@ impl Host {
         self.sync_detail();
     }
 
-    fn sync_props(&self) {
+    fn sync_props(&mut self) {
         let w = &self.win;
         let state = match self.model.view(self.slow) {
             View::Rows => 0,
@@ -304,9 +336,65 @@ impl Host {
             String::new()
         };
         w.set_summary(summary.into());
-        w.set_select_mode(!self.multi.is_empty());
+        let marked = self.marked_count();
+        w.set_select_mode(self.select_mode || marked >= 1);
+        w.set_show_checks(self.select_mode || marked >= 2);
+        self.sync_bulk(marked);
         self.sync_status();
         self.sync_org();
+    }
+
+    /// How many rows are marked.
+    fn marked_count(&self) -> usize {
+        self.multi
+            .flags(&self.ids())
+            .into_iter()
+            .filter(|on| *on)
+            .count()
+    }
+
+    /// The bulk bar: present from two marked rows (`history::menu::bulk_bar`).
+    fn sync_bulk(&mut self, marked: usize) {
+        match hmenu::bulk_bar(marked) {
+            Some(bar) => {
+                let infos = self.target_infos();
+                let can_favorite = bulk::favorite_target(&infos).is_some();
+                let can_add = infos.iter().any(|t| !t.masked);
+                let flags: Vec<bool> = bar
+                    .buttons
+                    .iter()
+                    .map(|b| {
+                        b.enabled
+                            && match b.id {
+                                hmenu::BulkId::Favorite => can_favorite,
+                                hmenu::BulkId::AddToCollection | hmenu::BulkId::Tags => can_add,
+                                _ => true,
+                            }
+                    })
+                    .collect();
+                let text = fill(t(self.lang, Msg::HistSelectedCount), bar.count as u64);
+                self.win.set_bulk_text(text.into());
+                self.win
+                    .set_bulk_enabled(ModelRc::new(VecModel::from(flags)));
+                self.win.set_bulk_visible(true);
+            }
+            None => {
+                self.win.set_bulk_visible(false);
+                self.win.set_bulk_text(SharedString::new());
+                self.win
+                    .set_bulk_enabled(ModelRc::new(VecModel::<bool>::default()));
+                // The bar is gone with whatever button had the focus.
+                self.forget_focus(|id| (-136..=-130).contains(&id));
+            }
+        }
+    }
+
+    /// Controls that were removed from the window cannot report that they lost the focus.
+    fn forget_focus(&mut self, gone: impl Fn(i32) -> bool) {
+        self.chip_focus.retain(|id| !gone(id));
+        if self.focus_id.is_some_and(gone) {
+            self.focus_id = None;
+        }
     }
 
     fn sync_detail(&mut self) {
@@ -801,19 +889,23 @@ impl Host {
                 }
             }
             HistoryAction::OpenMenu => {
-                if self.cursor_id().is_some() {
+                if self.cursor_id().is_some() && self.prepare_row_menu() {
                     self.win.invoke_open_menu_at_selected();
                 }
             }
+            // One layer per press: the row menu, the sidebar overlay, the drawer, the marks and
+            // last the window.
             HistoryAction::Escape => {
-                if self.multi.is_empty() {
+                let has_marks = !self.multi.is_empty() || self.select_mode;
+                match hkeys::esc_layer(self.layers(), has_marks) {
+                    EscLayer::Menu => self.close_row_menu(),
+                    EscLayer::Overlay => self.close_overlay(),
+                    EscLayer::Drawer => self.close_drawer(),
+                    EscLayer::Marks => self.clear_marks(),
                     // Hide outside the borrow (it calls back into the host).
-                    let _ = slint::invoke_from_event_loop(hide);
-                } else {
-                    let id = self.cursor_id();
-                    self.multi.plain(id);
-                    self.refresh_marks();
-                    self.sync();
+                    EscLayer::Window => {
+                        let _ = slint::invoke_from_event_loop(hide);
+                    }
                 }
             }
             HistoryAction::Confirm => self.confirm_any(),
@@ -830,13 +922,15 @@ impl Host {
             HistoryAction::DeleteCollection => self.request_delete_collection(),
             HistoryAction::Export => self.export_ask(),
             HistoryAction::Swallow => {}
-            HistoryAction::ToggleSidebar
-            | HistoryAction::FocusSearch
-            | HistoryAction::OpenSettings
-            | HistoryAction::NextRegion
-            | HistoryAction::PrevRegion
-            | HistoryAction::OpenDrawer
-            | HistoryAction::CloseDrawer => {}
+            HistoryAction::ToggleSidebar => self.toggle_sidebar(),
+            HistoryAction::FocusSearch => self.win.invoke_focus_search(),
+            HistoryAction::OpenSettings => {
+                let _ = slint::invoke_from_event_loop(super::settings_host::show);
+            }
+            HistoryAction::NextRegion => self.cycle_region(false),
+            HistoryAction::PrevRegion => self.cycle_region(true),
+            HistoryAction::OpenDrawer => self.open_drawer(),
+            HistoryAction::CloseDrawer => self.close_drawer(),
         }
         true
     }
@@ -848,6 +942,8 @@ impl Host {
             return;
         };
         self.search(f);
+        // A filter chosen in the overlay: show the list it filtered.
+        self.close_overlay();
     }
 
     /// A click on row `i`; `ctrl` toggles it, `shift` extends the range.
@@ -889,6 +985,13 @@ impl Host {
     /// Drops everything the window holds: rows, search text, selection, pane, messages.
     fn leave(&mut self) {
         self.date_menu = None;
+        self.row_menu = None;
+        self.drawer_open = false;
+        self.overlay_open = false;
+        self.rail_forced = false;
+        self.select_mode = false;
+        self.focus_id = None;
+        self.apply_layout();
         self.collapsed = sidebar::default_collapsed();
         self.win.invoke_reset_ui();
         self.win.set_filter_title(SharedString::new());
@@ -961,6 +1064,291 @@ impl Host {
     }
 }
 
+// ---- Responsive layout, regions and the row menu (Task 704) ----
+
+/// The kit icon of a row menu entry.
+fn menu_icon(cmd: RowCmd) -> IconName {
+    match cmd {
+        RowCmd::Copy | RowCmd::CopyPlain => IconName::Copy,
+        RowCmd::CopyAs => IconName::WandSparkles,
+        RowCmd::Edit => IconName::Pencil,
+        RowCmd::TogglePin => IconName::Pin,
+        RowCmd::ToggleFavorite => IconName::Star,
+        RowCmd::AddToCollection => IconName::FolderPlus,
+        RowCmd::RemoveFromCollection => IconName::Folder,
+        RowCmd::Tags => IconName::Tag,
+        RowCmd::Note => IconName::StickyNote,
+        RowCmd::Export => IconName::Upload,
+        RowCmd::SelectAll => IconName::ListChecks,
+        RowCmd::Delete => IconName::Trash2,
+    }
+}
+
+impl Host {
+    /// The layers that change what a key means.
+    fn layers(&self) -> Layers {
+        Layers {
+            narrow: layout::geometry(self.width, self.rail_forced).drawer,
+            drawer_open: self.drawer_open,
+            overlay_open: self.overlay_open,
+            menu_open: self.row_menu.is_some(),
+        }
+    }
+
+    /// Hands the pane widths to the window (resize, Ctrl+B, show). Layers that no longer fit
+    /// close (an overlay at wide widths, a drawer beside the list), and controls that left the
+    /// window stop counting as focused.
+    fn apply_layout(&mut self) {
+        let g = layout::geometry(self.width, self.rail_forced);
+        if !g.drawer {
+            self.drawer_open = false;
+        }
+        if !g.rail {
+            self.overlay_open = false;
+        }
+        let w = &self.win;
+        w.set_sidebar_w(g.sidebar_w as f32);
+        w.set_detail_w(g.detail_w as f32);
+        w.set_compact(g.rail);
+        w.set_drawer_mode(g.drawer);
+        w.set_drawer_open(self.drawer_open);
+        w.set_overlay_open(self.overlay_open);
+        if !g.drawer {
+            self.forget_focus(|id| id == -103 || id == -140);
+        } else if !self.drawer_open {
+            self.forget_focus(|id| id == -140 || id == -110 || (-122..=-120).contains(&id));
+        }
+        if !self.overlay_open {
+            self.forget_focus(|id| id == -52);
+        }
+    }
+
+    fn toggle_sidebar(&mut self) {
+        if layout::layout_mode(self.width) == LayoutMode::Wide {
+            self.rail_forced = !self.rail_forced;
+            self.overlay_open = false;
+            self.apply_layout();
+        } else if self.overlay_open {
+            self.close_overlay();
+        } else {
+            self.overlay_open = true;
+            self.apply_layout();
+        }
+    }
+
+    fn close_overlay(&mut self) {
+        if !self.overlay_open {
+            return;
+        }
+        self.overlay_open = false;
+        self.apply_layout();
+        self.win.invoke_focus_region(1);
+    }
+
+    fn open_drawer(&mut self) {
+        if !layout::geometry(self.width, self.rail_forced).drawer || self.drawer_open {
+            return;
+        }
+        self.drawer_open = true;
+        self.apply_layout();
+    }
+
+    fn close_drawer(&mut self) {
+        if !self.drawer_open {
+            return;
+        }
+        self.drawer_open = false;
+        self.apply_layout();
+        self.win.invoke_focus_region(1);
+    }
+
+    /// F6 and Shift+F6: the next (or previous) region that is on screen.
+    fn cycle_region(&mut self, back: bool) {
+        if self.overlay_open {
+            self.close_overlay();
+        }
+        let g = layout::geometry(self.width, self.rail_forced);
+        let from = layout::region_of_focus(self.focus_id);
+        let to = layout::next_region(g.mode, self.drawer_open, from, back);
+        let index = match to {
+            Region::Sidebar => 0,
+            Region::List => 1,
+            Region::Detail => 2,
+        };
+        self.win.invoke_focus_region(index);
+    }
+
+    // ---- the row menu (D-079: the host owns the state, Slint only draws) ----
+
+    /// What the menu entries depend on, from the same flags the toolbar uses.
+    fn menu_ctx(&self) -> MenuCtx {
+        let targets = self.target_infos();
+        let ids: Vec<ClipId> = targets.iter().map(|t| t.id).collect();
+        let pinned: Vec<(ClipId, bool)> = ids
+            .iter()
+            .filter_map(|id| self.item(*id).map(|i| (i.id, i.pinned)))
+            .collect();
+        let fav = bulk::favorite_target(&targets);
+        MenuCtx {
+            can_copy: can_copy(&ids),
+            can_transform: self.transformable().is_some(),
+            has_selection: !ids.is_empty(),
+            will_unpin: !pinned.is_empty() && !pin_plan(&pinned).0,
+            will_unfavorite: fav == Some(false),
+            can_favorite: fav.is_some(),
+            can_add: targets.iter().any(|t| !t.masked),
+            can_remove: !targets.is_empty(),
+            can_edit: matches!(targets.as_slice(), [one] if !one.masked),
+            can_export: !targets.is_empty() || self.model.filters().collection.is_some(),
+        }
+    }
+
+    /// Builds the menu for the current selection and fills the window's entries. False when a
+    /// dialog or confirmation is open (no menu then).
+    fn prepare_row_menu(&mut self) -> bool {
+        if self.confirming() || self.modal_open() {
+            return false;
+        }
+        let items = hmenu::history_menu_items(&self.menu_ctx());
+        self.row_collections = self.collection_choices();
+        self.row_menu = Some(RowMenu::new(items, self.row_collections.len()));
+        self.render_row_menu();
+        true
+    }
+
+    /// Mirrors the open menu (level, entries, highlight) into the window.
+    fn render_row_menu(&self) {
+        let Some(m) = self.row_menu.as_ref() else {
+            return;
+        };
+        let (entries, disabled): (Vec<MenuEntry>, Vec<bool>) = if m.level() == 0 {
+            m.items()
+                .iter()
+                .map(|i| {
+                    (
+                        MenuEntry {
+                            label: t(self.lang, i.label).into(),
+                            icon: menu_icon(i.cmd),
+                            shortcut: i.key.map(|k| t(self.lang, k).into()).unwrap_or_default(),
+                            danger: i.danger,
+                            submenu: i.submenu,
+                            checked: false,
+                        },
+                        !i.enabled,
+                    )
+                })
+                .unzip()
+        } else {
+            self.row_collections
+                .iter()
+                .map(|(_, name)| {
+                    (
+                        MenuEntry {
+                            label: name.as_str().into(),
+                            icon: IconName::Folder,
+                            shortcut: SharedString::new(),
+                            danger: false,
+                            submenu: false,
+                            checked: false,
+                        },
+                        false,
+                    )
+                })
+                .unzip()
+        };
+        self.win
+            .set_row_entries(ModelRc::new(VecModel::from(entries)));
+        self.win
+            .set_row_disabled(ModelRc::new(VecModel::from(disabled)));
+        self.win
+            .set_row_highlighted(i32::try_from(m.highlighted()).unwrap_or(0));
+    }
+
+    fn close_row_menu(&mut self) {
+        self.row_menu = None;
+        self.win.invoke_close_row_menu();
+    }
+
+    fn set_row_highlight(&mut self, i: usize) {
+        if let Some(m) = self.row_menu.as_mut() {
+            m.set_highlight(i);
+            self.win
+                .set_row_highlighted(i32::try_from(m.highlighted()).unwrap_or(0));
+        }
+    }
+
+    /// One key of the open row menu. True when it was handled.
+    fn row_menu_key(&mut self, text: &str) -> bool {
+        let Some(m) = self.row_menu.as_ref() else {
+            return false;
+        };
+        // The texts of the current level, for the letter jump.
+        let labels: Vec<String> = if m.level() == 0 {
+            m.items()
+                .iter()
+                .map(|i| t(self.lang, i.label).to_string())
+                .collect()
+        } else {
+            self.row_collections.iter().map(|c| c.1.clone()).collect()
+        };
+        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let ev = match self.row_menu.as_mut() {
+            Some(m) => m.key(menu::menu_key_from_text(text), &refs),
+            None => return false,
+        };
+        self.row_menu_event(ev)
+    }
+
+    /// An entry was clicked (the kit closed the menu already unless it opens a second level).
+    fn row_menu_activated(&mut self, i: usize) {
+        let ev = match self.row_menu.as_mut() {
+            Some(m) => m.activate(i),
+            None => return,
+        };
+        self.row_menu_event(ev);
+    }
+
+    fn row_menu_event(&mut self, ev: RowMenuEvent) -> bool {
+        match ev {
+            RowMenuEvent::Handled => self.render_row_menu(),
+            RowMenuEvent::Unhandled => return false,
+            RowMenuEvent::Close => self.close_row_menu(),
+            RowMenuEvent::Run(cmd) => {
+                self.close_row_menu();
+                self.run_row_cmd(cmd);
+            }
+            RowMenuEvent::AddTo(i) => {
+                self.close_row_menu();
+                if let Some((id, name)) = self.row_collections.get(i).cloned() {
+                    self.add_to_collection_at(id, name);
+                }
+            }
+        }
+        true
+    }
+
+    /// Runs a menu entry: the same host methods the toolbar buttons and the keys call.
+    fn run_row_cmd(&mut self, cmd: RowCmd) {
+        match cmd {
+            RowCmd::Copy => self.copy(false),
+            RowCmd::CopyPlain => self.copy(true),
+            RowCmd::CopyAs => self.open_copy_as(),
+            RowCmd::Edit => self.open_edit(),
+            RowCmd::TogglePin => self.toggle_pin(),
+            RowCmd::ToggleFavorite => self.act_favorite(),
+            RowCmd::AddToCollection => self.open_pick(true),
+            RowCmd::RemoveFromCollection => self.open_pick(false),
+            RowCmd::Tags => self.open_tags(),
+            RowCmd::Note => self.open_note(),
+            RowCmd::Export => self.export_ask(),
+            RowCmd::SelectAll => {
+                self.act(HistoryAction::SelectAll);
+            }
+            RowCmd::Delete => self.request_delete(),
+        }
+    }
+}
+
 // ---- Status line, date menu and sidebar groups (Task 703) ----
 
 impl Host {
@@ -998,14 +1386,22 @@ impl Host {
         if self.confirming() {
             return;
         }
-        if self.multi.is_empty() {
+        if self.multi.is_empty() && !self.select_mode {
+            self.select_mode = true;
             self.act(HistoryAction::ToggleMark);
+            self.sync_props();
         } else {
-            let id = self.cursor_id();
-            self.multi.plain(id);
-            self.refresh_marks();
-            self.sync();
+            self.clear_marks();
         }
+    }
+
+    /// Esc, the bulk bar's Clear and the toolbar toggle (when on): the marks go, select mode ends.
+    fn clear_marks(&mut self) {
+        self.select_mode = false;
+        let id = self.cursor_id();
+        self.multi.plain(id);
+        self.refresh_marks();
+        self.sync();
     }
 
     /// The filters as they are now, with the search text the user has typed so far.
@@ -1181,6 +1577,14 @@ fn create() -> Option<()> {
         chip_focus: ChipFocus::default(),
         collapsed: sidebar::default_collapsed(),
         date_menu: None,
+        row_menu: None,
+        row_collections: Vec::new(),
+        width: crate::history::place::DEFAULT_LOGICAL.0,
+        rail_forced: false,
+        overlay_open: false,
+        drawer_open: false,
+        select_mode: false,
+        focus_id: None,
         tf: None,
         detail: DetailModel::default(),
         wanted: Arc::new(Mutex::new(None)),
@@ -1207,14 +1611,64 @@ fn connect(w: &HistoryWindow) {
         });
     });
     w.on_filter_focus(|id, on| {
-        with_host(|h| h.chip_focus.report(id, on));
+        with_host(|h| {
+            h.chip_focus.report(id, on);
+            if on {
+                h.focus_id = Some(id);
+            } else if h.focus_id == Some(id) {
+                h.focus_id = None;
+            }
+        });
+    });
+    w.on_resized(|width| {
+        with_host(|h| {
+            h.width = u32::try_from(width).unwrap_or(0);
+            h.apply_layout();
+        });
+    });
+    w.on_act_open_drawer(|| {
+        with_host(Host::open_drawer);
+    });
+    w.on_act_close_drawer(|| {
+        with_host(Host::close_drawer);
+    });
+    w.on_overlay_dismissed(|| {
+        with_host(Host::close_overlay);
+    });
+    w.on_act_clear_marks(|| {
+        with_host(Host::clear_marks);
+    });
+    w.on_act_export(|| {
+        with_host(Host::export_marked);
+    });
+    w.on_row_checked(|i| {
+        with_host(|h| {
+            if !h.confirming() {
+                h.press_row(usize::try_from(i).unwrap_or(usize::MAX), true, false);
+            }
+        });
+    });
+    w.on_row_menu_requested(|x, y| {
+        with_host(|h| {
+            if h.prepare_row_menu() {
+                h.win.invoke_open_row_menu(x, y);
+            }
+        });
+    });
+    w.on_row_menu_key(|text| with_host(|h| h.row_menu_key(&text)).unwrap_or(false));
+    w.on_row_menu_hovered(|i| {
+        with_host(|h| h.set_row_highlight(usize::try_from(i).unwrap_or(0)));
+    });
+    w.on_row_menu_activated(|i| {
+        with_host(|h| h.row_menu_activated(usize::try_from(i).unwrap_or(usize::MAX)));
     });
     w.on_key(|text, ctrl, shift, alt, meta, search_focused| {
         with_host(|h| {
             // Keys go to an open menu, never here: a menu still recorded was closed by a click
             // outside, so forget it.
             h.date_menu = None;
-            let key = keys::key_from_text(&text);
+            h.row_menu = None;
+            let key = hkeys::history_key(&text);
             // The "Copy as..." panel is modal: it takes every key.
             if h.tf.is_some() {
                 h.panel_key(tf::panel_key(key));
@@ -1247,7 +1701,7 @@ fn connect(w: &HistoryWindow) {
                 alt,
                 meta,
             };
-            match hkeys::map_key(keys::key_from_text(&text), mods, ctx) {
+            match hkeys::map_key_in(key, mods, ctx, h.layers()) {
                 Some(a) => h.act(a),
                 None => false,
             }
@@ -1427,6 +1881,10 @@ pub fn show() {
     w.set_query(SharedString::new());
     place(&w);
     let _ = w.show();
+    with_host(|h| {
+        h.width = u32::try_from(h.win.get_win_width()).unwrap_or(0);
+        h.apply_layout();
+    });
     use slint::winit_030::{winit, WinitWindowAccessor};
     let _ = w
         .window()

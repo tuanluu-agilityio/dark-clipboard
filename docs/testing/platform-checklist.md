@@ -394,6 +394,30 @@ All rows **untested** until the owner runs them (agents never click, type, take 
 | Vietnamese pass | The toolbar, the date button, the sidebar, the detail toolbar tooltips, the sections and the status line fit with nothing clipped at 1000 px | **untested** |
 | Copy something so a toast shows | The toast floats above the status line and hides no control | **untested** |
 
+## Windows: history interaction (Task 704)
+
+All rows **untested** until the owner runs them (agents never click, type, take screenshots or write the real clipboard, GC-19). Use a scratch history (`--seed-demo-clips 200 --data-dir <temp>`). Open the history window from the tray and drag its edge to each width.
+
+| Check | Expected | Status |
+|---|---|---|
+| History at 640, 820 and 1000 px wide, each at 100 %, 150 % and 200 % display scaling, in English and in Vietnamese | 1000 and wider: sidebar 216 px and detail panel 340 px. 820 to 999: a 52 px icon rail and a 300 px panel. 640 to 819: the rail, the list and no panel. Nothing is clipped in the toolbar, rows, rail, bulk bar or menu | **untested** |
+| Resize the window below 640 x 460 | It stops at 640 x 460; close it at a small size, reopen it: it opens at the saved size but never below 640 x 460, and a first open is 1060 x 660 | **untested** |
+| Rail (820 to 999 and 640 to 819 px): hover or focus an icon for 500 ms, click one, use Up, Down, Enter, Space | The tooltip shows the name and the count (for example "Favorites (12)"); the filter toggles like in the sidebar; Narrator reads the same text | **untested** |
+| `Ctrl+B` at 1000 px and wider, then at a narrow width | Wide: the sidebar collapses to the rail and comes back. Narrow: the full sidebar opens over the list and has the focus; choosing a filter, a click outside or `Esc` closes it | **untested** |
+| Drawer (640 to 819 px): select a row, press `Right`, then `Left`; again with `Enter` and `Esc`; use the toolbar details button | The details open over the list from the right and close again; Enter opens them instead of copying while the window is narrow; `Shift+Enter` still copies as plain text; the drawer's toolbar and its close button work; widening the window past 820 px closes the drawer | **untested** |
+| `F6` and `Shift+F6` at each layout | They cycle only visible regions: sidebar or rail, list, details (at narrow widths the drawer only while it is open); the focus ring shows where you are | **untested** |
+| `Ctrl+F`, `Ctrl+K` from the list, from a focused sidebar and while typing; `Ctrl+,` | The search field is focused each time; Settings opens | **untested** |
+| `Esc` layering: open the row menu, then with the drawer open mark two rows | One `Esc` closes the menu; the next the sidebar overlay if open, then the drawer, then the marks (the bulk bar goes), then the window | **untested** |
+| Row menu by right click, by the Menu key and by `Shift+F10` | The same menu opens (at the pointer, or beside the selected row); Up, Down, Home, End, `Enter`, `Space`, a letter and `Esc` work; dimmed entries do nothing; no clip text appears in the menu; Narrator reads the entries | **untested** |
+| Row menu entries | Copy, Copy plain text, Copy as..., Edit a copy..., Pin or Unpin, Favorite, Add to collection (arrow), Remove from collection, Tags, Note, Export, Select all, Delete each do what the toolbar button or key does; Export asks for a file like `Ctrl+Shift+E` | **untested** |
+| "Add to collection" submenu: `Right` (or `Enter`, or a click), pick a collection, `Left` back | The marked clips are added to that collection (a confirmation shows the count for several); with no collection the picker dialog opens | **untested** |
+| A masked clip selected, right click | Copy, Copy plain text, Pin, Remove from collection, Export and Delete work as before; Copy as, Edit, Add to collection, Tags and Note are dimmed; the menu shows no preview text | **untested** |
+| Mark two or more rows (Space, Ctrl+click, Shift+click, Ctrl+A) | A 36 px bar with an accent outline shows "N selected" with Pin, Favorite, Add to collection, Tag, Export, Delete and Clear; each button acts on all marks (Delete and the others ask as before); Export exports the marked clips; Clear drops the marks like `Esc`; the bar fits at 640 px | **untested** |
+| Select toggle (list-checks) and checkboxes | While on, or from the second marked row, each row shows a checkbox; clicking it toggles that row like Space; the toggle off clears the marks | **untested** |
+| Tab walk at wide, medium and narrow widths | Toolbar, sidebar or rail, bulk bar buttons (when shown), list, detail toolbar and sections (drawer only when open); report the actual order if it differs | **untested** |
+| Focus a bulk bar button, the rail or the drawer button, then press Ctrl+P, Del, Ctrl+A | Only `Esc`, `F6`, `Ctrl+B`, `Ctrl+F` / `Ctrl+K` and `Ctrl+,` reach the window while a control that handles Enter, Space or the arrows has the focus; the rest waits until the focus is back in the search box or the list. Check the keys work again after the bulk bar disappears | **untested** |
+| Narrator | It reads the row menu entries, the bulk bar ("N selected" and the buttons), the rail items (name and count), the row checkboxes and the drawer | **untested** |
+
 ## macOS
 
 All rows **untested** (no hardware, Q-04).
