@@ -12,6 +12,7 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ### Changed
 
+- Task 705: the settings window is redesigned: five sections (General, Capture & Privacy, History & Storage, Data & Transfer, About) in a 220 px nav with icons, settings grouped in cards with a description under each label, switches and drop-downs in the new style, the capture mode as three cards (Recording, Private, Paused), an "Always protected" card that lists the system, password-manager and Darkshot privacy markers (they still cannot be turned off), and one dialog style for the five confirmations. Backup, Restore and Import (and the data folder) moved from History to Data & Transfer. Save and Revert now live in a bar that shows only when something changed, with Ctrl+S to save; Ctrl+1 to Ctrl+5 switch section and Up and Down move between sections in the nav. The window is 860 x 640 (minimum 680 x 480). No setting, default or save rule changed.
 - Task 701: the popup is 440 x 520 (was 420 x 560). The text footer (Copy, Plain text, Copy as..., Pin, Delete) is replaced by the row buttons, the row menu and the keys that already existed (Enter, Shift+Enter, Ctrl+T, Ctrl+P, Del); the status line shows the capture state and at most three key hints. The preview still opens below the list until the side pane arrives.
 
 ## [0.1.2] - 2026-11-24
