@@ -1,9 +1,10 @@
 //! Task 700 tests for the shared UI kit (`ui/kit`, `ui/icons`). No window is created (GC-19):
 //! these are source scans and pure key maps.
 //!
-//! The key maps below are the specification that `ui/kit/menu.slint` and `ui/kit/tooltip.slint`
-//! mirror (Slint cannot call Rust from a pure expression without a callback). A scan test checks
-//! that the Slint files handle exactly the keys named here.
+//! The tooltip rule below is the specification that `ui/kit/tooltip.slint` mirrors (Slint cannot
+//! call Rust from a pure expression without a callback). The menu's key map moved to Rust in
+//! Task 701 (F-31): `src/popup/menu.rs` owns it with its tests, and `ui/kit/menu.slint` only
+//! forwards keys; a scan test below checks that.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -160,80 +161,9 @@ fn icon_buttons_are_at_least_28_px() {
 
 // ---- Pure key maps (specification mirrored by the Slint kit) ----------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MenuKey {
-    Up,
-    Down,
-    Home,
-    End,
-    Enter,
-    Escape,
-    Other,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MenuAction {
-    /// Move the highlight to this item index.
-    Move(usize),
-    /// Activate the highlighted item.
-    Activate(usize),
-    Close,
-    None,
-}
-
-/// Menu keys for a menu of `count` items (the host only lists available actions, so every item
-/// can be highlighted). Up and Down wrap; Home and End jump to the first and last item.
-fn menu_key(key: MenuKey, current: usize, count: usize) -> MenuAction {
-    if count == 0 {
-        return if key == MenuKey::Escape {
-            MenuAction::Close
-        } else {
-            MenuAction::None
-        };
-    }
-    match key {
-        MenuKey::Down => MenuAction::Move((current + 1) % count),
-        MenuKey::Up => MenuAction::Move((current + count - 1) % count),
-        MenuKey::Home => MenuAction::Move(0),
-        MenuKey::End => MenuAction::Move(count - 1),
-        MenuKey::Enter if current < count => MenuAction::Activate(current),
-        MenuKey::Escape => MenuAction::Close,
-        _ => MenuAction::None,
-    }
-}
-
 /// A tooltip is shown after 500 ms of hover or keyboard focus.
 fn tooltip_visible(hovered: bool, focused: bool, held_ms: u32) -> bool {
     (hovered || focused) && held_ms >= 500
-}
-
-#[test]
-fn menu_moves_down_and_up_and_wraps() {
-    assert_eq!(menu_key(MenuKey::Down, 0, 4), MenuAction::Move(1));
-    assert_eq!(menu_key(MenuKey::Down, 3, 4), MenuAction::Move(0));
-    assert_eq!(menu_key(MenuKey::Up, 2, 4), MenuAction::Move(1));
-    assert_eq!(menu_key(MenuKey::Up, 0, 4), MenuAction::Move(3));
-}
-
-#[test]
-fn menu_home_and_end_jump_to_the_first_and_last_item() {
-    assert_eq!(menu_key(MenuKey::Home, 2, 3), MenuAction::Move(0));
-    assert_eq!(menu_key(MenuKey::End, 0, 3), MenuAction::Move(2));
-}
-
-#[test]
-fn menu_enter_activates_the_highlighted_item_and_escape_closes() {
-    assert_eq!(menu_key(MenuKey::Enter, 1, 2), MenuAction::Activate(1));
-    assert_eq!(menu_key(MenuKey::Enter, 5, 2), MenuAction::None);
-    assert_eq!(menu_key(MenuKey::Escape, 0, 2), MenuAction::Close);
-    assert_eq!(menu_key(MenuKey::Other, 0, 2), MenuAction::None);
-}
-
-#[test]
-fn an_empty_menu_only_closes() {
-    assert_eq!(menu_key(MenuKey::Down, 0, 0), MenuAction::None);
-    assert_eq!(menu_key(MenuKey::Enter, 0, 0), MenuAction::None);
-    assert_eq!(menu_key(MenuKey::Escape, 0, 0), MenuAction::Close);
 }
 
 #[test]
@@ -245,22 +175,49 @@ fn tooltip_shows_after_500_ms_on_hover_or_keyboard_focus() {
 }
 
 #[test]
-fn slint_menu_and_tooltip_handle_the_keys_of_the_key_maps() {
+fn the_slint_menu_forwards_its_keys_to_the_host_and_does_not_decide_them() {
     let menu = fs::read_to_string(manifest().join("ui/kit/menu.slint")).unwrap_or_default();
-    for key in [
-        "Key.UpArrow",
+    assert!(
+        menu.contains("root.key("),
+        "menu.slint must forward keys through key(...)"
+    );
+    assert!(
+        menu.contains("callback key(string) -> bool;"),
+        "menu.slint must declare key(string) -> bool"
+    );
+    for decided in [
         "Key.DownArrow",
+        "Key.UpArrow",
         "Key.Home",
         "Key.End",
         "Key.Return",
         "Key.Escape",
     ] {
-        assert!(menu.contains(key), "menu.slint does not handle {key}");
+        assert!(
+            !menu.contains(decided),
+            "menu.slint decides {decided}: that is `popup::menu::menu_key`'s job"
+        );
     }
+    // The host drives the highlight: it is an `in` property, not `in-out`.
     assert!(
-        menu.contains("root.entries.length == 0"),
-        "menu.slint must guard the keys for an empty menu"
+        menu.contains("in property <int> highlighted;"),
+        "the highlight is driven by the host"
     );
+    assert!(!menu.contains("in-out property <int> highlighted"));
     let tip = fs::read_to_string(manifest().join("ui/kit/tooltip.slint")).unwrap_or_default();
     assert!(tip.contains("500ms"), "tooltip delay is not 500 ms");
+}
+
+#[test]
+fn every_menu_key_is_in_the_rust_key_map() {
+    // The keys the design asks of a menu (`04` section 1.7) exist as `MenuKey` variants.
+    let rust = fs::read_to_string(manifest().join("src/popup/menu.rs")).unwrap_or_default();
+    for variant in [
+        "Up", "Down", "Home", "End", "Enter", "Escape", "Left", "Right", "Letter",
+    ] {
+        assert!(
+            rust.contains(&format!("    {variant}")),
+            "MenuKey::{variant} is missing"
+        );
+    }
 }
