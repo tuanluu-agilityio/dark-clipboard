@@ -257,6 +257,10 @@ fn slint_menu_and_tooltip_handle_the_keys_of_the_key_maps() {
     ] {
         assert!(menu.contains(key), "menu.slint does not handle {key}");
     }
+    assert!(
+        menu.contains("root.entries.length == 0"),
+        "menu.slint must guard the keys for an empty menu"
+    );
     let tip = fs::read_to_string(manifest().join("ui/kit/tooltip.slint")).unwrap_or_default();
     assert!(tip.contains("500ms"), "tooltip delay is not 500 ms");
 }

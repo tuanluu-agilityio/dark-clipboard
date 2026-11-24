@@ -119,6 +119,15 @@ export component Menu inherits Rectangle {
                     self.focus();
                 }
                 key-pressed(e) => {
+                    // An empty menu only closes (same as `menu_key` in tests/kit.rs).
+                    if (root.entries.length == 0) {
+                        if (e.text == Key.Escape) {
+                            pop.close();
+                            root.dismissed();
+                            return accept;
+                        }
+                        return reject;
+                    }
                     if (e.text == Key.DownArrow) {
                         root.highlighted = Math.mod(root.highlighted + 1, root.entries.length);
                         return accept;

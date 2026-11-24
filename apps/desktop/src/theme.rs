@@ -1,6 +1,6 @@
 //! Dark palette (D-037: dark only), the tokens of `docs/specs/ui-redesign/02-design-system.md`
-//! section 2 (Task 700; before that the values followed the Darkshot dark theme). `apply` copies them into the Slint `Theme`
-//! global, so this file is the single source of truth. Text colours must keep WCAG 4.5:1 on
+//! section 2 (Task 700; before that the values followed the Darkshot dark theme). `apply`
+//! copies them into the Slint `Theme` global, so this file is the single source of truth. Text colours must keep WCAG 4.5:1 on
 //! their backgrounds (tested).
 // The palette is only used by the Windows app for now (the UI runs on Windows first).
 #![cfg_attr(not(windows), allow(dead_code))]
