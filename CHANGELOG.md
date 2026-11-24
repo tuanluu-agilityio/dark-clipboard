@@ -4,6 +4,10 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Task 415: a backup (and the safety copy kept before a restore) made shortly after automatic cleanup or a note or tag change could contain search words of the removed clips or the old notes and tags. Every backup and safety copy now has its search index merged and is compacted, so deleted words are not carried.
+
 ## [0.1.1] - 2026-11-24
 
 Bug-fix release for Windows x64 (alpha, unsigned). The Known issues of 0.1.0 still apply. Release notes for the 0.1 line: https://github.com/tuanluu-agilityio/dark-clipboard/blob/v0.1.1/docs/user/release-notes-0.1.0.md

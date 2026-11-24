@@ -1065,3 +1065,148 @@ fn sqlite_statistics_tables_are_allowed() {
     assert_eq!(b.restore_backup(&crafted, FREE).unwrap().clips, 3);
     assert!(b.get_clip(&f.text).unwrap().is_some());
 }
+
+// ---- Task 415 (Phase 5 review B1): no pending FTS tokens in any snapshot ----
+
+/// A word that is unique in the file and far from secret-shaped (GC-09).
+const GONE_TOKEN: &str = "qzvkjxwbackupgone";
+
+fn contains(hay: &[u8], needle: &str) -> bool {
+    hay.windows(needle.len()).any(|w| w == needle.as_bytes())
+}
+
+/// The live database file and its write-ahead log, as raw bytes.
+fn live_bytes(dir: &Path) -> Vec<u8> {
+    let mut all = std::fs::read(dir.join("history.db")).unwrap();
+    if let Ok(wal) = std::fs::read(dir.join("history.db-wal")) {
+        all.extend(wal);
+    }
+    all
+}
+
+/// The `history.db` bytes inside a backup archive.
+fn history_db_of(path: &Path) -> Vec<u8> {
+    entries_of(path)
+        .into_iter()
+        .find(|(n, _)| n == "history.db")
+        .map(|(_, b)| b)
+        .unwrap()
+}
+
+/// Three clips at distinct times; retention to two evicts the oldest (which holds
+/// `GONE_TOKEN`) and leaves the merge pending (D-062). No clip is masked or expired.
+fn evicted_store(dir: &Path) -> Storage {
+    let c = clock();
+    let mut s = open(dir, c.clone());
+    ins(&mut s, text_clip(&format!("oldest {GONE_TOKEN}")));
+    set(&c, T0 + 1000);
+    ins(&mut s, text_clip("middle"));
+    set(&c, T0 + 2000);
+    ins(&mut s, text_clip("newest"));
+    let p = darkclip_core::RetentionPolicy {
+        max_items: 2,
+        max_age_days: 0,
+        max_storage_mb: 0,
+        ..darkclip_core::RetentionPolicy::default()
+    };
+    assert_eq!(s.apply_retention(&p).unwrap().evicted_count, 1);
+    assert!(s.fts_pending() > 0, "the merge is still pending");
+    assert_eq!(count(&s, "SELECT count(*) FROM clips"), 2);
+    s
+}
+
+#[test]
+fn backup_after_eviction_has_no_evicted_tokens() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    let mut s = evicted_store(&src);
+    // The live index still holds the word until its merge: the test is meaningful.
+    assert!(contains(&live_bytes(&src), GONE_TOKEN));
+    let out = tmp.path().join("history.dcbackup");
+    assert_eq!(s.write_backup(&out, "0.0.1").unwrap().clips, 2);
+    assert!(!contains(&history_db_of(&out), GONE_TOKEN));
+}
+
+#[test]
+fn backup_after_note_replace_has_no_old_note_tokens() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    let mut s = open(&src, clock());
+    let id = ins(&mut s, text_clip("a clip with a note"));
+    s.set_note(&id, Some(&format!("old note {GONE_TOKEN}")))
+        .unwrap();
+    s.set_note(&id, Some("new note words")).unwrap();
+    assert!(s.fts_pending() > 0, "the merge is still pending");
+    assert!(contains(&live_bytes(&src), GONE_TOKEN));
+    let out = tmp.path().join("history.dcbackup");
+    assert_eq!(s.write_backup(&out, "0.0.1").unwrap().clips, 1);
+    assert!(!contains(&history_db_of(&out), GONE_TOKEN));
+    // The current note is still there and still found after a restore.
+    let dst = tmp.path().join("dst");
+    let (mut b, _) = live(&dst);
+    b.restore_backup(&out, FREE).unwrap();
+    let (rows, _) = b.search(&query("words")).unwrap();
+    assert_eq!(rows.len(), 1);
+}
+
+#[test]
+fn pre_restore_copy_has_no_pending_tokens() {
+    let (tmp, out, _f) = make_backup();
+    let dst = tmp.path().join("dst");
+    let mut b = evicted_store(&dst);
+    assert!(contains(&live_bytes(&dst), GONE_TOKEN));
+    assert_eq!(b.restore_backup(&out, FREE).unwrap().clips, 3);
+    let pre = pre_restore_files(&dst);
+    assert_eq!(pre.len(), 1, "{pre:?}");
+    let path = dst.join(&pre[0]);
+    {
+        let c = rusqlite::Connection::open(&path).unwrap();
+        let n: i64 = c
+            .query_row("SELECT count(*) FROM clips", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 2, "the safety copy holds the old history");
+    }
+    assert!(!contains(&std::fs::read(&path).unwrap(), GONE_TOKEN));
+}
+
+// ---- Task 415 security review: no VACUUM working copy in the system temp folder ----
+
+fn take_vacuum_temp_stores() -> Vec<i64> {
+    crate::backup::VACUUM_TEMP_STORE.with(|v| std::mem::take(&mut *v.borrow_mut()))
+}
+
+#[test]
+fn snapshot_vacuums_keep_temporary_data_in_memory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut s = evicted_store(&tmp.path().join("src"));
+    take_vacuum_temp_stores();
+    s.write_backup(&tmp.path().join("history.dcbackup"), "0.0.1")
+        .unwrap();
+    // 2 = MEMORY: the backup snapshot's VACUUM wrote no temporary file.
+    assert_eq!(take_vacuum_temp_stores(), [2]);
+    let (_t, out, _f) = make_backup();
+    take_vacuum_temp_stores();
+    s.restore_backup(&out, FREE).unwrap();
+    // The pre-restore safety copy.
+    assert_eq!(take_vacuum_temp_stores(), [2]);
+}
+
+#[test]
+fn staged_page_size_conversion_keeps_temporary_data_in_memory() {
+    let (tmp, out, _f) = make_backup();
+    let dst = tmp.path().join("dst");
+    let (mut b, _) = live(&dst);
+    let live_page = pragma_i64(&b, "page_size");
+    let crafted = tmp.path().join("page.dcbackup");
+    let other = if live_page == 8192 { 16384 } else { 8192 };
+    with_db_edit(
+        &out,
+        &crafted,
+        &tmp.path().join("page.db"),
+        &format!("PRAGMA page_size = {other}; VACUUM;"),
+    );
+    take_vacuum_temp_stores();
+    assert_eq!(b.restore_backup(&crafted, FREE).unwrap().clips, 3);
+    // The staged conversion, then the pre-restore copy.
+    assert_eq!(take_vacuum_temp_stores(), [2, 2]);
+}

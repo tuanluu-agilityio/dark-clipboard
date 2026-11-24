@@ -3,8 +3,9 @@
 //! **Backup** (`.dcbackup`, a zip): `history.db` + the blob files it references +
 //! `manifest.json` `{ format, schema_version, app_version, created_at, clip_count, files }`.
 //! The database is a `VACUUM INTO` snapshot (a consistent online copy that carries no free
-//! pages), from which masked clips and clips already expired are then deleted and the
-//! snapshot vacuumed again. Clips flagged no-export (NoCloud) are kept: a backup is the
+//! pages), from which masked clips and clips already expired are then deleted; the
+//! snapshot's search index is then always merged and the snapshot vacuumed again, so no
+//! word of a removed clip, note or tag whose merge was still pending is carried (D-072). Clips flagged no-export (NoCloud) are kept: a backup is the
 //! user's own full copy. The zip is written to `<dest>.dark-clipboard-partial`, flushed,
 //! checked against the limits its own restore enforces (`TooLargeToWrite` otherwise), then
 //! renamed. A crash can leave the partial file behind; it is safe to delete.
@@ -33,7 +34,7 @@
 //!
 //! Only then: a safety copy of the live database is written as
 //! `history.db.pre-restore-<ms>` (kept until the next successful open, which deletes it;
-//! masked clips are purged from it); the staged blobs are copied into the live blob folder
+//! masked clips are purged from it and its search index is merged, like a backup's); the staged blobs are copied into the live blob folder
 //! (content-addressed: existing files are never changed); and the staged database is copied
 //! over the live one with SQLite's online backup API, on the store's own connection (the
 //! single writer, D-028). The destination write transaction is held across steps and rolled
@@ -103,8 +104,34 @@ fn hex_len(n: usize) -> u64 {
     u64::try_from(n).unwrap_or(u64::MAX)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// `temp_store` each `private_vacuum` on this thread ran with (tests only).
+    pub(crate) static VACUUM_TEMP_STORE: std::cell::RefCell<Vec<i64>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `VACUUM` on a backup, pre-restore or staged copy, with its working copy kept in memory:
+/// the bundled SQLite is built with `SQLITE_TEMP_STORE=1` (temporary files on disk by
+/// default), and a temporary file would be a plain copy of the history in the system temp
+/// folder (same rule as `Storage::compact`, D-062). The connection is private to the copy.
+fn private_vacuum(c: &Connection) -> Result<(), StorageError> {
+    c.pragma_update(None, "temp_store", "MEMORY")?;
+    #[cfg(test)]
+    {
+        let ts: i64 = c.pragma_query_value(None, "temp_store", |r| r.get(0))?;
+        VACUUM_TEMP_STORE.with(|v| v.borrow_mut().push(ts));
+    }
+    c.execute_batch("VACUUM")?;
+    Ok(())
+}
+
 /// A consistent copy of the database at `target` without masked or expired clips and
 /// without free pages (so nothing deleted lingers in it), as a single rollback-journal file.
+/// The FTS index is always merged and the copy always vacuumed: the live index can still
+/// hold the words of automatic evictions and replaced notes or tags whose merge is pending
+/// (D-062), and those must not leave in a backup or a pre-restore copy (D-072). Both the
+/// backup and the pre-restore safety copy are made here, so both are covered.
 fn private_snapshot(conn: &Connection, target: &Path, now: Timestamp) -> Result<(), StorageError> {
     db::backup(conn, target)?;
     let result = (|| {
@@ -112,6 +139,8 @@ fn private_snapshot(conn: &Connection, target: &Path, now: Timestamp) -> Result<
             target,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
+        // No temporary file (sort, merge, VACUUM) of this copy in the system temp folder.
+        c.pragma_update(None, "temp_store", "MEMORY")?;
         c.pragma_update(None, "foreign_keys", true)?;
         c.pragma_update(None, "secure_delete", true)?;
         let _: String = c.pragma_update_and_check(None, "journal_mode", "DELETE", |r| r.get(0))?;
@@ -125,9 +154,12 @@ fn private_snapshot(conn: &Connection, target: &Path, now: Timestamp) -> Result<
                 "DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM clip_tags)",
                 [],
             )?;
-            crate::maintenance::fts_optimize(&c);
-            c.execute_batch("VACUUM")?;
         }
+        // Unconditional (D-072): pending deletions in the contentless index carry tokens
+        // even when nothing was deleted from the snapshot itself. Unlike the live store's
+        // best-effort merge, a failure here fails the snapshot (it is then removed).
+        c.execute("INSERT INTO clips_fts(clips_fts) VALUES('optimize')", [])?;
+        private_vacuum(&c)?;
         Ok(())
     })();
     if result.is_err() {
@@ -365,6 +397,9 @@ fn check_staged(staging: &Path, clock: Arc<dyn Clock>, live: Header) -> Result<u
     let supported = migrate::target_version(migrate::MIGRATIONS);
     let check = || -> Result<u64, StorageError> {
         let c = &st.conn;
+        // The staged copy is the whole history: no temporary file of it in the system temp
+        // folder (checks, the page-size VACUUM below).
+        c.pragma_update(None, "temp_store", "MEMORY")?;
         if text_pragma(c, "integrity_check")? != "ok" {
             return Err(corrupt());
         }
@@ -411,7 +446,7 @@ fn check_staged(staging: &Path, clock: Arc<dyn Clock>, live: Header) -> Result<u
                 c.pragma_update_and_check(None, "journal_mode", "DELETE", |r| r.get(0))?;
             c.pragma_update(None, "page_size", live.page_size)?;
             c.pragma_update(None, "auto_vacuum", live.auto_vacuum)?;
-            c.execute_batch("VACUUM")?;
+            private_vacuum(c)?;
         }
         if h.application_id != live.application_id {
             c.pragma_update(None, "application_id", live.application_id)?;

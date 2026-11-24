@@ -144,6 +144,8 @@ CREATE TRIGGER clip_rowid_ad AFTER DELETE ON clip_rowid BEGIN DELETE FROM clips_
 -- P2 (migration 3): ai_permissions, operation_audit
 ```
 
+(Changed by D-072, 2026-11-24: migration 3 is the `no_export` flag (Task 405), so the P2 tables `ai_permissions` and `operation_audit` move to migration 4.)
+
 FTS notes:
 - `body` indexes up to the first 32 KiB of the plain text representation. Contentless FTS keeps no copy of text beyond the index, so the index holds only tokens.
 - `remove_diacritics 2` makes Vietnamese search work without accents ("tieng viet" finds "tiếng Việt"). This is a Darkshot-ecosystem requirement, unit-tested.
