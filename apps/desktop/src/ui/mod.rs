@@ -30,6 +30,7 @@ pub use generated::{
 mod common;
 mod history_host;
 mod popup_host;
+mod settings_keys;
 mod settings_host;
 mod shortcut_host;
 mod tray_host;

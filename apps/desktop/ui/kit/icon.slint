@@ -49,6 +49,8 @@ export enum IconName {
     list-checks,
     chevron-right,
     chevron-down,
+    sliders-horizontal,
+    arrow-left-right,
 }
 
 export component Icon inherits Image {
@@ -103,5 +105,7 @@ export component Icon inherits Image {
         : root.name == IconName.panel-right ? @image-url("../icons/panel-right.svg")
         : root.name == IconName.list-checks ? @image-url("../icons/list-checks.svg")
         : root.name == IconName.chevron-right ? @image-url("../icons/chevron-right.svg")
+        : root.name == IconName.sliders-horizontal ? @image-url("../icons/sliders-horizontal.svg")
+        : root.name == IconName.arrow-left-right ? @image-url("../icons/arrow-left-right.svg")
         : @image-url("../icons/chevron-down.svg");
 }
