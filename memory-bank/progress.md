@@ -104,7 +104,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 700 Foundation kit (tokens, SVG icons, components) | task/700-ui-foundation-kit | builder | sonnet | done (Lucide 1.79.0, 43 SVGs; P4 +0.12 MiB, P6 +36 KiB; D-079 menus) | 218,922 | 61,065 (reviewer sonnet: APPROVED, 3 should-fix: empty-menu guard fixed; key-map split and tooltip reset → F-31) | 2,862 | 282,849 |
 | 710 App icon (option A) | task/710-app-icon | builder | sonnet | done (ICO 8 sizes 57 KB; tray RGBA per state via `nearest_tray_size`; `embed-resource` 3.0.12 Windows build-dep) | 124,033 | 41,771 (reviewer sonnet: APPROVED, nits only) | 0 | 165,804 |
 | 701 Popup layout (package: scaffolder sonnet 140,626) | task/701-popup-layout | builder | sonnet | done (440×520, 48 px rows, row actions + kit row menu, filter segment + More filters, status line, floating toast; masked rows show only i18n text; F-31 closed) | 549,290 (incl. package) | 93,271 (reviewer opus: APPROVED, 1 should-fix → F-32) | 0 | 642,561 |
-| 702 Popup preview pane | | builder | sonnet | pending | | | | |
+| 702 Popup preview pane (package: scaffolder sonnet 83,913) | task/702-popup-preview | builder | sonnet | done (side pane 760 px, pure `widen` placement, Overlay on narrow monitors, Esc closes preview first, facts; masked shows kind only) | 242,192 (incl. package) | 42,844 (reviewer sonnet: APPROVED, nits) | 0 | 285,036 |
 | 703 History layout (package: scaffolder sonnet 100,719) | task/703-history-layout | builder | sonnet | done (sidebar groups, toolbar + date menu, 56 px rows, detail panel with toolbar and sections, status line; footer/org row/hints removed; masked rows and detail show no content; F-32 dead code removed; D-080, D-081) | 500,636 (incl. package) | 126,210 (reviewer opus: APPROVED, 4 should-fix: Favorites chip and collapsed-group title fixed, focus row added, size → 704) | 8,094 | 634,940 |
 | 704 History interaction (package: scaffolder sonnet PKG704) | task/704-history-interaction | builder | sonnet | in progress | | | | |
 | 705 Settings | | builder | sonnet | pending | | | | |
@@ -118,6 +118,6 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | Model | Tokens |
 |---|---|
 | opus | 12,311,822 |
-| sonnet | 7,329,419 |
+| sonnet | 7,614,455 |
 | haiku | 0 |
-| **Total** | **19,641,241** (subagents only; orchestrator not measured) |
+| **Total** | **19,926,277** (subagents only; orchestrator not measured) |
