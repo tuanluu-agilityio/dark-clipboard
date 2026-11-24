@@ -458,3 +458,14 @@ All rows **untested** (no hardware, Q-04).
 | Hover the status line | A tooltip "Shortcuts" with `F1` after half a second | **untested** |
 | History window at 640 x 460 | The sheet's rows scroll with the mouse wheel when the window is too short | **untested** |
 | Narrator and Tab walk through the sheet and the dialogs; Vietnamese pass | The sheet reads as one group named "Keyboard shortcuts" with "label: key" lines; nothing is cut off | **untested** |
+
+## Task 707: accessibility pass (Windows)
+
+| Check | Expect | Status |
+|---|---|---|
+| Tab walk in the popup, history window, settings, welcome, the F1 sheet and each dialog | The 2 px focus ring shows on every control, in a sensible order, and Tab never gets stuck | **untested** |
+| Tab onto each icon button (popup header, row buttons, history toolbar, bulk bar, sidebar +) | Its tooltip appears after half a second, as on hover | **untested** |
+| Settings: open a question with the keyboard (Clear history, Orphans, Compact, Restore, Remove a built-in exclusion, Save with lowered limits, Pick running app) and close it with Esc or Cancel | The focus is back on the button that opened it | **untested** |
+| Known limit: close Copy as, Edit, a history dialog or a row menu | The focus is in the search box (dialogs) or where it was (menus), not necessarily on the opener (D-085) | **untested** |
+| Narrator on buttons, switches, a row (label and description), a masked row, the sheet and dialogs | Names and states are read; a masked row says "Hidden" and "Masked" and never the content | **untested** |
+| Vietnamese pass of welcome, F1 and the dialogs at 100, 150 and 200 % | No text is cut off | **untested** |
