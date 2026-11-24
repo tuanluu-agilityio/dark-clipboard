@@ -11,13 +11,16 @@
 
 #![allow(dead_code)]
 
+// `#[path]` only at the top level (rustfmt on Linux/macOS; see tests/shortcuts.rs).
+#[path = "../src/popup/keys.rs"]
+pub mod popup_keys;
 mod popup {
-    #[path = "../../src/popup/keys.rs"]
-    pub mod keys;
+    pub use super::popup_keys as keys;
 }
+#[path = "../src/history/keys.rs"]
+pub mod history_keys;
 mod history {
-    #[path = "../../src/history/keys.rs"]
-    pub mod keys;
+    pub use super::history_keys as keys;
 }
 #[path = "../src/shortcuts.rs"]
 mod shortcuts;
