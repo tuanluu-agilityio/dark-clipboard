@@ -6,7 +6,7 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
 use crate::ui::Theme;
-use slint::{Color, ComponentHandle};
+use slint::{Color, ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer};
 
 pub const CANVAS: Color = Color::from_rgb_u8(0x11, 0x13, 0x18);
 pub const SURFACE: Color = Color::from_rgb_u8(0x1B, 0x20, 0x28);
@@ -40,6 +40,17 @@ pub const MONO_FONT: &str = "Menlo";
 #[cfg(not(any(windows, target_os = "macos")))]
 pub const MONO_FONT: &str = "DejaVu Sans Mono";
 
+/// The window icon: 64 x 64 raw RGBA made by `res/make_icon.py` (Task 712).
+const WINDOW_ICON: &[u8] = include_bytes!("../res/window-64.rgba");
+
+fn window_icon() -> Image {
+    Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
+        WINDOW_ICON,
+        64,
+        64,
+    ))
+}
+
 /// Sets the Slint `Theme` global of `window`.
 pub fn apply<'a, C: ComponentHandle>(window: &'a C)
 where
@@ -62,6 +73,7 @@ where
     t.set_warning(WARNING);
     t.set_danger(DANGER);
     t.set_mono_font(MONO_FONT.into());
+    t.set_window_icon(window_icon());
 }
 
 #[cfg(test)]

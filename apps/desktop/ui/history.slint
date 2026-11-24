@@ -27,7 +27,7 @@ import { FilterItem, SidebarView, DateButton, DetailToolbar, ChipSection, NoteSe
 export { FilterItem } from "history_panes.slint";
 
 export component HistoryWindow inherits Window {
-    icon: @image-url("../res/window-64.png");
+    icon: Theme.window-icon;
     title: Strings.history-title;
     background: Theme.bg;
     // The narrow layout (rail + list + drawer) is the smallest one (F-34).

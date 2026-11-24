@@ -113,6 +113,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 708 Verification | task/708-verification | platform-verifier | sonnet | done (v0.1.2 vs Phase 7 on 10k clips: P1 quiet 16.6 → 22.3 ms ≤ 30; P3 9.69 → 9.59 MiB (absolute 9 MiB missed by both, D-086); P4 +0.56 MiB; P5 0 %; P6 +951 KiB (budget 300, missed, F-39); P2 not measurable; demo checklist added) | 78,656 | 25,633 (reviewer sonnet: APPROVED) | 0 | 104,289 |
 | 709 Phase review | main 4b69ad1 (read-only worktree) | specialist | opus | done: **APPROVED** (Review Focus 1–4, 6 proven in code; 5 = Task 708; nits → F-38) | | 128,253 | | 128,253 |
 | 711 Menu anchor + mode cards (owner report 2026-11-25; package: orchestrator) | task/711-popup-anchor-modecard | builder | sonnet | done (4 `Menu` anchors at window origin: Slint centred them, menus opened at the bottom/right edge; `ModeCard` icon wrapped in `alignment: start` layout so cards fill the row; `tests/layout_scan.rs`; owner rows untested) | 100,831 | 45,047 (reviewer sonnet: APPROVED, nits only) | 0 | 145,878 |
+| 712 Exe size after Phase 7 (F-39, owner request) | task/712-exe-size | builder | sonnet | done (per-merge size table; PNG window icon pulled in Slint image decoders: now raw RGBA, -100 KiB; KitGallery removed (no size effect); remaining growth +851 KiB is generated Slint code for the new UI + required icon data; budget still missed, D-087) | 127,685 | 32,180 (reviewer sonnet: APPROVED) | 0 | 159,865 |
 
 Phase 7 complete 2026-11-25 (709 APPROVED; budgets per D-086; every visual, keyboard, Narrator and DPI check is an untested owner row, see the "Phase 7 demo checklist" in `docs/testing/platform-checklist.md`).
 
@@ -121,6 +122,6 @@ Phase 7 complete 2026-11-25 (709 APPROVED; budgets per D-086; every visual, keyb
 | Model | Tokens |
 |---|---|
 | opus | 12,518,058 |
-| sonnet | 9,229,995 |
+| sonnet | 9,389,860 |
 | haiku | 0 |
-| **Total** | **21,748,053** (subagents only; orchestrator not measured) |
+| **Total** | **21,907,918** (subagents only; orchestrator not measured) |

@@ -8,7 +8,7 @@ fn manifest() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Every `ui/**/*.slint` except the kit gallery (a developer page, never shipped in a window).
+/// Every `ui/**/*.slint`.
 fn slint_files() -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         let Ok(entries) = fs::read_dir(dir) else {
@@ -18,9 +18,7 @@ fn slint_files() -> Vec<PathBuf> {
             let p = e.path();
             if p.is_dir() {
                 walk(&p, out);
-            } else if p.extension().is_some_and(|x| x == "slint")
-                && !p.ends_with("kit/gallery.slint")
-            {
+            } else if p.extension().is_some_and(|x| x == "slint") {
                 out.push(p);
             }
         }

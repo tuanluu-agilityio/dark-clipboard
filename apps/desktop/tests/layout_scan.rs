@@ -77,9 +77,12 @@ fn every_menu_instance_sits_at_the_window_origin() {
             }
         }
     }
+    // Popup menu (row and More filters share it), history date menu, history row menu: 3 real
+    // instances (the 4th was the KitGallery copy, removed in Task 712: every kit component is
+    // used by a real window).
     assert!(
-        instances >= 4,
-        "expected at least 4 Menu instances, found {instances}"
+        instances >= 3,
+        "expected at least 3 Menu instances, found {instances}"
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
