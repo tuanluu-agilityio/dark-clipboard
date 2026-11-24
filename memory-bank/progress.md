@@ -101,7 +101,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
 |---|---|---|---|---|---|---|---|---|
 | Design package (audit agent sonnet 204,608; builder check sonnet 74,866) | docs/ui-redesign-design | orchestrator + general-purpose | opus + sonnet | done | 279,474 | | | 279,474 |
-| 700 Foundation kit (tokens, SVG icons, components) | task/700-ui-foundation-kit | builder | sonnet | in progress | | | | |
+| 700 Foundation kit (tokens, SVG icons, components) | task/700-ui-foundation-kit | builder | sonnet | done (Lucide 1.79.0, 43 SVGs; P4 +0.12 MiB, P6 +36 KiB; D-079 menus) | 218,922 | 61,065 (reviewer sonnet: APPROVED, 3 should-fix: empty-menu guard fixed; key-map split and tooltip reset → F-31) | 2,862 | 282,849 |
 | 710 App icon (option A) | | builder | sonnet | pending | | | | |
 | 701 Popup layout | | builder | sonnet | pending | | | | |
 | 702 Popup preview pane | | builder | sonnet | pending | | | | |
