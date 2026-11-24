@@ -6,7 +6,7 @@ import { KeyCap } from "kit/key_cap.slint";
 import { Menu, MenuEntry } from "kit/menu.slint";
 import { TipAlign, TooltipHub, TooltipLayer } from "kit/tooltip.slint";
 import { KitGallery } from "kit/gallery.slint";
-import { Seg, ClipRow, FileRow, Chip, ChipView, DetailPane, DetailState, SegTab, SegmentBar, StatusHint, StatusLine, Toast } from "popup.slint";
+import { Seg, ClipRow, FileRow, Chip, ChipView, PreviewPane, DetailState, SegTab, SegmentBar, StatusHint, StatusLine, Toast } from "popup.slint";
 import { PopupRow, PopupRowMetrics } from "popup_row.slint";
 
 import { HistoryWindow, FilterItem } from "history.slint";
@@ -26,7 +26,8 @@ export component MainWindow inherits Window {
     no-frame: true;
     always-on-top: true;
     background: transparent;
-    width: 440px;
+    // 760 px with the preview side pane open; the 440 px list column never shrinks.
+    width: root.detail-open && !root.pane-overlay ? 760px : 440px;
     height: 520px;
     default-font-size: 13px;
 
@@ -55,6 +56,8 @@ export component MainWindow inherits Window {
     in property <length> menu-width: 220px;
     // Detail pane (Task 206). kind: 0 text, 1 image, 2 files, 3 masked.
     in property <bool> detail-open;
+    // The monitor is too narrow for 760 px: the pane draws over the list (Task 702).
+    in property <bool> pane-overlay;
     in property <DetailState> detail;
     in property <string> detail-text;
     // "Copy as..." panel (Task 404).
@@ -94,6 +97,8 @@ export component MainWindow inherits Window {
     callback act-settings();
     callback act-history();
     callback act-preview();
+    callback act-plain();
+    callback act-transform();
     callback load-full-text();
     callback load-full-image();
     // The last row index on screen changed (Rust loads the next page near the end).
@@ -185,6 +190,9 @@ export component MainWindow inherits Window {
             clip: true;
 
             VerticalLayout {
+                x: 0px;
+                width: 440px;
+                height: parent.height;
                 spacing: 0px;
 
                 // Header (48 px): search field and the four buttons.
@@ -453,26 +461,6 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                // Detail of the selected clip (toggle with Right or Space). It sits below the
-                // list until the side pane of Task 702.
-                if root.detail-open && root.has-selection: Rectangle {
-                    height: 228px;
-                    DetailPane {
-                        x: 12px;
-                        y: 0px;
-                        width: parent.width - 24px;
-                        height: 220px;
-                        state: root.detail;
-                        text: root.detail-text;
-                        load-text => {
-                            root.load-full-text();
-                        }
-                        load-image => {
-                            root.load-full-image();
-                        }
-                    }
-                }
-
                 // Status line (30 px): capture state and key hints. No text footer buttons.
                 Rectangle {
                     height: 1px;
@@ -482,6 +470,35 @@ export component MainWindow inherits Window {
                     tone: root.status-tone;
                     text: root.status-text;
                     hints: root.hints;
+                }
+            }
+
+            // The preview pane (Task 702): beside the list when the window is wide, over the
+            // list on a monitor narrower than 760 px. An in-tree layer, never a PopupWindow.
+            if root.detail-open && root.has-selection && !root.pane-overlay: Rectangle {
+                x: 440px;
+                width: 1px;
+                height: parent.height;
+                background: Theme.border;
+            }
+            if root.detail-open && root.has-selection: PreviewPane {
+                x: root.pane-overlay ? parent.width - 320px - 12px : 441px;
+                y: 0px;
+                width: root.pane-overlay ? 320px : parent.width - 441px;
+                height: parent.height;
+                state: root.detail;
+                text: root.detail-text;
+                load-text => {
+                    root.load-full-text();
+                }
+                load-image => {
+                    root.load-full-image();
+                }
+                plain => {
+                    root.act-plain();
+                }
+                transform => {
+                    root.act-transform();
                 }
             }
         }

@@ -371,6 +371,13 @@ All rows **untested** until the owner runs them (agents never launch the UI, cha
 | App icon (Task 710): the running app on the taskbar, in Alt+Tab, and in the title bars of History, Settings and Welcome | The same icon in all four places, not the default Windows icon | **untested** |
 | App icon (Task 710): tray icon in each state (capturing, paused, off, private, capture unavailable) on a light and a dark taskbar | Capturing: plain icon; paused and off: amber badge with pause bars; private: grey badge with a struck eye; unavailable: red badge with "!"; the clipboard, clip and lines stay distinct | **untested** |
 | App icon (Task 710): the tray icon at 100 % and at 150 % display scaling (sign out and in after changing the scale) | Crisp at both (16 px image at 100 %, 24 px at 150 %), no blur or wrong size | **untested** |
+| Preview pane (Task 702): open and close the preview with Space, Right and the header button at 100 %, 150 % and 200 % scaling | The list keeps its width and height, no flicker, the search caret keeps blinking and typing continues, the rounded transparent corners follow the new width | **untested** |
+| Preview pane (Task 702): popup at the right screen edge, open the preview | The popup shifts left once so the pane is on screen, stays there after closing | **untested** |
+| Preview pane (Task 702): popup on a second monitor with a different scale, open the preview | The popup widens correctly for that monitor's scale and stays on it | **untested** |
+| Preview pane (Task 702): a monitor narrower than 760 logical px | The pane draws over the list instead of widening the window | **untested** |
+| Preview pane (Task 702): Esc with the preview open, then Esc again | The first Esc closes the preview, the second closes the popup | **untested** |
+| Preview pane (Task 702): masked clip; image clip; file list; long text; code clip | Masked shows only the masked note and the kind; image fits with "Load larger preview"; files list with "and n more"; text wraps and scrolls; code is monospace | **untested** |
+| Preview pane (Task 702): Vietnamese pass; Narrator reads the pane title and facts | Labels and sizes in Vietnamese fit without clipping; Narrator reads the title and each fact as "label: value" | **untested** |
 
 ## macOS
 

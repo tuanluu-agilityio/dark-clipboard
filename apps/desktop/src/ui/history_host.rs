@@ -308,7 +308,8 @@ impl Host {
         match subject {
             Some(item) => {
                 self.win.set_detail_open(true);
-                let (state, text) = common::render_state(&item, &mut self.detail, self.lang);
+                let (state, text) =
+                    common::render_state(&item, &mut self.detail, self.lang, now_and_offset().1);
                 self.win.set_detail(state);
                 if let Some(t) = common::set_text_if_changed(&self.win.get_detail_text(), text) {
                     self.win.set_detail_text(t);

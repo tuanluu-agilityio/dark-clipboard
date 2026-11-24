@@ -6,7 +6,8 @@ import { Theme, Strings } from "theme.slint";
 import { Icon, IconName } from "kit/icon.slint";
 import { Button, ButtonKind } from "kit/button.slint";
 import { KeyCap } from "kit/key_cap.slint";
-import { Tooltip } from "kit/tooltip.slint";
+import { Tooltip, TipAlign } from "kit/tooltip.slint";
+import { IconButton } from "kit/icon_button.slint";
 
 // One piece of a preview line; `hit` pieces matched the search.
 export struct Seg {
@@ -47,6 +48,12 @@ export struct FileRow {
     path: string,
 }
 
+// One label and value of the preview pane's facts block (Task 702).
+export struct FactRow {
+    label: string,
+    value: string,
+}
+
 // What the detail pane shows (Task 206; one struct so the popup and the history window set it
 // the same way). `kind`: 0 text, 1 image, 2 files, 3 masked. `note`: the masked note, or "no
 // preview image". `status`: loading or failure message, or the cut-text note. The text is a separate pane property.
@@ -63,6 +70,10 @@ export struct DetailState {
     files: [FileRow],
     files-more: string,
     mono: bool,
+    // The preview pane's header buttons (Task 702) and its facts block.
+    can-transform: bool,
+    can-plain: bool,
+    facts: [FactRow],
 }
 
 // A filter chip. `id` is opaque to the markup (Rust decides what it means).
@@ -459,6 +470,211 @@ export component DetailPane inherits Rectangle {
             color: Theme.text-muted;
             font-size: 11px;
             wrap: word-wrap;
+        }
+    }
+}
+
+// The preview side pane of the popup (Task 702, 03-wireframes section 1): 40 px header (kind
+// icon, title, the plain-text and Copy as buttons), the content, then the facts block. `kind`: 0
+// text, 1 image, 2 files, 3 masked. A masked clip shows only the note: no content is ever passed
+// here. Every text comes from Rust.
+export component PreviewPane inherits Rectangle {
+    in property <DetailState> state;
+    in property <string> text;
+    callback load-text();
+    callback load-image();
+    callback plain();
+    callback transform();
+
+    background: Theme.surface;
+    accessible-role: groupbox;
+    accessible-label: root.state.title;
+
+    VerticalLayout {
+        // Header (40 px).
+        HorizontalLayout {
+            height: 40px;
+            padding-left: 12px;
+            padding-right: 8px;
+            spacing: 8px;
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    name: root.state.kind == 1 ? IconName.image
+                        : root.state.kind == 2 ? IconName.folder
+                        : root.state.kind == 3 ? IconName.eye-off
+                        : IconName.file-text;
+                    size: 16px;
+                    tint: Theme.accent;
+                }
+            }
+            Text {
+                text: root.state.title;
+                color: Theme.text;
+                font-size: 13px;
+                font-weight: 600;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                min-width: 0px;
+                overflow: elide;
+            }
+            if root.state.can-plain: VerticalLayout {
+                alignment: center;
+                IconButton {
+                    name: IconName.type;
+                    label: Strings.copy-plain;
+                    description: Strings.key-shift-enter;
+                    shortcut: Strings.key-shift-enter;
+                    focusable: false;
+                    clicked => {
+                        root.plain();
+                    }
+                }
+            }
+            if root.state.can-transform: VerticalLayout {
+                alignment: center;
+                IconButton {
+                    name: IconName.wand-sparkles;
+                    label: Strings.copy-as;
+                    description: Strings.key-ctrl-t;
+                    shortcut: Strings.key-ctrl-t;
+                    tip-align: TipAlign.end;
+                    focusable: false;
+                    clicked => {
+                        root.transform();
+                    }
+                }
+            }
+        }
+        Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+
+        // Content.
+        VerticalLayout {
+            vertical-stretch: 1;
+            padding: 12px;
+            spacing: 6px;
+
+            if root.state.kind == 0: Flickable {
+                vertical-stretch: 1;
+                content-height: body.preferred-height;
+                body := Text {
+                    width: parent.width;
+                    text: root.text;
+                    color: Theme.text;
+                    font-size: 12px;
+                    font-family: root.state.mono ? Theme.mono-font : "";
+                    wrap: word-wrap;
+                    accessible-role: AccessibleRole.text;
+                }
+            }
+
+            if root.state.kind == 1: Rectangle {
+                vertical-stretch: 1;
+                clip: true;
+                if root.state.has-picture: Image {
+                    source: root.state.picture;
+                    image-fit: contain;
+                    accessible-role: image;
+                    accessible-label: root.state.picture-info;
+                }
+                if !root.state.has-picture: Text {
+                    text: root.state.note;
+                    color: Theme.text-muted;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+
+            if root.state.kind == 2: ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 6px;
+                    for f in root.state.files: VerticalLayout {
+                        spacing: 0px;
+                        accessible-role: AccessibleRole.text;
+                        accessible-label: f.path;
+                        Text {
+                            text: f.name;
+                            color: Theme.text;
+                            font-size: 12px;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: f.path;
+                            color: Theme.text-3;
+                            font-size: 10px;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+            if root.state.kind == 2 && root.state.files-more != "": Text {
+                text: root.state.files-more;
+                color: Theme.text-3;
+                font-size: 11px;
+            }
+
+            if root.state.kind == 3: Text {
+                vertical-stretch: 1;
+                text: root.state.note;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            if root.state.status != "": Text {
+                text: root.state.status;
+                color: Theme.text-3;
+                font-size: 11px;
+                wrap: word-wrap;
+            }
+            if root.state.kind == 0 && root.state.can-load-text: ActionButton {
+                text: Strings.load-full-text;
+                clicked => {
+                    root.load-text();
+                }
+            }
+            if root.state.kind == 1 && root.state.can-load-image: ActionButton {
+                text: Strings.load-larger-image;
+                clicked => {
+                    root.load-image();
+                }
+            }
+        }
+
+        // Facts (label text-3 11 px, value text 12 px).
+        Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+        VerticalLayout {
+            padding: 12px;
+            spacing: 4px;
+            for f in root.state.facts: HorizontalLayout {
+                spacing: 8px;
+                accessible-role: AccessibleRole.text;
+                accessible-label: f.label + ": " + f.value;
+                Text {
+                    text: f.label;
+                    color: Theme.text-3;
+                    font-size: 11px;
+                    width: 72px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: f.value;
+                    color: Theme.text;
+                    font-size: 12px;
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    overflow: elide;
+                }
+            }
         }
     }
 }

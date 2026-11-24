@@ -48,6 +48,8 @@ pub struct KeyCtx {
     /// A header button or the filter segment has the focus (Enter, Space and the arrows stay
     /// with it, like `chips_focused`; the new Ctrl chords still work).
     pub control_focused: bool,
+    /// The preview pane is showing (Esc then closes it first, Task 702).
+    pub detail_open: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,6 +225,8 @@ pub fn map_key(k: Key, m: Mods, ctx: KeyCtx) -> Option<Action> {
         Key::Enter if m.ctrl => Some(Action::Copy(CopyKind::Paste)),
         Key::Enter if m.shift => Some(Action::Copy(CopyKind::Plain)),
         Key::Enter => Some(Action::Copy(CopyKind::Original)),
+        // Esc closes the preview first; the next Esc closes the popup.
+        Key::Escape if ctx.detail_open => Some(Action::CloseDetail),
         Key::Escape => Some(Action::Close),
         Key::Delete if plain && !m.shift && list_keys => Some(Action::Delete),
         Key::Char('p' | 'P' | '\u{10}') if m.ctrl && !m.alt => Some(Action::TogglePin),
@@ -271,6 +275,7 @@ mod tests {
         undo_available: false,
         chips_focused: false,
         control_focused: false,
+        detail_open: false,
     };
     /// A header button or the filter segment has the focus.
     const CONTROL: KeyCtx = KeyCtx {
@@ -439,6 +444,45 @@ mod tests {
         for ctx in [TYPING, FRESH, LIST] {
             assert_eq!(map_key(Key::Escape, NONE, ctx), Some(Action::Close));
         }
+    }
+
+    #[test]
+    fn escape_closes_the_preview_first_when_it_is_open() {
+        for ctx in [TYPING, FRESH, LIST, CONTROL] {
+            let open = KeyCtx {
+                detail_open: true,
+                ..ctx
+            };
+            assert_eq!(
+                map_key(Key::Escape, NONE, open),
+                Some(Action::CloseDetail),
+                "{ctx:?}"
+            );
+            // Without the pane (including chip and control focus) Esc closes the popup.
+            assert_eq!(map_key(Key::Escape, NONE, ctx), Some(Action::Close));
+        }
+        let chip = KeyCtx {
+            search_focused: false,
+            chips_focused: true,
+            detail_open: true,
+            ..TYPING
+        };
+        assert_eq!(map_key(Key::Escape, NONE, chip), Some(Action::CloseDetail));
+        // Every other key is the same with the pane open.
+        let open = KeyCtx {
+            detail_open: true,
+            ..LIST
+        };
+        assert_eq!(map_key(Key::Right, NONE, open), Some(Action::OpenDetail));
+        assert_eq!(map_key(Key::Left, NONE, open), Some(Action::CloseDetail));
+        assert_eq!(
+            map_key(Key::Char(' '), NONE, open),
+            Some(Action::ToggleDetail)
+        );
+        assert_eq!(
+            map_key(Key::Enter, NONE, open),
+            Some(Action::Copy(CopyKind::Original))
+        );
     }
 
     #[test]

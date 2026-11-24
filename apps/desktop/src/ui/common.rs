@@ -4,10 +4,10 @@
 //! queries and paths are never formatted into messages (GC-06, SR-11).
 
 use super::generated::IconName;
-use super::{ClipRow, DetailState, FileRow, Poster, Seg, Strings};
+use super::{ClipRow, DetailState, FactRow, FileRow, Poster, Seg, Strings};
 use crate::popup::detail::{
-    file_entries, props, DetailData, DetailModel, DetailProps, DetailRequest, Pic, Want,
-    FULL_IMAGE_SIDE, TEXT_DISPLAY_CAP,
+    facts, file_entries, pixels_text, props, DetailData, DetailModel, DetailProps, DetailRequest,
+    Pic, Want, FULL_IMAGE_SIDE, TEXT_DISPLAY_CAP,
 };
 use crate::popup::highlight::{row_segments, Segment};
 use crate::popup::list::Item;
@@ -15,6 +15,7 @@ use crate::popup::row::{
     fill, kind_icon_name, popup_preview_text, popup_text, row_text, split_two_lines, KindIcon,
     LINE_CHARS, MONO_LINE_CHARS,
 };
+use crate::popup::transform::can_transform;
 use darkclip_app::api::Caller;
 use darkclip_app::{ClipDetailView, PixelsView};
 use darkclip_core::i18n::{t, Lang, Msg};
@@ -142,12 +143,15 @@ pub fn empty_detail() -> DetailState {
         files: ModelRc::new(VecModel::<FileRow>::default()),
         files_more: Default::default(),
         mono: false,
+        can_transform: false,
+        can_plain: false,
+        facts: ModelRc::new(VecModel::<FactRow>::default()),
     }
 }
 
 /// The pane's Slint state from the shared properties (the text is set apart, see
 /// `set_text_if_changed`).
-fn detail_state(p: DetailProps<Px>) -> DetailState {
+fn detail_state(p: DetailProps<Px>, item: &Item, lang: Lang, utc_offset_min: i32) -> DetailState {
     let files: Vec<FileRow> = p
         .files
         .into_iter()
@@ -160,6 +164,25 @@ fn detail_state(p: DetailProps<Px>) -> DetailState {
         Some(buf) => (Image::from_rgba8(buf), true),
         None => (Image::default(), false),
     };
+    let mut rows = facts(item, lang, utc_offset_min);
+    if !item.masked {
+        // Image and file sizes come from what was loaded (the item only has a preview).
+        let size = match p.kind {
+            1 => p.dims.map(|(w, h)| pixels_text(lang, w, h)),
+            2 => (p.file_total > 0).then(|| fill(t(lang, Msg::UiFilesCount), p.file_total as u64)),
+            _ => None,
+        };
+        if let Some(v) = size {
+            rows.push((Msg::UiFactSize, v));
+        }
+    }
+    let facts_model: Vec<FactRow> = rows
+        .into_iter()
+        .map(|(label, value)| FactRow {
+            label: t(lang, label).into(),
+            value: value.into(),
+        })
+        .collect();
     DetailState {
         kind: p.kind,
         title: p.title.into(),
@@ -173,6 +196,9 @@ fn detail_state(p: DetailProps<Px>) -> DetailState {
         files: ModelRc::new(VecModel::from(files)),
         files_more: p.files_more.into(),
         mono: p.mono,
+        can_transform: !item.masked && can_transform(item.kind, item.masked),
+        can_plain: !item.masked,
+        facts: ModelRc::new(VecModel::from(facts_model)),
     }
 }
 
@@ -181,10 +207,11 @@ pub fn render_state(
     item: &Item,
     detail: &mut DetailModel<Px>,
     lang: Lang,
+    utc_offset_min: i32,
 ) -> (DetailState, String) {
     let p = props(item, detail.view(), lang);
     let text = p.text.clone();
-    (detail_state(p), text)
+    (detail_state(p, item, lang, utc_offset_min), text)
 }
 
 /// The new pane text when it differs from `current`: a large text is laid out again whenever

@@ -12,7 +12,7 @@
 use super::list::Item;
 use super::row::{fill, kind_msg};
 use darkclip_core::i18n::{t, Lang, Msg};
-use darkclip_core::{ClipId, ClipType};
+use darkclip_core::{ClipId, ClipType, Timestamp};
 
 /// Text shown in the detail pane is cut at this many bytes (keep equal to the app's
 /// `UI_TEXT_MAX_BYTES`) (on a character boundary).
@@ -584,6 +584,9 @@ pub struct DetailProps<P> {
     pub picture_info: String,
     pub files: Vec<FileEntry>,
     pub files_more: String,
+    /// Original image size and number of files (the pane's Size fact).
+    pub dims: Option<(u32, u32)>,
+    pub file_total: usize,
 }
 
 /// The pane's properties for the open pane of `item`. A masked clip yields only the note: no
@@ -621,6 +624,7 @@ pub fn props<P>(item: &Item, v: DetailView<P>, lang: Lang) -> DetailProps<P> {
     } else {
         String::new()
     };
+    let (dims, file_total) = (v.dims, v.file_total);
     let picture_info = match v.dims {
         Some((pw, ph)) => format!("{pw} \u{d7} {ph} px"),
         None => String::new(),
@@ -643,7 +647,59 @@ pub fn props<P>(item: &Item, v: DetailView<P>, lang: Lang) -> DetailProps<P> {
         picture_info,
         files: v.files,
         files_more,
+        dims,
+        file_total,
     }
+}
+
+/// `YYYY-MM-DD HH:MM` of a Unix-millisecond time at a UTC offset in minutes (the pane's Time).
+pub fn format_datetime(ts: Timestamp, utc_offset_min: i32) -> String {
+    let minutes =
+        ts.0.div_euclid(60_000)
+            .saturating_add(i64::from(utc_offset_min));
+    let days = minutes.div_euclid(1440);
+    let of_day = minutes.rem_euclid(1440);
+    // Civil date from days since 1970-01-01 (proleptic Gregorian).
+    let z = days.saturating_add(719_468);
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}",
+        of_day / 60,
+        of_day % 60
+    )
+}
+
+/// The facts block of the preview pane: label and value, in display order. A masked clip gives
+/// the kind only (no source, time, size or preview: nothing about the content). Text sizes
+/// count the stored preview; the host adds image and file sizes from what it loaded.
+pub fn facts(item: &Item, lang: Lang, utc_offset_min: i32) -> Vec<(Msg, String)> {
+    let mut out = vec![(Msg::UiFactKind, t(lang, kind_msg(item.kind)).to_string())];
+    if item.masked {
+        return out;
+    }
+    if let Some(src) = item.source.as_ref().filter(|s| !s.is_empty()) {
+        out.push((Msg::UiFactSource, src.clone()));
+    }
+    out.push((Msg::UiFactTime, format_datetime(item.at, utc_offset_min)));
+    if !matches!(item.kind, ClipType::Image | ClipType::Files) {
+        let n = item.preview.chars().count() as u64;
+        out.push((Msg::UiFactSize, fill(t(lang, Msg::UiSizeChars), n)));
+    }
+    out
+}
+
+/// "{w} x {h} px" for an image size.
+pub fn pixels_text(lang: Lang, w: u32, h: u32) -> String {
+    t(lang, Msg::UiSizePixels)
+        .replace("{w}", &w.to_string())
+        .replace("{h}", &h.to_string())
 }
 
 #[cfg(test)]
@@ -1166,5 +1222,70 @@ mod tests {
         assert_eq!(p.kind, 1);
         assert_eq!(p.note, t(Lang::En, Msg::UiLoading));
         assert_eq!(p.picture_info, "640 \u{d7} 480 px");
+    }
+
+    #[test]
+    fn datetimes_are_absolute_local_times() {
+        assert_eq!(format_datetime(Timestamp(0), 0), "1970-01-01 00:00");
+        assert_eq!(format_datetime(Timestamp(0), 420), "1970-01-01 07:00");
+        assert_eq!(format_datetime(Timestamp(0), -60), "1969-12-31 23:00");
+        // A leap day.
+        assert_eq!(
+            format_datetime(Timestamp(1_709_164_800_000), 0),
+            "2024-02-29 00:00"
+        );
+        assert_eq!(
+            format_datetime(Timestamp(1_709_164_800_000 + 86_399_000), 0),
+            "2024-02-29 23:59"
+        );
+        // Extreme values do not panic.
+        let _ = format_datetime(Timestamp(i64::MAX), i32::MAX);
+        let _ = format_datetime(Timestamp(i64::MIN), i32::MIN);
+    }
+
+    fn label_of(f: &[(Msg, String)], m: Msg) -> Option<&str> {
+        f.iter().find(|(k, _)| *k == m).map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn facts_for_text_code_image_and_files() {
+        let mut text = item(ClipType::Text, false);
+        text.source = Some("Notepad".into());
+        let f = facts(&text, Lang::En, 0);
+        assert_eq!(label_of(&f, Msg::UiFactKind), Some("Text"));
+        assert_eq!(label_of(&f, Msg::UiFactSource), Some("Notepad"));
+        assert_eq!(label_of(&f, Msg::UiFactTime), Some("2026-11-22 04:00"));
+        assert_eq!(label_of(&f, Msg::UiFactSize), Some("7 characters"));
+        let vi = facts(&text, Lang::Vi, 0);
+        assert_eq!(label_of(&vi, Msg::UiFactSize), Some("7 ký tự"));
+
+        let code = item(ClipType::Code, false);
+        let f = facts(&code, Lang::En, 0);
+        assert_eq!(label_of(&f, Msg::UiFactKind), Some("Code"));
+        // No source known: no Source row.
+        assert_eq!(label_of(&f, Msg::UiFactSource), None);
+
+        // Image and files: the host adds the size from what it loaded.
+        for kind in [ClipType::Image, ClipType::Files] {
+            let f = facts(&item(kind, false), Lang::En, 0);
+            assert_eq!(label_of(&f, Msg::UiFactSize), None, "{kind:?}");
+            assert!(label_of(&f, Msg::UiFactTime).is_some());
+        }
+        assert_eq!(pixels_text(Lang::En, 640, 480), "640 x 480 px");
+    }
+
+    #[test]
+    fn a_masked_clip_shows_the_kind_only() {
+        for kind in ALL_KINDS {
+            let mut it = item(kind, true);
+            it.source = Some("KeePass".into());
+            it.preview = "hunter2-secret".into();
+            let f = facts(&it, Lang::En, 0);
+            assert_eq!(f.len(), 1, "{kind:?}");
+            assert_eq!(f[0].0, Msg::UiFactKind);
+            for (_, v) in &f {
+                assert!(!v.contains("KeePass") && !v.contains("hunter2"));
+            }
+        }
     }
 }
