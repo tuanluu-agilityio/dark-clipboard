@@ -34,15 +34,7 @@ crate = "slint-macros"
 
 [[licenses.exceptions]]
 allow = ["GPL-3.0-only"]
-crate = "i-slint-backend-linuxkms"
-
-[[licenses.exceptions]]
-allow = ["GPL-3.0-only"]
 crate = "i-slint-backend-selector"
-
-[[licenses.exceptions]]
-allow = ["GPL-3.0-only"]
-crate = "i-slint-backend-testing"
 
 [[licenses.exceptions]]
 allow = ["GPL-3.0-only"]

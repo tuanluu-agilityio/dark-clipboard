@@ -1,0 +1,27 @@
+Dark Clipboard - third-party notices
+====================================
+
+Dark Clipboard itself is licensed under GPL-3.0-only (see LICENSE). It is built
+from the open-source crates listed below (the Windows x64 dependency graph of the
+`dark-clipboard` binary). Each crate is under the licence shown; the licence texts
+follow the list.
+
+Crates
+------
+{{#each licenses}}
+{{#each used_by}}
+- {{crate.name}} {{crate.version}} - {{{../name}}} (declared: {{{crate.license}}})
+{{/each}}
+{{/each}}
+
+Licence texts
+-------------
+{{#each licenses}}
+
+================================================================================
+{{{name}}} ({{id}})
+Used by: {{#each used_by}}{{crate.name}} {{crate.version}}{{#unless @last}}, {{/unless}}{{/each}}
+================================================================================
+
+{{{text}}}
+{{/each}}

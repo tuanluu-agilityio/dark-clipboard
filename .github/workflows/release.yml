@@ -1,0 +1,148 @@
+name: Release
+
+# Windows x64 only (D-068). Unsigned; every asset has a SHA-256 in SHA256SUMS.txt.
+# A tag push v* builds, packages and publishes. workflow_dispatch with dry_run=true builds and
+# packages only (the publish job never runs for a dispatch).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Always build and package only: a manual run never publishes, whatever this is set to. Only a v* tag push publishes.'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.facts.outputs.version }}
+      core_version: ${{ steps.facts.outputs.core_version }}
+      prerelease: ${{ steps.facts.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/schema-check/package-lock.json
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Check the tag against the workspace version
+        id: facts
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if ($env:EVENT_NAME -eq 'push') {
+            ./scripts/check-release-tag.ps1 $env:REF_NAME
+          } else {
+            # Dry run: pretend the tag is v<workspace version>.
+            $m = [regex]::Match((Get-Content -Raw Cargo.toml), '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"')
+            ./scripts/check-release-tag.ps1 "v$($m.Groups[1].Value)"
+          }
+
+      - name: Tag commit must be on main
+        if: github.event_name == 'push'
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { throw "tag commit $env:GITHUB_SHA is not on main" }
+
+      - name: Release notes
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          VERSION: ${{ steps.facts.outputs.version }}
+          CORE_VERSION: ${{ steps.facts.outputs.core_version }}
+          PRERELEASE: ${{ steps.facts.outputs.prerelease }}
+        run: |
+          $a = @{ Version = $env:VERSION; CoreVersion = $env:CORE_VERSION; Out = "$env:RUNNER_TEMP/dist/release-notes.md" }
+          if ($env:PRERELEASE -eq 'true') { $a.Prerelease = $true }
+          if ($env:EVENT_NAME -ne 'push') { $a.DryRun = $true }
+          ./scripts/release-notes.ps1 @a
+
+      - name: Quality gate
+        shell: pwsh
+        run: ./scripts/check.ps1
+
+      - name: Install cargo-about
+        shell: pwsh
+        run: |
+          cargo install cargo-about --locked --version 0.8.4
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Build release binary
+        shell: pwsh
+        run: |
+          cargo build --release --locked -p dark-clipboard
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Package (zip, bare exe, SHA256SUMS.txt)
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.facts.outputs.version }}
+        run: ./scripts/package-windows.ps1 -OutDir "$env:RUNNER_TEMP/dist" -Version $env:VERSION
+
+      - name: Show checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem "$env:RUNNER_TEMP/dist" | Format-Table Name, Length
+          Get-Content "$env:RUNNER_TEMP/dist/SHA256SUMS.txt"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dark-clipboard-windows-x64
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+
+  publish:
+    # Only for a tag push, never for a dry run or any other dispatch.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dark-clipboard-windows-x64
+          path: ${{ runner.temp }}/dist
+
+      - name: Create the GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = "$env:RUNNER_TEMP/dist"
+          $ghArgs = @('release', 'create', $env:TAG, "$dist/dark-clipboard-$env:VERSION-windows-x64.zip", "$dist/dark-clipboard.exe", "$dist/SHA256SUMS.txt",
+                      '--verify-tag', '--title', "Dark Clipboard $env:VERSION", '--notes-file', "$dist/release-notes.md")
+          if ($env:PRERELEASE -eq 'true') { $ghArgs += '--prerelease' }
+          gh @ghArgs
+          if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }

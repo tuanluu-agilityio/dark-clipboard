@@ -161,6 +161,7 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
         if ($code -ne 0) { Fail 'npm ci in tools/schema-check' }
     }
     Step 'schema validation' { node tools/schema-check/validate.mjs }
+    Step 'workflow YAML parses' { node tools/schema-check/check-workflows.mjs }
 } else {
     Fail 'node not found (required for schema validation)'
 }
@@ -189,6 +190,15 @@ foreach ($md in $mdFiles) {
     }
 }
 if ($broken) { exit 1 }
+
+Write-Host '== release script self-tests (Task 408)'
+Step 'changelog-section self-test' { & (Get-Process -Id $PID).Path -NoProfile -File scripts/changelog-section.ps1 -SelfTest }
+Step 'check-release-tag self-test' { & (Get-Process -Id $PID).Path -NoProfile -File scripts/check-release-tag.ps1 -SelfTest }
+if (Get-Command cargo-about -ErrorAction SilentlyContinue) {
+    Step 'THIRD-PARTY-NOTICES generator runs' { & (Get-Process -Id $PID).Path -NoProfile -File scripts/release-notices.ps1 -Out (Join-Path $env:TEMP 'dc-notices-check/THIRD-PARTY-NOTICES.txt') }
+} else {
+    Write-Host 'cargo-about not installed: notices generator not exercised here (the release workflow runs it)'
+}
 
 Write-Host 'ALL CHECKS PASSED'
 exit 0
