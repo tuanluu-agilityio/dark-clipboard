@@ -239,13 +239,16 @@ fn a_switch_swallows_enter_so_a_dialog_is_never_confirmed_from_a_toggle() {
 // ---- Task 706 ----
 
 #[test]
-fn the_empty_state_is_in_the_gallery() {
-    let gallery = fs::read_to_string(manifest().join("ui/kit/gallery.slint")).unwrap_or_default();
-    assert!(
-        gallery.contains("import { EmptyState }"),
-        "EmptyState import"
-    );
-    assert!(gallery.contains("EmptyState {"), "EmptyState instance");
+fn the_empty_state_is_used_by_the_real_windows() {
+    // Slint compiles only what a window instantiates, so a real window must use it.
+    for name in ["ui/app.slint", "ui/history.slint"] {
+        let src = fs::read_to_string(manifest().join(name)).unwrap_or_default();
+        assert!(
+            src.contains("import { EmptyState }"),
+            "{name}: EmptyState import"
+        );
+        assert!(src.contains("EmptyState {"), "{name}: EmptyState instance");
+    }
     let es = fs::read_to_string(manifest().join("ui/kit/empty_state.slint")).unwrap_or_default();
     // 32 px icon in text-3, 13 px line in text-2, 12 px hint in text-3, one accessible label.
     assert!(es.contains("size: 32px;") && es.contains("tint: Theme.text-3;"));
