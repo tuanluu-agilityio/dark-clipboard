@@ -107,7 +107,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 702 Popup preview pane (package: scaffolder sonnet 83,913) | task/702-popup-preview | builder | sonnet | done (side pane 760 px, pure `widen` placement, Overlay on narrow monitors, Esc closes preview first, facts; masked shows kind only) | 242,192 (incl. package) | 42,844 (reviewer sonnet: APPROVED, nits) | 0 | 285,036 |
 | 703 History layout (package: scaffolder sonnet 100,719) | task/703-history-layout | builder | sonnet | done (sidebar groups, toolbar + date menu, 56 px rows, detail panel with toolbar and sections, status line; footer/org row/hints removed; masked rows and detail show no content; F-32 dead code removed; D-080, D-081) | 500,636 (incl. package) | 126,210 (reviewer opus: APPROVED, 4 should-fix: Favorites chip and collapsed-group title fixed, focus row added, size → 704) | 8,094 | 634,940 |
 | 704 History interaction | | builder | sonnet | pending | | | | |
-| 705 Settings | | builder | sonnet | pending | | | | |
+| 705 Settings (package: scaffolder sonnet 83,008) | task/705-settings | builder | sonnet | done (five sections, kit Select/Field/ConfirmDialog, Always-protected card without controls, dirty save bar + Ctrl+S with edit counter, settings key map; D-082) | 357,438 (incl. package) | 77,983 (security-reviewer opus: APPROVED, 2 should-fix (dirty during save, Enter on Switch in dialog) fixed; focus return → 707) | 8,872 | 444,293 |
 | 706 Secondary surfaces + F1 sheet | | builder | sonnet | pending | | | | |
 | 707 Accessibility pass | | builder | sonnet | pending | | | | |
 | 708 Verification | | platform-verifier | sonnet | pending | | | | |
@@ -117,7 +117,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 
 | Model | Tokens |
 |---|---|
-| opus | 12,311,822 |
-| sonnet | 7,614,455 |
+| opus | 12,389,805 |
+| sonnet | 7,980,765 |
 | haiku | 0 |
-| **Total** | **19,926,277** (subagents only; orchestrator not measured) |
+| **Total** | **20,370,570** (subagents only; orchestrator not measured) |

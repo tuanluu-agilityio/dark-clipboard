@@ -9,6 +9,9 @@ import { IconButton } from "icon_button.slint";
 import { Button, ButtonKind } from "button.slint";
 import { KeyCap } from "key_cap.slint";
 import { Switch } from "switch.slint";
+import { Select } from "select.slint";
+import { Field } from "field.slint";
+import { ConfirmDialog } from "confirm_dialog.slint";
 import { Menu, MenuEntry } from "menu.slint";
 import { TipAlign, TooltipLayer } from "tooltip.slint";
 
@@ -86,6 +89,33 @@ export component KitGallery inherits Window {
             label: "switch";
             checked <=> root.flag;
         }
+        // Settings kit (Task 705).
+        HorizontalLayout {
+            spacing: 8px;
+            Select {
+                model: ["one", "two", "three"];
+                label: "select";
+                // The host answers key presses (src/ui/settings_keys.rs); the gallery handles none.
+                key(text, alt, open) => {
+                    return 0;
+                }
+            }
+            Field {
+                width: 140px;
+                placeholder: "field";
+                label: "field";
+                error: root.flag ? "error" : "";
+            }
+        }
+    }
+
+    ConfirmDialog {
+        open: false;
+        title: "title";
+        body: "body";
+        confirm-text: "ok";
+        cancel-text: "cancel";
+        danger: root.flag;
     }
 
     menu := Menu {

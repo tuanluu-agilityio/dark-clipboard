@@ -221,3 +221,17 @@ fn every_menu_key_is_in_the_rust_key_map() {
         );
     }
 }
+
+#[test]
+fn a_switch_swallows_enter_so_a_dialog_is_never_confirmed_from_a_toggle() {
+    let sw = fs::read_to_string(manifest().join("ui/kit/switch.slint")).unwrap_or_default();
+    assert!(
+        sw.contains("e.text == Key.Return"),
+        "switch.slint must accept Enter itself"
+    );
+    // ConfirmDialog confirms on Enter when the key reaches it, which is why the Switch above
+    // must not let it through.
+    let dlg =
+        fs::read_to_string(manifest().join("ui/kit/confirm_dialog.slint")).unwrap_or_default();
+    assert!(dlg.contains("e.text == Key.Return"));
+}
