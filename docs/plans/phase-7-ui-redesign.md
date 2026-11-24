@@ -1,7 +1,8 @@
 # Phase 7: UI redesign (modern, minimal, keyboard-first)
 
-> **Status: proposed, awaiting owner approval** (design: `docs/specs/ui-redesign/README.md`).
-> Task packages `docs/tasks/7NN-*.md` are written only after approval. Owner prompt
+> **Status: approved by the owner 2026-11-24 (D-078)** (design: `docs/specs/ui-redesign/README.md`).
+> Task packages `docs/tasks/7NN-*.md` are written just before each task starts (700 and 710 first),
+> because later packages depend on what Task 700 finds (menus under the software renderer). Owner prompt
 > `prompts/ui-redesign.md` is requirements input (D-036). Numbered 7 because Phase 6 is
 > reserved for CLI/MCP/AI (D-036); proposed to run **before** 0.2 Paste Stack so new UI builds on
 > the kit.
@@ -27,6 +28,7 @@ the Rust hosts. Windows first (the only platform with adapters); the UI code is 
 | Task | Title | Depends | Agent / model | Reviewer | Risk | Acceptance criteria |
 |---|---|---|---|---|---|---|
 | 700 | Foundation kit: tokens in `theme.rs` (+ WCAG test pairs), Lucide SVGs in `ui/icons/` + licence notice, `ui/kit/` (`Icon`, `IconButton` focusable with tooltip, `Button`, `KeyCap`, `Tooltip`, `Switch`, `Menu`), check `ContextMenuArea` under the software renderer; baseline P4/P6 measured | Phase 5 | builder / sonnet | reviewer / sonnet | Low | A1, A9; kit unit-tested where testable; existing windows still compile and use new tokens |
+| 710 | App icon, option A (D-078): generator script for an 8-size `.ico` (hand-tuned 16/20/24), exe resource via `embed-resource` (build-dependency, as Darkshot), window icon on every Slint window, tray icon from pre-rendered state images (badge per state) replacing the code-drawn glyph | 700 | builder / sonnet | reviewer / sonnet | Low | `cargo deny` passes; tray view-model tests keep state → icon mapping; owner rows: exe, taskbar, Alt+Tab, tray on light/dark taskbar, 100/150 % |
 | 701 | Popup layout: header (search + 4 icon buttons), filter segment + More filters menu, 48 px rows with kind icons and row actions, status line, floating toast, row menu; new keys (Ctrl+K, Ctrl+,, Shift+F10, F1 stub, Ctrl+1..9, Ctrl+Shift+F) | 700 | builder / sonnet | reviewer / opus | Medium | Review Focus 1, 2, 4; width budget (EN/VI) for header + status |
 | 702 | Popup preview side pane: 760 px width, placement keeps the window on one monitor (flip), image/text/files/masked states | 701 | builder / sonnet | reviewer / sonnet | Low | Placement unit tests (`popup/place.rs`) incl. right-edge and mixed DPI |
 | 703 | History layout: sidebar (grouped `FilterItem`s with counts), toolbar, 56 px rows (no Alt+N), detail panel with icon toolbar + tags/note/collections sections; footer, org row and hint lines removed | 700 | builder / sonnet | reviewer / opus | Medium | Review Focus 1, 4; every removed button's action reachable (table in package) |
@@ -50,11 +52,11 @@ the Rust hosts. Windows first (the only platform with adapters); the UI code is 
 
 ## Order and stopping points
 
-700 → 701 → 702 → 703 → 704 → 705 → 706 → 707 → 708 → 709. Each task merges via PR on its own;
+700 → 710 → 701 → 702 → 703 → 704 → 705 → 706 → 707 → 708 → 709. Each task merges via PR on its own;
 after 702 the popup is complete and shippable alone; after 704 history; after 705 settings. Any
 release (0.2.0) only when the owner asks and after `/phase-review` APPROVED (D-077).
 
 ## Estimate
 
 Similar Phase 3/5 UI tasks cost 0.2–0.5 M tokens each (implementation + review + fixes,
-`memory-bank/progress.md`). Ten tasks: roughly 3–4 M tokens.
+`memory-bank/progress.md`). Eleven tasks: roughly 3.5–4.5 M tokens.

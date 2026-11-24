@@ -1,6 +1,6 @@
 # UI redesign: design system
 
-Status: **proposed** (awaiting owner approval). Part of the UI redesign package (`README.md` in this folder).
+Status: **approved** (D-078, 2026-11-24). Part of the UI redesign package (`README.md` in this folder).
 Applies to every Slint window in `apps/desktop/ui/`. Dark only (D-037).
 
 ## 1. Principles
@@ -87,6 +87,17 @@ file-text (text), link, code, image, file (files), clock (recent), history (hist
 more-horizontal, check, undo-2, keyboard, pause, play, database, hard-drive-download (backup),
 upload / download (import/export), info, refresh-cw (update check), panel-right (toggle preview),
 list-checks (select mode), chevron-right, chevron-down.
+
+## 5b. App icon (owner chose option A, D-078)
+
+One icon for the exe, taskbar/Alt+Tab, window title bars and tray (`mockups/app-icon.html`, symbol `A`).
+Tile shared with Darkshot: 56-unit view box, `rect x=2 y=2 w=52 h=52 rx=13`, fill `#202328`, 1.2-unit
+border `#3A3E45`. Mark: clipboard board `rect x=16 y=15 w=24 h=30 rx=4.5`, stroke `#7887FF` width 4,
+no fill; clip `rect x=21.5 y=10.5 w=13 h=8 rx=2.5` fill `#F3F5F9`; two lines `M22 28h12 M22 35h8`
+stroke `#F3F5F9` width 3.5, round caps. Sizes 16, 20, 24, 32, 40, 48, 64, 256; 16/20/24 hand-tuned
+on the pixel grid. Tray states keep the icon and add a bottom-right badge (circle r 12 at 43,43 with a
+3-unit `#111318` ring): paused/off amber `#F2C14E` with pause bars, private `#A1AAB8` with a struck
+eye, unavailable `#FF7A85` with "!".
 
 ## 6. Components (new shared library `apps/desktop/ui/kit/`)
 

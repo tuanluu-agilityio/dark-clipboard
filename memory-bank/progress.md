@@ -96,6 +96,23 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | **Release 0.1.2** (B1 + F-29/F-30; owner approved, D-075) | tag `v0.1.2` | orchestrator | — | **released 2026-11-24** (D-076) | | | | |
 | 417 Gate rule: SQLite connections keep temp data in memory (D-077 item 7) | task/417-sqlite-connection-gate | builder | sonnet | done (window 25 lines bounded by the next `fn`, so `db.rs` passes unchanged) | 73,426 | 35,075 (reviewer sonnet: APPROVED, 1 should-fix (test-module skip hid the rest of the file) → fixed, verified by orchestrator gate) | 8,361 | 116,862 |
 
+## Phase 7: UI redesign (approved 2026-11-24, D-078)
+
+| Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
+|---|---|---|---|---|---|---|---|---|
+| Design package (audit agent sonnet 204,608; builder check sonnet 74,866) | docs/ui-redesign-design | orchestrator + general-purpose | opus + sonnet | done | 279,474 | | | 279,474 |
+| 700 Foundation kit (tokens, SVG icons, components) | | builder | sonnet | pending | | | | |
+| 710 App icon (option A) | | builder | sonnet | pending | | | | |
+| 701 Popup layout | | builder | sonnet | pending | | | | |
+| 702 Popup preview pane | | builder | sonnet | pending | | | | |
+| 703 History layout | | builder | sonnet | pending | | | | |
+| 704 History interaction | | builder | sonnet | pending | | | | |
+| 705 Settings | | builder | sonnet | pending | | | | |
+| 706 Secondary surfaces + F1 sheet | | builder | sonnet | pending | | | | |
+| 707 Accessibility pass | | builder | sonnet | pending | | | | |
+| 708 Verification | | platform-verifier | sonnet | pending | | | | |
+| 709 Phase review | | specialist | opus | pending | | | | |
+
 ## Totals by model
 
 | Model | Tokens |

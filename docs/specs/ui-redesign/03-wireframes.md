@@ -1,6 +1,6 @@
 # UI redesign: wireframes
 
-Status: **proposed**. Visual mockups: `mockups/index.html` (open in a browser; static HTML, not the app).
+Status: **approved** (D-078, 2026-11-24). Visual mockups: `mockups/index.html` (open in a browser; static HTML, not the app).
 Sizes are logical pixels at 100 % scaling. `[i]` = icon button (28 × 28), `(i)` = icon only (no button).
 
 ## 1. Quick Popup (440 × 520; 760 × 520 with preview)

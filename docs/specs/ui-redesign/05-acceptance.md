@@ -1,6 +1,6 @@
 # UI redesign: accessibility and performance acceptance criteria
 
-Status: **proposed**. These become acceptance criteria in the task packages (Phase 7 plan). "Auto" =
+Status: **approved** (D-078, 2026-11-24). These become acceptance criteria in the task packages (Phase 7 plan). "Auto" =
 checked by a test or script in `scripts/check.ps1`; "Owner" = a row in
 `docs/testing/platform-checklist.md` (GC-19: agents cannot click, type or take screenshots).
 

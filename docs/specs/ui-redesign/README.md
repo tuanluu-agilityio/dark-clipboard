@@ -1,6 +1,6 @@
 # Dark Clipboard UI redesign: design
 
-Date: 2026-11-24 · Status: **proposed, awaiting owner approval** · Owner prompt: local
+Date: 2026-11-24 · Status: **approved by the owner 2026-11-24 (D-078)** · Owner prompt: local
 `prompts/ui-redesign.md` (requirements input, D-036) · Plan: `docs/plans/phase-7-ui-redesign.md`
 
 | Part | File |
@@ -12,6 +12,7 @@ Date: 2026-11-24 · Status: **proposed, awaiting owner approval** · Owner promp
 | 5. Accessibility and performance acceptance criteria | `05-acceptance.md` |
 | 6. Phased implementation plan | `docs/plans/phase-7-ui-redesign.md` |
 | 7. Visual mockups (static HTML) | `mockups/index.html` |
+| 8. App icon options (owner chose **A**) | `mockups/app-icon.html` |
 
 ## Intent
 

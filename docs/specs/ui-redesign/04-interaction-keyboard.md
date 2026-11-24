@@ -1,6 +1,6 @@
 # UI redesign: interaction and keyboard specification
 
-Status: **proposed**. Baseline: the current key maps (audit `01-audit.md` §3). **Every existing key
+Status: **approved** (D-078, 2026-11-24). Baseline: the current key maps (audit `01-audit.md` §3). **Every existing key
 keeps its meaning.** Rows marked **new** are additions; none removes or rebinds a key.
 
 ## 1. Rules that apply everywhere
