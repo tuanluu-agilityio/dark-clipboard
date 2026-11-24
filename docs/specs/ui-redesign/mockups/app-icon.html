@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dark Clipboard: app icon options</title>
+<style>
+/* Same tile family as Darkshot (56-unit view box, rx 13, #202328 fill, #3A3E45 border); glyph in Dark Clipboard's accent. */
+:root{--canvas:#111318;--text:#F3F5F9;--text-2:#A1AAB8;--text-3:#8F98A8;--border:#2D3440}
+*{box-sizing:border-box}
+body{margin:0;background:#0A0B0E;color:var(--text);font:13px/1.45 "Segoe UI",system-ui,sans-serif}
+.page{max-width:1400px;margin:0 auto;padding:28px 32px 60px}
+h1{font-size:20px;margin:0 0 4px} h2{font-size:15px;margin:26px 0 4px}
+p{color:var(--text-2);margin:0 0 10px;max-width:980px}
+.opts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:14px}
+.opt{border:1px solid var(--border);border-radius:12px;padding:16px;background:var(--canvas)}
+.opt h3{margin:0 0 2px;font-size:14px} .opt .d{color:var(--text-3);font-size:12px;margin-bottom:12px}
+.big{display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap}
+.strip{display:flex;gap:10px;align-items:center;padding:10px 12px;border-radius:8px;margin-top:10px}
+.strip.dark{background:#1F1F1F} .strip.light{background:#EEF0F3}
+.strip span{font-size:11px;color:#888;margin-right:4px;width:62px}
+.task{display:flex;gap:6px;align-items:center;padding:6px 10px;border-radius:8px;margin-top:10px}
+.task.dark{background:#202020} .task.light{background:#F3F3F3}
+.task .slot{width:40px;height:40px;border-radius:6px;display:flex;align-items:center;justify-content:center}
+.task.dark .slot.on{background:#2d2d2d} .task.light .slot.on{background:#e3e3e3}
+.states{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:12px;max-width:760px}
+.st{border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--canvas);text-align:center}
+.st .l{color:var(--text-2);font-size:12px;margin-top:8px}
+.rec{border-left:3px solid #7887FF;background:#1B2028;padding:8px 12px;border-radius:0 6px 6px 0;color:var(--text-2);max-width:980px;margin-top:12px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs>
+  <g id="tile"><rect x="2" y="2" width="52" height="52" rx="13" fill="#202328" stroke="#3A3E45" stroke-width="1.2"/></g>
+  <!-- A: clipboard with two text lines -->
+  <symbol id="A" viewBox="0 0 56 56"><use href="#tile"/>
+    <rect x="16" y="15" width="24" height="30" rx="4.5" fill="none" stroke="#7887FF" stroke-width="4"/>
+    <rect x="21.5" y="10.5" width="13" height="8" rx="2.5" fill="#F3F5F9"/>
+    <path d="M22 28h12M22 35h8" stroke="#F3F5F9" stroke-width="3.5" stroke-linecap="round"/></symbol>
+  <!-- B: clipboard with Darkshot's centre dot -->
+  <symbol id="B" viewBox="0 0 56 56"><use href="#tile"/>
+    <rect x="16" y="15" width="24" height="30" rx="4.5" fill="none" stroke="#7887FF" stroke-width="4"/>
+    <rect x="21.5" y="10.5" width="13" height="8" rx="2.5" fill="#7887FF"/>
+    <circle cx="28" cy="31" r="3.6" fill="#F3F5F9"/></symbol>
+  <!-- C: stacked copies (history) -->
+  <symbol id="C" viewBox="0 0 56 56"><use href="#tile"/>
+    <rect x="21" y="12" width="21" height="25" rx="4.5" fill="none" stroke="#8F98A8" stroke-width="3.5"/>
+    <rect x="14" y="19" width="21" height="25" rx="4.5" fill="#202328" stroke="#7887FF" stroke-width="4"/>
+    <path d="M19.5 29h10M19.5 35.5h6.5" stroke="#F3F5F9" stroke-width="3.5" stroke-linecap="round"/></symbol>
+  <!-- Darkshot, for comparison (from its task 32 spec) -->
+  <symbol id="DS" viewBox="0 0 56 56"><rect x="2" y="2" width="52" height="52" rx="13" fill="#202328" stroke="#3A3E45" stroke-width="1.2"/>
+    <path d="M14 22v-8h8M34 14h8v8M42 34v8h-8M22 42h-8v-8" fill="none" stroke="#4C8DFF" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="28" cy="28" r="3.5" fill="#E7E9EC"/></symbol>
+  <!-- state badges (bottom-right, own ring so they read on any taskbar) -->
+  <symbol id="bPause" viewBox="0 0 56 56"><circle cx="43" cy="43" r="12" fill="#F2C14E" stroke="#111318" stroke-width="3"/><path d="M39.5 37.5v11M46.5 37.5v11" stroke="#111318" stroke-width="3.6" stroke-linecap="round"/></symbol>
+  <symbol id="bPriv" viewBox="0 0 56 56"><circle cx="43" cy="43" r="12" fill="#A1AAB8" stroke="#111318" stroke-width="3"/><path d="M36 43c2.5-4 11.5-4 14 0c-2.5 4-11.5 4-14 0Z" fill="#111318"/><path d="M35 36l16 14" stroke="#111318" stroke-width="3" stroke-linecap="round"/></symbol>
+  <symbol id="bErr" viewBox="0 0 56 56"><circle cx="43" cy="43" r="12" fill="#FF7A85" stroke="#111318" stroke-width="3"/><path d="M43 36.5v8M43 49.5v.1" stroke="#111318" stroke-width="3.6" stroke-linecap="round"/></symbol>
+</defs></svg>
+
+<div class="page">
+<h1>Dark Clipboard: app icon options</h1>
+<p>One icon is used for the .exe, the taskbar and Alt+Tab, the window title bars (History, Settings, Welcome) and the tray. It uses the same tile as Darkshot so the two apps read as one family: a 52/56 rounded square (#202328) with a 1 px #3A3E45 border. The mark inside is in Dark Clipboard's own accent (#7887FF), so the two apps can't be confused. The real .ico is generated by a script with hand-tuned 16, 20 and 24 px versions, as Darkshot does. Here the browser scales a single SVG, so small sizes look softer than they will in the app.</p>
+
+<div class="opts">
+  <div class="opt"><h3>A · Clipboard with lines</h3><div class="d">Literal and instantly read as "clipboard". Closest to today's tray drawing.</div>
+    <div class="big"><svg width="128" height="128"><use href="#A"/></svg><svg width="64" height="64"><use href="#A"/></svg><svg width="48" height="48"><use href="#A"/></svg><svg width="32" height="32"><use href="#A"/></svg><svg width="24" height="24"><use href="#A"/></svg><svg width="16" height="16"><use href="#A"/></svg></div>
+    <div class="strip dark"><span>dark tray</span><svg width="16" height="16"><use href="#A"/></svg><svg width="20" height="20"><use href="#A"/></svg><svg width="24" height="24"><use href="#A"/></svg><svg width="32" height="32"><use href="#A"/></svg></div>
+    <div class="strip light"><span>light tray</span><svg width="16" height="16"><use href="#A"/></svg><svg width="20" height="20"><use href="#A"/></svg><svg width="24" height="24"><use href="#A"/></svg><svg width="32" height="32"><use href="#A"/></svg></div>
+  </div>
+  <div class="opt"><h3>B · Clipboard with Darkshot's dot</h3><div class="d">Echoes Darkshot's centre dot: the clearest family link, but less literal.</div>
+    <div class="big"><svg width="128" height="128"><use href="#B"/></svg><svg width="64" height="64"><use href="#B"/></svg><svg width="48" height="48"><use href="#B"/></svg><svg width="32" height="32"><use href="#B"/></svg><svg width="24" height="24"><use href="#B"/></svg><svg width="16" height="16"><use href="#B"/></svg></div>
+    <div class="strip dark"><span>dark tray</span><svg width="16" height="16"><use href="#B"/></svg><svg width="20" height="20"><use href="#B"/></svg><svg width="24" height="24"><use href="#B"/></svg><svg width="32" height="32"><use href="#B"/></svg></div>
+    <div class="strip light"><span>light tray</span><svg width="16" height="16"><use href="#B"/></svg><svg width="20" height="20"><use href="#B"/></svg><svg width="24" height="24"><use href="#B"/></svg><svg width="32" height="32"><use href="#B"/></svg></div>
+  </div>
+  <div class="opt"><h3>C · Stacked copies</h3><div class="d">Says "history of copies", not just "clipboard". Busier at 16 px.</div>
+    <div class="big"><svg width="128" height="128"><use href="#C"/></svg><svg width="64" height="64"><use href="#C"/></svg><svg width="48" height="48"><use href="#C"/></svg><svg width="32" height="32"><use href="#C"/></svg><svg width="24" height="24"><use href="#C"/></svg><svg width="16" height="16"><use href="#C"/></svg></div>
+    <div class="strip dark"><span>dark tray</span><svg width="16" height="16"><use href="#C"/></svg><svg width="20" height="20"><use href="#C"/></svg><svg width="24" height="24"><use href="#C"/></svg><svg width="32" height="32"><use href="#C"/></svg></div>
+    <div class="strip light"><span>light tray</span><svg width="16" height="16"><use href="#C"/></svg><svg width="20" height="20"><use href="#C"/></svg><svg width="24" height="24"><use href="#C"/></svg><svg width="32" height="32"><use href="#C"/></svg></div>
+  </div>
+</div>
+
+<h2>Beside Darkshot in the taskbar</h2>
+<p>Taskbar at 100 % (24 px icons in 40 px slots), dark and light Windows themes. Order: Darkshot, A, B, C.</p>
+<div class="task dark"><div class="slot"><svg width="24" height="24"><use href="#DS"/></svg></div><div class="slot on"><svg width="24" height="24"><use href="#A"/></svg></div><div class="slot"><svg width="24" height="24"><use href="#B"/></svg></div><div class="slot"><svg width="24" height="24"><use href="#C"/></svg></div></div>
+<div class="task light"><div class="slot"><svg width="24" height="24"><use href="#DS"/></svg></div><div class="slot on"><svg width="24" height="24"><use href="#A"/></svg></div><div class="slot"><svg width="24" height="24"><use href="#B"/></svg></div><div class="slot"><svg width="24" height="24"><use href="#C"/></svg></div></div>
+
+<h2>Tray states (shown with option A)</h2>
+<p>Today each state is a different monochrome drawing. In the new design the icon stays the same and a small coloured badge marks the state, so it reads on both light and dark taskbars. The tooltip text (from i18n) doesn't change.</p>
+<div class="states">
+  <div class="st"><svg width="48" height="48"><use href="#A"/></svg><div><svg width="24" height="24"><use href="#A"/></svg> <svg width="16" height="16"><use href="#A"/></svg></div><div class="l">Recording</div></div>
+  <div class="st"><svg width="48" height="48"><use href="#A"/><use href="#bPause"/></svg><div><svg width="24" height="24"><use href="#A"/><use href="#bPause"/></svg> <svg width="16" height="16"><use href="#A"/><use href="#bPause"/></svg></div><div class="l">Paused / off</div></div>
+  <div class="st"><svg width="48" height="48"><use href="#A"/><use href="#bPriv"/></svg><div><svg width="24" height="24"><use href="#A"/><use href="#bPriv"/></svg> <svg width="16" height="16"><use href="#A"/><use href="#bPriv"/></svg></div><div class="l">Private</div></div>
+  <div class="st"><svg width="48" height="48"><use href="#A"/><use href="#bErr"/></svg><div><svg width="24" height="24"><use href="#A"/><use href="#bErr"/></svg> <svg width="16" height="16"><use href="#A"/><use href="#bErr"/></svg></div><div class="l">Capture unavailable</div></div>
+</div>
+<div class="rec">Recommendation: <b>A</b>. It's the most readable at 16 px and the meaning is obvious, while the shared tile and border already make the family link with Darkshot. B is the alternative if you want a stronger visual tie to Darkshot.</div>
+</div>
+</body>
+</html>
