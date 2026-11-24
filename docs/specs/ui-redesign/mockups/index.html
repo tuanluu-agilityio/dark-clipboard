@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dark Clipboard: UI redesign mockups</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* Design tokens: docs/specs/ui-redesign/02-design-system.md */
+:root{
+  --canvas:#111318; --surface:#1B2028; --raised:#232935; --selected:#262C45;
+  --border:#2D3440; --border-strong:#4A5263;
+  --text:#F3F5F9; --text-2:#A1AAB8; --text-3:#8F98A8;
+  --accent:#7887FF; --on-accent:#111318; --focus:#9AA6FF;
+  --success:#5FD4AA; --warning:#F2C14E; --danger:#FF7A85;
+  --mono:Consolas, "Cascadia Mono", monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:#0A0B0E;color:var(--text);font:13px/1.4 "Segoe UI","Segoe UI Variable",system-ui,sans-serif}
+.page{max-width:1500px;margin:0 auto;padding:28px 32px 80px}
+.page>header h1{font-size:20px;margin:0 0 4px}
+.page>header p{color:var(--text-2);margin:0 0 6px;max-width:900px}
+nav.toc{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 28px}
+nav.toc a{color:var(--text-2);text-decoration:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:12px}
+nav.toc a:hover{color:var(--text);border-color:var(--border-strong)}
+section.shot{margin:0 0 48px}
+section.shot>h2{font-size:15px;margin:0 0 4px}
+section.shot>p.cap{color:var(--text-2);margin:0 0 14px;max-width:980px;font-size:12.5px}
+.row{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}
+.label{font-size:11px;color:var(--text-3);margin:0 0 6px;letter-spacing:.4px;text-transform:uppercase;font-weight:600}
+svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+svg.i18{width:18px;height:18px}
+svg.fill{fill:currentColor}
+
+/* ---------- shared components ---------- */
+.win{background:var(--canvas);border:1px solid var(--border);border-radius:10px;overflow:hidden;position:relative;display:flex;flex-direction:column}
+.titlebar{height:32px;display:flex;align-items:center;padding:0 10px;color:var(--text-3);font-size:12px;border-bottom:1px solid var(--border);gap:8px}
+.titlebar .sp{flex:1}
+.ib{width:28px;height:28px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;color:var(--text-2);flex:none;position:relative}
+.ib:hover,.ib.hover{background:var(--raised);color:var(--text)}
+.ib.on{color:var(--accent);background:var(--selected)}
+.ib.danger:hover{color:var(--danger)}
+.ib.focus{outline:2px solid var(--focus);outline-offset:1px}
+.search{height:32px;flex:1;display:flex;align-items:center;gap:8px;padding:0 10px;background:var(--surface);border:1px solid var(--border-strong);border-radius:6px;color:var(--text-3)}
+.search.focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.search .q{color:var(--text);flex:1}
+.search .q .caret{display:inline-block;width:1px;height:14px;background:var(--text);vertical-align:-2px;margin-left:1px}
+.kc{display:inline-flex;align-items:center;gap:2px;height:18px;padding:0 5px;border-radius:4px;background:var(--raised);color:var(--text-2);font-size:11px;border:1px solid var(--border)}
+.kc svg.i{width:12px;height:12px}
+.seg{display:flex;gap:2px;padding:2px;background:var(--surface);border-radius:8px;border:1px solid var(--border)}
+.seg .t{height:26px;min-width:28px;padding:0 7px;border-radius:6px;display:flex;align-items:center;gap:5px;color:var(--text-2);font-size:12px}
+.seg .t.on{background:var(--selected);color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
+.seg .t.on svg{color:var(--accent)}
+.seg .div{width:1px;background:var(--border);margin:4px 2px}
+.overline{font-size:11px;font-weight:600;letter-spacing:.4px;color:var(--text-3);text-transform:uppercase;display:flex;align-items:center;gap:6px;padding:8px 12px 4px}
+.overline .n{font-weight:400;letter-spacing:0}
+.clip{display:flex;align-items:center;gap:10px;height:48px;padding:0 8px 0 10px;margin:0 6px;border-radius:6px;position:relative}
+.clip:hover{background:var(--raised)}
+.clip.sel{background:var(--selected)}
+.clip.sel::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:2px;background:var(--accent)}
+.clip .kind{width:28px;height:28px;border-radius:6px;background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--text-2);flex:none}
+.clip.sel .kind{background:var(--canvas);color:var(--accent)}
+.clip .cb{flex:1;min-width:0}
+.clip .pv{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+.clip .pv.mono{font-family:var(--mono);font-size:12.5px}
+.clip .pv mark{background:transparent;color:var(--accent);font-weight:600}
+.clip .meta{font-size:11px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;gap:6px;align-items:center}
+.clip .meta svg.i{width:12px;height:12px}
+.clip .side{display:flex;align-items:center;gap:4px;color:var(--text-3);font-size:11px}
+.clip .side .b{color:var(--text-2)}
+.clip .side .b.star{color:var(--warning)}
+.clip .side .b.lock{color:var(--danger)}
+.clip .acts{display:flex;gap:2px}
+.clip .num{min-width:16px;text-align:center}
+.clip.masked .pv{color:var(--text-3);font-style:italic}
+.status{height:30px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:0 10px;font-size:11px;color:var(--text-3)}
+.status .dot{width:7px;height:7px;border-radius:50%;background:var(--success)}
+.status .sp{flex:1}
+.status .h{display:flex;align-items:center;gap:5px}
+.toast{position:absolute;left:12px;right:12px;bottom:40px;height:36px;border-radius:8px;background:var(--raised);border:1px solid var(--border-strong);display:flex;align-items:center;gap:8px;padding:0 6px 0 12px;font-size:12px}
+.toast .sp{flex:1}
+.toast .u{color:var(--accent);font-weight:600;display:flex;gap:6px;align-items:center;padding:0 8px;height:26px;border-radius:6px}
+.tip{position:absolute;background:var(--raised);border:1px solid var(--border-strong);color:var(--text);font-size:12px;padding:4px 8px;border-radius:6px;white-space:nowrap;display:flex;gap:8px;align-items:center;z-index:5}
+.btn{height:32px;padding:0 14px;border-radius:6px;display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:13px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--text-2)}
+.btn.danger{color:var(--danger)}
+.chip{height:24px;padding:0 8px;border-radius:12px;display:inline-flex;align-items:center;gap:5px;background:var(--surface);border:1px solid var(--border);font-size:12px;color:var(--text-2)}
+.chip svg.i{width:12px;height:12px}
+
+/* ---------- popup ---------- */
+.popup{width:440px;height:520px;box-shadow:none}
+.popup .head{display:flex;align-items:center;gap:4px;padding:10px 10px 8px}
+.popup .filters{padding:0 10px 4px;display:flex;align-items:center;gap:6px}
+.popup .list{flex:1;overflow:hidden;padding-bottom:6px}
+.popup.wide{width:760px}
+.popup .split{flex:1;display:flex;min-height:0}
+.popup .split .left{width:440px;display:flex;flex-direction:column;border-right:1px solid var(--border)}
+.preview{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--canvas)}
+.preview .ph{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--border)}
+.preview .ph .t{flex:1;font-weight:600}
+.preview .pc{flex:1;padding:12px;overflow:hidden}
+.preview pre{margin:0;font-family:var(--mono);font-size:12px;line-height:1.5;color:var(--text);white-space:pre-wrap}
+.preview .facts{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;padding:10px 12px;border-top:1px solid var(--border);font-size:12px}
+.preview .facts dt{color:var(--text-3)} .preview .facts dd{margin:0;color:var(--text-2)}
+.img-ph{height:170px;border-radius:8px;border:1px solid var(--border);background:
+  linear-gradient(135deg,#2b3350 0%,#3a2f55 45%,#1f3b45 100%);display:flex;align-items:flex-end;padding:8px;color:var(--text-2);font-size:11px}
+
+/* ---------- history ---------- */
+.history{width:1060px;height:660px}
+.history .body{flex:1;display:flex;min-height:0}
+.side-nav{width:216px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:8px 8px}
+.side-nav .brand{display:flex;align-items:center;gap:8px;padding:4px 6px 10px;font-weight:600}
+.side-nav .brand .logo{width:22px;height:22px;border-radius:6px;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center}
+.nav{display:flex;align-items:center;gap:10px;height:30px;padding:0 8px;border-radius:6px;color:var(--text-2);position:relative}
+.nav .n{margin-left:auto;font-size:11px;color:var(--text-3)}
+.nav:hover{background:var(--raised);color:var(--text)}
+.nav.on{background:var(--selected);color:var(--text)}
+.nav.on svg{color:var(--accent)}
+.nav.on::before{content:"";position:absolute;left:-8px;top:7px;bottom:7px;width:3px;border-radius:2px;background:var(--accent)}
+.nav .sw{width:9px;height:9px;border-radius:3px;flex:none}
+.side-nav .grp{font-size:11px;font-weight:600;letter-spacing:.4px;color:var(--text-3);text-transform:uppercase;padding:14px 8px 4px;display:flex;align-items:center}
+.side-nav .grp .ib{width:22px;height:22px;margin-left:auto}
+.side-nav .sp{flex:1}
+.mid{flex:1;display:flex;flex-direction:column;min-width:0}
+.toolbar{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--border)}
+.toolbar .tt{font-weight:600;font-size:15px;margin-right:8px}
+.dd{height:32px;display:flex;align-items:center;gap:6px;padding:0 10px;border:1px solid var(--border);border-radius:6px;color:var(--text-2);font-size:12px}
+.mid .list{flex:1;overflow:hidden;padding:4px 0}
+.mid .clip{height:56px}
+.mid .clip .pv2{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-2);font-size:12px}
+.chk{width:16px;height:16px;border-radius:4px;border:1.5px solid var(--border-strong);flex:none;display:flex;align-items:center;justify-content:center}
+.chk.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.chk.on svg{width:12px;height:12px;stroke-width:3}
+.detail{width:340px;border-left:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+.detail .dh{display:flex;align-items:center;gap:2px;padding:10px 10px;border-bottom:1px solid var(--border)}
+.detail .dh .sp{flex:1}
+.detail .dc{padding:12px;overflow:hidden;flex:1;display:flex;flex-direction:column;gap:14px}
+.detail .box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;max-height:170px;overflow:hidden}
+.detail h4{margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:.4px;color:var(--text-3);text-transform:uppercase;display:flex;align-items:center;gap:6px}
+.detail .tags{display:flex;gap:6px;flex-wrap:wrap}
+.detail .note{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text-2);font-size:12.5px}
+.facts2{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12px}
+.facts2 dt{color:var(--text-3)} .facts2 dd{margin:0;color:var(--text-2)}
+.bulk{display:flex;align-items:center;gap:4px;margin:8px 12px 4px;padding:4px 6px 4px 12px;height:40px;background:var(--selected);border:1px solid var(--accent);border-radius:8px}
+.bulk .t{font-weight:600;margin-right:auto}
+.menu{position:absolute;width:236px;background:var(--raised);border:1px solid var(--border-strong);border-radius:10px;padding:4px;z-index:6}
+.menu .mi{display:flex;align-items:center;gap:10px;height:30px;padding:0 8px;border-radius:6px;color:var(--text)}
+.menu .mi svg{color:var(--text-2)}
+.menu .mi.hl{background:var(--selected);outline:2px solid var(--focus);outline-offset:-2px}
+.menu .mi .k{margin-left:auto;font-size:11px;color:var(--text-3)}
+.menu .mi.d{color:var(--danger)} .menu .mi.d svg{color:var(--danger)}
+.menu hr{border:0;border-top:1px solid var(--border);margin:4px 2px}
+.narrow{width:720px;height:560px}
+.rail{width:52px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:4px}
+.rail .ib{width:36px;height:36px}
+.rail .ib.on{box-shadow:inset 3px 0 0 var(--accent)}
+.rail hr{width:24px;border:0;border-top:1px solid var(--border);margin:6px 0}
+
+/* ---------- settings ---------- */
+.settings{width:860px;height:640px}
+.settings .body{flex:1;display:flex;min-height:0}
+.settings .side-nav{width:220px}
+.settings .content{flex:1;overflow:hidden;padding:20px 24px;display:flex;flex-direction:column;gap:16px}
+.settings h3{margin:0;font-size:18px}
+.settings .sub{color:var(--text-2);margin:2px 0 0;font-size:12.5px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px}
+.card .ct{padding:10px 14px 4px;font-size:11px;font-weight:600;letter-spacing:.4px;color:var(--text-3);text-transform:uppercase;display:flex;align-items:center;gap:6px}
+.srow{display:flex;align-items:center;gap:12px;padding:10px 14px;min-height:44px}
+.srow+.srow{border-top:1px solid var(--border)}
+.srow .lb{flex:1;min-width:0}
+.srow .lb .l{color:var(--text)}
+.srow .lb .d{color:var(--text-3);font-size:12px}
+.srow .lk{color:var(--success)}
+.sw2{width:34px;height:20px;border-radius:10px;background:var(--border-strong);position:relative;flex:none}
+.sw2::after{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--text-2)}
+.sw2.on{background:var(--accent)} .sw2.on::after{left:17px;background:var(--on-accent)}
+.mode{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:6px 14px 14px}
+.mode .m{border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:4px;background:var(--canvas)}
+.mode .m .h{display:flex;align-items:center;gap:8px;font-weight:600}
+.mode .m .d{color:var(--text-3);font-size:12px}
+.mode .m.on{border-color:var(--accent);background:var(--selected)}
+.mode .m.on .h svg{color:var(--success)}
+.app{display:flex;align-items:center;gap:10px;padding:8px 14px}
+.app+.app{border-top:1px solid var(--border)}
+.app .ico{width:24px;height:24px;border-radius:6px;background:var(--raised);display:flex;align-items:center;justify-content:center;color:var(--text-2)}
+.app .nm{flex:1} .app .by{font-size:11px;color:var(--text-3);display:flex;gap:4px;align-items:center}
+.savebar{display:flex;align-items:center;gap:8px;padding:10px 24px;border-top:1px solid var(--border);background:var(--surface)}
+.savebar .dot{width:7px;height:7px;border-radius:50%;background:var(--warning)}
+.savebar .t{flex:1;color:var(--text-2);font-size:12px;display:flex;gap:8px;align-items:center}
+.select{height:30px;display:flex;align-items:center;gap:6px;padding:0 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--canvas);font-size:12px;min-width:150px;justify-content:space-between}
+
+/* ---------- components sheet ---------- */
+.sheet{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.tile{background:var(--canvas);border:1px solid var(--border);border-radius:10px;padding:14px}
+.tile h5{margin:0 0 10px;font-size:12px;color:var(--text-2);font-weight:600}
+.sw-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.swatch{height:44px;border-radius:6px;border:1px solid var(--border);display:flex;align-items:flex-end;padding:4px;font-size:10px;color:var(--text-2)}
+.icons{display:grid;grid-template-columns:repeat(8,1fr);gap:10px;color:var(--text-2)}
+.icons div{display:flex;justify-content:center}
+.note-box{border-left:3px solid var(--accent);padding:6px 12px;color:var(--text-2);font-size:12.5px;background:var(--surface);border-radius:0 6px 6px 0;max-width:980px;margin:0 0 14px}
+</style>
+</head>
+<body>
+<!-- Lucide icon geometry (ISC licence), simplified where noted; the app embeds the real .svg files. -->
+<svg width="0" height="0" style="position:absolute">
+<defs>
+<symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+<symbol id="settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+<symbol id="pin" viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></symbol>
+<symbol id="star" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></symbol>
+<symbol id="lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+<symbol id="eyeoff" viewBox="0 0 24 24"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.53 13.53 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><path d="m2 2 20 20"/></symbol>
+<symbol id="trash" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+<symbol id="copy" viewBox="0 0 24 24"><rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+<symbol id="type" viewBox="0 0 24 24"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></symbol>
+<symbol id="wand" viewBox="0 0 24 24"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3M5 6v4M19 14v4M10 2v2M7 8H3M21 16h-4M11 3H9"/></symbol>
+<symbol id="pencil" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></symbol>
+<symbol id="note" viewBox="0 0 24 24"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z"/><path d="M15 3v6h6"/></symbol>
+<symbol id="tag" viewBox="0 0 24 24"><path d="M12.59 2.59A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.7 8.7a2.43 2.43 0 0 0 3.42 0l6.58-6.58a2.43 2.43 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5"/></symbol>
+<symbol id="folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+<symbol id="layers" viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65M22 12.65l-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
+<symbol id="text" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4M10 9H8M16 13H8M16 17H8"/></symbol>
+<symbol id="link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+<symbol id="code" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></symbol>
+<symbol id="image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/></symbol>
+<symbol id="file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></symbol>
+<symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+<symbol id="history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5M12 7v5l4 2"/></symbol>
+<symbol id="more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
+<symbol id="check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+<symbol id="undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+<symbol id="keyboard" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></symbol>
+<symbol id="pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></symbol>
+<symbol id="shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+<symbol id="db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/></symbol>
+<symbol id="transfer" viewBox="0 0 24 24"><path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/></symbol>
+<symbol id="info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+<symbol id="panel" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></symbol>
+<symbol id="listchecks" viewBox="0 0 24 24"><path d="m3 17 2 2 4-4M3 7l2 2 4-4M13 6h8M13 12h8M13 18h8"/></symbol>
+<symbol id="chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+<symbol id="chevd" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+<symbol id="enter" viewBox="0 0 24 24"><path d="m9 10-5 5 5 5"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></symbol>
+<symbol id="paste" viewBox="0 0 24 24"><path d="M15 2H9a1 1 0 0 0-1 1v2c0 .6.4 1 1 1h6c.6 0 1-.4 1-1V3c0-.6-.4-1-1-1Z"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2M16 4h2a2 2 0 0 1 2 2v2M11 14h10M17 10l4 4-4 4"/></symbol>
+<symbol id="app" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4M2 8h20M6 4v4"/></symbol>
+<symbol id="sliders" viewBox="0 0 24 24"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></symbol>
+<symbol id="calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+<symbol id="download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></symbol>
+<symbol id="refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+<symbol id="clipboard" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></symbol>
+</defs>
+</svg>
+
+<div class="page">
+<header>
+  <h1>Dark Clipboard: UI redesign mockups</h1>
+  <p>Static HTML mockups of the proposed design (not the app). Colours, sizes and icons follow <code>02-design-system.md</code>; behaviour follows <code>04-interaction-keyboard.md</code>. Only things Slint's software renderer draws cheaply are used: flat fills, 1 px borders, rounded rectangles, SVG icons. No blur, gradients (except the fake image), or shadows.</p>
+  <p>The sample clip content is invented. The real app shows English or Vietnamese from <code>darkclip_core::i18n</code>.</p>
+</header>
+<nav class="toc">
+  <a href="#popup">1 · Quick Popup</a><a href="#popup-preview">2 · Popup with preview (VI)</a><a href="#history">3 · History manager</a><a href="#history-narrow">4 · History: narrow + bulk</a><a href="#settings">5 · Settings: Capture &amp; Privacy</a><a href="#settings-data">6 · Settings: Data &amp; Transfer</a><a href="#kit">7 · Components</a>
+</nav>
+
+<!-- ======================= 1 POPUP ======================= -->
+<section class="shot" id="popup">
+<h2>1 · Quick Popup: default, and while searching</h2>
+<p class="cap">440 × 520, next to the cursor, with focus in the search box. The header has the search field and four icon buttons: preview, history, settings, close. Esc also closes the popup. Type filters are a single icon segment, and Pinned and Favorites are on the right. The list is split into PINNED and RECENT. The selected row has an accent bar and shows its own quick actions; this replaces the 5-button text footer. The status line shows capture state and two key hints drawn as icons.</p>
+<div class="row">
+<div>
+<div class="label">Default (empty search)</div>
+<div class="win popup">
+  <div class="head">
+    <div class="search focus"><svg class="i"><use href="#search"/></svg><span class="q" style="color:var(--text-3)">Search clipboard<span class="caret"></span></span><span class="kc">Ctrl K</span></div>
+    <span class="ib" title="Preview (Space)"><svg class="i"><use href="#panel"/></svg></span>
+    <span class="ib" title="History (Ctrl+H)"><svg class="i"><use href="#history"/></svg></span>
+    <span class="ib hover" title="Settings (Ctrl+,)"><svg class="i"><use href="#settings"/></svg>
+      <span class="tip" style="top:34px;right:-6px">Settings <span class="kc">Ctrl ,</span></span></span>
+    <span class="ib" title="Close (Esc)"><svg class="i"><use href="#x"/></svg></span>
+  </div>
+  <div class="filters">
+    <div class="seg">
+      <span class="t on"><svg class="i"><use href="#layers"/></svg>All</span>
+      <span class="t"><svg class="i"><use href="#text"/></svg></span>
+      <span class="t"><svg class="i"><use href="#link"/></svg></span>
+      <span class="t"><svg class="i"><use href="#code"/></svg></span>
+      <span class="t"><svg class="i"><use href="#image"/></svg></span>
+      <span class="t"><svg class="i"><use href="#file"/></svg></span>
+      <span class="div"></span>
+      <span class="t"><svg class="i"><use href="#pin"/></svg></span>
+      <span class="t"><svg class="i"><use href="#star"/></svg></span>
+    </div>
+    <span class="ib" title="More filters: date, collection, app"><svg class="i"><use href="#chevd"/></svg></span>
+  </div>
+  <div class="list">
+    <div class="overline">Pinned <span class="n">2</span></div>
+    <div class="clip sel">
+      <div class="kind"><svg class="i"><use href="#text"/></svg></div>
+      <div class="cb"><div class="pv">Weekly sync: Tuesdays 10:00, room 4B, agenda in the shared doc</div><div class="meta">Outlook · 3 d</div></div>
+      <div class="acts"><span class="ib"><svg class="i"><use href="#copy"/></svg></span><span class="ib on"><svg class="i"><use href="#pin"/></svg></span><span class="ib"><svg class="i"><use href="#more"/></svg></span></div>
+    </div>
+    <div class="clip">
+      <div class="kind"><svg class="i"><use href="#code"/></svg></div>
+      <div class="cb"><div class="pv mono">cargo test -p darkclip-storage -- --nocapture</div><div class="meta">Windows Terminal · 1 w</div></div>
+      <div class="side"><svg class="i b"><use href="#pin"/></svg><span class="num">2</span></div>
+    </div>
+    <div class="overline">Recent <span class="n">128</span></div>
+    <div class="clip">
+      <div class="kind"><svg class="i"><use href="#link"/></svg></div>
+      <div class="cb"><div class="pv">https://github.com/slint-ui/slint/releases/tag/v1.19.0</div><div class="meta">Firefox · 2 min</div></div>
+      <div class="side"><svg class="i fill b star"><use href="#star"/></svg><span class="num">3</span></div>
+    </div>
+    <div class="clip">
+      <div class="kind"><svg class="i"><use href="#image"/></svg></div>
+      <div class="cb"><div class="pv">Image · 1920 × 1080</div><div class="meta">Darkshot · 6 min</div></div>
+      <div class="side"><span class="num">4</span></div>
+    </div>
+    <div class="clip masked">
+      <div class="kind"><svg class="i"><use href="#eyeoff"/></svg></div>
+      <div class="cb"><div class="pv">Hidden: looks like a password</div><div class="meta">Chrome · 9 min</div></div>
+      <div class="side"><svg class="i b lock"><use href="#lock"/></svg><span class="num">5</span></div>
+    </div>
+    <div class="clip">
+      <div class="kind"><svg class="i"><use href="#file"/></svg></div>
+      <div class="cb"><div class="pv">report-q3.xlsx, summary.pdf</div><div class="meta">Explorer · 12 min · 2 files</div></div>
+      <div class="side"><span class="num">6</span></div>
+    </div>
+  </div>
+  <div class="status"><span class="dot"></span>Capturing<span class="sp"></span>
+    <span class="h"><span class="kc"><svg class="i"><use href="#enter"/></svg></span>Copy</span>
+    <span class="h"><span class="kc">Ctrl <svg class="i"><use href="#enter"/></svg></span>Paste</span>
+    <span class="h"><span class="kc">F1</span>Keys</span></div>
+</div>
+</div>
+
+<div>
+<div class="label">Searching "slint", Links filter, after a delete</div>
+<div class="win popup">
+  <div class="head">
+    <div class="search focus"><svg class="i"><use href="#search"/></svg><span class="q">slint<span class="caret"></span></span><span class="ib" style="width:20px;height:20px"><svg class="i" style="width:12px;height:12px"><use href="#x"/></svg></span></div>
+    <span class="ib"><svg class="i"><use href="#panel"/></svg></span>
+    <span class="ib"><svg class="i"><use href="#history"/></svg></span>
+    <span class="ib"><svg class="i"><use href="#settings"/></svg></span>
+    <span class="ib" title="Close (Esc)"><svg class="i"><use href="#x"/></svg></span>
+  </div>
+  <div class="filters">
+    <div class="seg">
+      <span class="t"><svg class="i"><use href="#layers"/></svg>All</span>
+      <span class="t"><svg class="i"><use href="#text"/></svg></span>
+      <span class="t on"><svg class="i"><use href="#link"/></svg>Links</span>
+      <span class="t"><svg class="i"><use href="#code"/></svg></span>
+      <span class="t"><svg class="i"><use href="#image"/></svg></span>
+      <span class="t"><svg class="i"><use href="#file"/></svg></span>
+      <span class="div"></span>
+      <span class="t"><svg class="i"><use href="#pin"/></svg></span>
+      <span class="t"><svg class="i"><use href="#star"/></svg></span>
+    </div>
+  </div>
+  <div class="list">
+    <div class="overline">3 results</div>
+    <div class="clip sel">
+      <div class="kind"><svg class="i"><use href="#link"/></svg></div>
+      <div class="cb"><div class="pv">https://github.com/<mark>slint</mark>-ui/<mark>slint</mark>/releases/tag/v1.19.0</div><div class="meta">Firefox · 2 min</div></div>
+      <div class="acts"><span class="ib"><svg class="i"><use href="#copy"/></svg></span><span class="ib"><svg class="i"><use href="#pin"/></svg></span><span class="ib"><svg class="i"><use href="#more"/></svg></span></div>
+    </div>
+    <div class="clip">
+      <div class="kind"><svg class="i"><use href="#link"/></svg></div>
+      <div class="cb"><div class="pv">https://docs.<mark>slint</mark>.dev/latest/docs/slint/reference/</div><div class="meta">Firefox · 1 h</div></div>
+      <div class="side"><span class="num">2</span></div>
+    </div>
+    <div class="clip">
+      <div class="kind"><svg class="i"><use href="#link"/></svg></div>
+      <div class="cb"><div class="pv">https://crates.io/crates/<mark>slint</mark></div><div class="meta">Edge · yesterday</div></div>
+      <div class="side"><span class="num">3</span></div>
+    </div>
+  </div>
+  <div class="toast"><svg class="i" style="color:var(--text-2)"><use href="#trash"/></svg>Clip deleted<span class="sp"></span><span class="u"><svg class="i"><use href="#undo"/></svg>Undo <span class="kc">Ctrl Z</span></span></div>
+  <div class="status"><span class="dot"></span>Capturing<span class="sp"></span>
+    <span class="h"><span class="kc"><svg class="i"><use href="#enter"/></svg></span>Copy</span>
+    <span class="h"><span class="kc">F1</span>Keys</span></div>
+</div>
+</div>
+
+<div>
+<div class="label">Row "more" menu (also Shift+F10 or the Menu key)</div>
+<div class="win popup" style="height:auto">
+  <div class="list" style="padding-top:8px">
+    <div class="clip sel">
+      <div class="kind"><svg class="i"><use href="#link"/></svg></div>
+      <div class="cb"><div class="pv">https://github.com/slint-ui/slint/releases/…</div><div class="meta">Firefox · 2 min</div></div>
+      <div class="acts"><span class="ib"><svg class="i"><use href="#copy"/></svg></span><span class="ib"><svg class="i"><use href="#pin"/></svg></span><span class="ib on"><svg class="i"><use href="#more"/></svg></span></div>
+    </div>
+  </div>
+  <div class="menu" style="position:relative;margin:4px 10px 10px auto">
+    <div class="mi hl"><svg class="i"><use href="#copy"/></svg>Copy<span class="k">Enter</span></div>
+    <div class="mi"><svg class="i"><use href="#type"/></svg>Copy as plain text<span class="k">Shift+Enter</span></div>
+    <div class="mi"><svg class="i"><use href="#wand"/></svg>Copy as…<span class="k">Ctrl+T</span></div>
+    <hr>
+    <div class="mi"><svg class="i"><use href="#pin"/></svg>Pin<span class="k">Ctrl+P</span></div>
+    <div class="mi"><svg class="i"><use href="#star"/></svg>Favorite<span class="k">Ctrl+D</span></div>
+    <hr>
+    <div class="mi d"><svg class="i"><use href="#trash"/></svg>Delete<span class="k">Del</span></div>
+  </div>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ======================= 2 POPUP PREVIEW VI ======================= -->
+<section class="shot" id="popup-preview">
+<h2>2 · Quick Popup with the preview pane open (Vietnamese)</h2>
+<p class="cap">Space, the preview icon, or → opens the preview to the side, widening the popup to 760 px. The list keeps its full height instead of losing 220 px. Placement flips to the left when there is no room on the right. Vietnamese labels are shown here because they are the longest; with icons, the header and status line no longer depend on label width.</p>
+<div class="win popup wide">
+  <div class="head">
+    <div class="search focus"><svg class="i"><use href="#search"/></svg><span class="q" style="color:var(--text-3)">Tìm trong clipboard<span class="caret"></span></span><span class="kc">Ctrl K</span></div>
+    <span class="ib on"><svg class="i"><use href="#panel"/></svg></span>
+    <span class="ib"><svg class="i"><use href="#history"/></svg></span>
+    <span class="ib"><svg class="i"><use href="#settings"/></svg></span>
+    <span class="ib" title="Close (Esc)"><svg class="i"><use href="#x"/></svg></span>
+  </div>
+  <div class="split">
+    <div class="left">
+      <div class="filters">
+        <div class="seg">
+          <span class="t"><svg class="i"><use href="#layers"/></svg>Tất cả</span>
+          <span class="t"><svg class="i"><use href="#text"/></svg></span>
+          <span class="t"><svg class="i"><use href="#link"/></svg></span>
+          <span class="t on"><svg class="i"><use href="#code"/></svg>Mã</span>
+          <span class="t"><svg class="i"><use href="#image"/></svg></span>
+          <span class="t"><svg class="i"><use href="#file"/></svg></span>
+          <span class="div"></span>
+          <span class="t"><svg class="i"><use href="#pin"/></svg></span>
+          <span class="t"><svg class="i"><use href="#star"/></svg></span>
+        </div>
+      </div>
+      <div class="list">
+        <div class="overline">Gần đây <span class="n">14</span></div>
+        <div class="clip sel">
+          <div class="kind"><svg class="i"><use href="#code"/></svg></div>
+          <div class="cb"><div class="pv mono">fn main() { let app = App::new()?; app.run() }</div><div class="meta">Visual Studio Code · 4 phút</div></div>
+          <div class="acts"><span class="ib"><svg class="i"><use href="#copy"/></svg></span><span class="ib"><svg class="i"><use href="#pin"/></svg></span><span class="ib"><svg class="i"><use href="#more"/></svg></span></div>
+        </div>
+        <div class="clip">
+          <div class="kind"><svg class="i"><use href="#code"/></svg></div>
+          <div class="cb"><div class="pv mono">SELECT id, kind FROM clips WHERE pinned = 1;</div><div class="meta">DBeaver · 1 giờ</div></div>
+          <div class="side"><span class="num">2</span></div>
+        </div>
+        <div class="clip">
+          <div class="kind"><svg class="i"><use href="#code"/></svg></div>
+          <div class="cb"><div class="pv mono">git switch -c task/700-design-tokens</div><div class="meta">Windows Terminal · hôm qua</div></div>
+          <div class="side"><svg class="i fill b star"><use href="#star"/></svg><span class="num">3</span></div>
+        </div>
+        <div class="clip">
+          <div class="kind"><svg class="i"><use href="#code"/></svg></div>
+          <div class="cb"><div class="pv mono">export component Icon inherits Image { … }</div><div class="meta">Visual Studio Code · 2 ngày</div></div>
+          <div class="side"><span class="num">4</span></div>
+        </div>
+        <div class="clip">
+          <div class="kind"><svg class="i"><use href="#code"/></svg></div>
+          <div class="cb"><div class="pv mono">{"kind":"text","pinned":false,"source":"notepad"}</div><div class="meta">Notepad · 3 ngày</div></div>
+          <div class="side"><span class="num">5</span></div>
+        </div>
+      </div>
+      <div class="status"><span class="dot"></span>Đang ghi<span class="sp"></span>
+        <span class="h"><span class="kc"><svg class="i"><use href="#enter"/></svg></span>Sao chép</span>
+        <span class="h"><span class="kc">Ctrl <svg class="i"><use href="#enter"/></svg></span>Dán</span>
+        <span class="h"><span class="kc">F1</span>Phím tắt</span></div>
+    </div>
+    <div class="preview">
+      <div class="ph"><svg class="i" style="color:var(--accent)"><use href="#code"/></svg><span class="t">Mã · 3 dòng</span>
+        <span class="ib"><svg class="i"><use href="#type"/></svg></span><span class="ib"><svg class="i"><use href="#wand"/></svg></span></div>
+      <div class="pc"><pre>fn main() {
+    let app = App::new()?;
+    app.run()
+}</pre></div>
+      <dl class="facts"><dt>Nguồn</dt><dd>Visual Studio Code</dd><dt>Thời gian</dt><dd>14:32, 24/11/2026</dd><dt>Kích thước</dt><dd>52 ký tự</dd></dl>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ======================= 3 HISTORY ======================= -->
+<section class="shot" id="history">
+<h2>3 · History manager: wide window (≥ 1000 px), context menu open</h2>
+<p class="cap">The left side has a sidebar instead of the 180 px filter column. It holds Library views, Types, Collections, Tags and Apps; each group can collapse, and items show counts. The middle has a toolbar (title, search, date filter, select mode) and the list (rows 56 px, two preview lines). On the right is a detail panel with an icon toolbar, preview, facts, tags, note and collections; it replaces the 8-button footer, the 5-button org row and the 3 hint lines. The context menu works from the keyboard (Menu key or Shift+F10).</p>
+<div class="win history">
+  <div class="titlebar"><svg class="i" style="width:14px;height:14px"><use href="#clipboard"/></svg>Dark Clipboard: History<span class="sp"></span></div>
+  <div class="body">
+    <div class="side-nav">
+      <div class="nav on"><svg class="i"><use href="#layers"/></svg>All clips<span class="n">1,284</span></div>
+      <div class="nav"><svg class="i"><use href="#pin"/></svg>Pinned<span class="n">12</span></div>
+      <div class="nav"><svg class="i"><use href="#star"/></svg>Favorites<span class="n">31</span></div>
+      <div class="grp">Types</div>
+      <div class="nav"><svg class="i"><use href="#text"/></svg>Text<span class="n">802</span></div>
+      <div class="nav"><svg class="i"><use href="#link"/></svg>Links<span class="n">214</span></div>
+      <div class="nav"><svg class="i"><use href="#code"/></svg>Code<span class="n">166</span></div>
+      <div class="nav"><svg class="i"><use href="#image"/></svg>Images<span class="n">78</span></div>
+      <div class="nav"><svg class="i"><use href="#file"/></svg>Files<span class="n">24</span></div>
+      <div class="grp">Collections <span class="ib"><svg class="i" style="width:14px;height:14px"><use href="#plus"/></svg></span></div>
+      <div class="nav"><svg class="i"><use href="#folder"/></svg>Snippets<span class="n">18</span></div>
+      <div class="nav"><svg class="i"><use href="#folder"/></svg>Release notes<span class="n">7</span></div>
+      <div class="grp">Tags</div>
+      <div class="nav"><span class="sw" style="background:#7887FF"></span>work<span class="n">40</span></div>
+      <div class="nav"><span class="sw" style="background:#5FD4AA"></span>sql<span class="n">9</span></div>
+      <div class="grp">Apps <svg class="i" style="width:14px;height:14px;margin-left:auto"><use href="#chev"/></svg></div>
+      <div class="sp"></div>
+      <div class="nav"><svg class="i"><use href="#settings"/></svg>Settings</div>
+    </div>
+    <div class="mid">
+      <div class="toolbar">
+        <span class="tt">All clips</span>
+        <div class="search"><svg class="i"><use href="#search"/></svg><span class="q" style="color:var(--text-3)">Search 1,284 clips</span><span class="kc">Ctrl F</span></div>
+        <span class="dd"><svg class="i"><use href="#calendar"/></svg>Any time<svg class="i"><use href="#chevd"/></svg></span>
+        <span class="ib" title="Select (Ctrl+A selects all)"><svg class="i"><use href="#listchecks"/></svg></span>
+      </div>
+      <div class="list">
+        <div class="clip sel">
+          <div class="kind"><svg class="i"><use href="#code"/></svg></div>
+          <div class="cb"><div class="pv mono">SELECT id, kind, created_at FROM clips</div><div class="pv2 mono">WHERE pinned = 1 ORDER BY created_at DESC;</div><div class="meta">DBeaver · 1 h · <svg class="i"><use href="#tag"/></svg>sql</div></div>
+          <div class="side"><svg class="i fill b star"><use href="#star"/></svg></div>
+        </div>
+        <div class="clip">
+          <div class="kind"><svg class="i"><use href="#link"/></svg></div>
+          <div class="cb"><div class="pv">https://github.com/slint-ui/slint/releases/tag/v1.19.0</div><div class="pv2">github.com</div><div class="meta">Firefox · 2 h</div></div>
+        </div>
+        <div class="clip">
+          <div class="kind"><svg class="i"><use href="#text"/></svg></div>
+          <div class="cb"><div class="pv">Weekly sync: Tuesdays 10:00, room 4B</div><div class="pv2">Agenda: release 0.2, icon review, Paste Stack scope</div><div class="meta">Outlook · 3 d · <svg class="i"><use href="#folder"/></svg>Snippets</div></div>
+          <div class="side"><svg class="i b"><use href="#pin"/></svg></div>
+        </div>
+        <div class="clip">
+          <div class="kind"><svg class="i"><use href="#image"/></svg></div>
+          <div class="cb"><div class="pv">Image · 1920 × 1080</div><div class="pv2">PNG · 412 KB</div><div class="meta">Darkshot · 3 d</div></div>
+        </div>
+        <div class="clip masked">
+          <div class="kind"><svg class="i"><use href="#eyeoff"/></svg></div>
+          <div class="cb"><div class="pv">Hidden: looks like an API key</div><div class="pv2">Content is not shown or searched</div><div class="meta">Chrome · 4 d</div></div>
+          <div class="side"><svg class="i b lock"><use href="#lock"/></svg></div>
+        </div>
+        <div class="clip">
+          <div class="kind"><svg class="i"><use href="#file"/></svg></div>
+          <div class="cb"><div class="pv">report-q3.xlsx, summary.pdf</div><div class="pv2">D:\Reports\2026</div><div class="meta">Explorer · 5 d · 2 files</div></div>
+        </div>
+        <div class="clip">
+          <div class="kind"><svg class="i"><use href="#text"/></svg></div>
+          <div class="cb"><div class="pv">Cảm ơn anh, em sẽ gửi bản cập nhật trước thứ Sáu.</div><div class="pv2">Teams</div><div class="meta">Teams · 6 d</div></div>
+        </div>
+      </div>
+      <div class="status"><span>1,284 clips · 38 MB</span><span class="sp"></span><span class="h"><span class="kc">Menu</span>Actions</span><span class="h"><span class="kc">F1</span>Keys</span></div>
+    </div>
+    <div class="detail">
+      <div class="dh">
+        <span class="ib"><svg class="i"><use href="#copy"/></svg></span>
+        <span class="ib"><svg class="i"><use href="#type"/></svg></span>
+        <span class="ib"><svg class="i"><use href="#wand"/></svg></span>
+        <span class="ib"><svg class="i"><use href="#pencil"/></svg></span>
+        <span class="sp"></span>
+        <span class="ib"><svg class="i"><use href="#pin"/></svg></span>
+        <span class="ib on"><svg class="i fill"><use href="#star"/></svg></span>
+        <span class="ib danger"><svg class="i"><use href="#trash"/></svg></span>
+      </div>
+      <div class="dc">
+        <div class="box"><pre style="margin:0;font-family:var(--mono);font-size:12px;line-height:1.5">SELECT id, kind, created_at
+FROM clips
+WHERE pinned = 1
+ORDER BY created_at DESC;</pre></div>
+        <dl class="facts2" style="margin:0"><dt>Type</dt><dd>Code · 4 lines</dd><dt>From</dt><dd>DBeaver</dd><dt>Copied</dt><dd>Today 13:05 · 3 times</dd></dl>
+        <div><h4><svg class="i" style="width:12px;height:12px"><use href="#tag"/></svg>Tags</h4><div class="tags"><span class="chip">sql <svg class="i"><use href="#x"/></svg></span><span class="chip">work <svg class="i"><use href="#x"/></svg></span><span class="chip" style="border-style:dashed"><svg class="i"><use href="#plus"/></svg>Add</span></div></div>
+        <div><h4><svg class="i" style="width:12px;height:12px"><use href="#note"/></svg>Note</h4><div class="note">Query for the pinned-clips report. Ctrl+N to edit.</div></div>
+        <div><h4><svg class="i" style="width:12px;height:12px"><use href="#folder"/></svg>Collections</h4><div class="tags"><span class="chip"><svg class="i"><use href="#folder"/></svg>Snippets</span><span class="chip" style="border-style:dashed"><svg class="i"><use href="#plus"/></svg>Add</span></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="menu" style="left:420px;top:150px">
+    <div class="mi"><svg class="i"><use href="#copy"/></svg>Copy<span class="k">Enter</span></div>
+    <div class="mi"><svg class="i"><use href="#type"/></svg>Copy as plain text<span class="k">Shift+Enter</span></div>
+    <div class="mi"><svg class="i"><use href="#wand"/></svg>Copy as…<span class="k">Ctrl+T</span></div>
+    <div class="mi"><svg class="i"><use href="#pencil"/></svg>Edit a copy…<span class="k">Ctrl+E</span></div>
+    <hr>
+    <div class="mi"><svg class="i"><use href="#pin"/></svg>Pin<span class="k">Ctrl+P</span></div>
+    <div class="mi"><svg class="i"><use href="#star"/></svg>Remove from favorites<span class="k">Ctrl+D</span></div>
+    <div class="mi hl"><svg class="i"><use href="#folder"/></svg>Add to collection<span class="k"><svg class="i" style="width:12px;height:12px"><use href="#chev"/></svg></span></div>
+    <div class="mi"><svg class="i"><use href="#tag"/></svg>Tags…<span class="k">Ctrl+G</span></div>
+    <div class="mi"><svg class="i"><use href="#note"/></svg>Note…<span class="k">Ctrl+N</span></div>
+    <hr>
+    <div class="mi d"><svg class="i"><use href="#trash"/></svg>Delete…<span class="k">Del</span></div>
+  </div>
+</div>
+</section>
+
+<!-- ======================= 4 HISTORY NARROW ======================= -->
+<section class="shot" id="history-narrow">
+<h2>4 · History manager: narrow window (&lt; 1000 px) with 3 clips selected</h2>
+<p class="cap">Below 1000 px the sidebar shrinks to a 52 px icon rail; the tooltips give names and Ctrl+B expands it. Below 820 px the detail panel becomes a drawer over the list: → or Enter on the preview opens it, and Esc closes it. With 2 or more clips marked, a bulk bar replaces the toolbar title row and shows icons for Pin, Favorite, Add to collection, Tag, Export and Delete. The new minimum width is 640 px (today it is 760).</p>
+<div class="win history narrow">
+  <div class="titlebar"><svg class="i" style="width:14px;height:14px"><use href="#clipboard"/></svg>Dark Clipboard: History<span class="sp"></span></div>
+  <div class="body">
+    <div class="rail">
+      <span class="ib on"><svg class="i i18"><use href="#layers"/></svg></span>
+      <span class="ib"><svg class="i i18"><use href="#pin"/></svg></span>
+      <span class="ib"><svg class="i i18"><use href="#star"/></svg></span>
+      <hr>
+      <span class="ib"><svg class="i i18"><use href="#text"/></svg></span>
+      <span class="ib"><svg class="i i18"><use href="#link"/></svg></span>
+      <span class="ib"><svg class="i i18"><use href="#code"/></svg></span>
+      <span class="ib"><svg class="i i18"><use href="#image"/></svg></span>
+      <span class="ib"><svg class="i i18"><use href="#file"/></svg></span>
+      <hr>
+      <span class="ib"><svg class="i i18"><use href="#folder"/></svg></span>
+      <span class="ib"><svg class="i i18"><use href="#tag"/></svg></span>
+      <span style="flex:1"></span>
+      <span class="ib"><svg class="i i18"><use href="#settings"/></svg></span>
+    </div>
+    <div class="mid">
+      <div class="toolbar">
+        <div class="search"><svg class="i"><use href="#search"/></svg><span class="q" style="color:var(--text-3)">Search 1,284 clips</span></div>
+        <span class="ib on"><svg class="i"><use href="#listchecks"/></svg></span>
+      </div>
+      <div class="bulk"><span class="t">3 selected</span>
+        <span class="ib"><svg class="i"><use href="#pin"/></svg></span>
+        <span class="ib"><svg class="i"><use href="#star"/></svg></span>
+        <span class="ib"><svg class="i"><use href="#folder"/></svg></span>
+        <span class="ib"><svg class="i"><use href="#tag"/></svg></span>
+        <span class="ib"><svg class="i"><use href="#download"/></svg></span>
+        <span class="ib danger"><svg class="i"><use href="#trash"/></svg></span>
+        <span class="ib"><svg class="i"><use href="#x"/></svg></span>
+      </div>
+      <div class="list">
+        <div class="clip sel"><span class="chk on"><svg class="i"><use href="#check"/></svg></span>
+          <div class="kind"><svg class="i"><use href="#code"/></svg></div>
+          <div class="cb"><div class="pv mono">SELECT id, kind, created_at FROM clips</div><div class="pv2 mono">WHERE pinned = 1 ORDER BY created_at DESC;</div><div class="meta">DBeaver · 1 h</div></div></div>
+        <div class="clip"><span class="chk on"><svg class="i"><use href="#check"/></svg></span>
+          <div class="kind"><svg class="i"><use href="#link"/></svg></div>
+          <div class="cb"><div class="pv">https://github.com/slint-ui/slint/releases/tag/v1.19.0</div><div class="pv2">github.com</div><div class="meta">Firefox · 2 h</div></div></div>
+        <div class="clip"><span class="chk"></span>
+          <div class="kind"><svg class="i"><use href="#text"/></svg></div>
+          <div class="cb"><div class="pv">Weekly sync: Tuesdays 10:00, room 4B</div><div class="pv2">Agenda: release 0.2, icon review</div><div class="meta">Outlook · 3 d</div></div></div>
+        <div class="clip"><span class="chk on"><svg class="i"><use href="#check"/></svg></span>
+          <div class="kind"><svg class="i"><use href="#image"/></svg></div>
+          <div class="cb"><div class="pv">Image · 1920 × 1080</div><div class="pv2">PNG · 412 KB</div><div class="meta">Darkshot · 3 d</div></div></div>
+        <div class="clip"><span class="chk"></span>
+          <div class="kind"><svg class="i"><use href="#file"/></svg></div>
+          <div class="cb"><div class="pv">report-q3.xlsx, summary.pdf</div><div class="pv2">D:\Reports\2026</div><div class="meta">Explorer · 5 d</div></div></div>
+      </div>
+      <div class="status"><span>3 of 1,284 selected</span><span class="sp"></span><span class="h"><span class="kc">Space</span>Mark</span><span class="h"><span class="kc">Esc</span>Clear</span></div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ======================= 5 SETTINGS PRIVACY ======================= -->
+<section class="shot" id="settings">
+<h2>5 · Settings: Capture &amp; Privacy</h2>
+<p class="cap">Five sections with icons. Each section is a set of cards made of rows: label and short description on the left, the control on the right. The top card makes the current state obvious: one of three capture modes. The "Always protected" card lists the protections that can't be turned off, with a lock and no control, so the user understands them without being able to weaken them (GC-07). Changes are still saved with an explicit Save, but the save bar appears only when something has changed.</p>
+<div class="win settings">
+  <div class="titlebar"><svg class="i" style="width:14px;height:14px"><use href="#settings"/></svg>Dark Clipboard: Settings<span class="sp"></span></div>
+  <div class="body">
+    <div class="side-nav">
+      <div class="nav"><svg class="i"><use href="#sliders"/></svg>General</div>
+      <div class="nav on"><svg class="i"><use href="#shield"/></svg>Capture &amp; Privacy</div>
+      <div class="nav"><svg class="i"><use href="#db"/></svg>History &amp; Storage</div>
+      <div class="nav"><svg class="i"><use href="#transfer"/></svg>Data &amp; Transfer</div>
+      <div class="nav"><svg class="i"><use href="#info"/></svg>About</div>
+      <div class="sp"></div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;min-width:0">
+    <div class="content">
+      <div><h3>Capture &amp; Privacy</h3><p class="sub">What Dark Clipboard saves, and what it never saves.</p></div>
+      <div class="card">
+        <div class="ct">Capture</div>
+        <div class="mode">
+          <div class="m on"><div class="h"><svg class="i"><use href="#clipboard"/></svg>Recording</div><div class="d">Saves new copies</div></div>
+          <div class="m"><div class="h"><svg class="i"><use href="#eyeoff"/></svg>Private</div><div class="d">Nothing saved until you switch back</div></div>
+          <div class="m"><div class="h"><svg class="i"><use href="#pause"/></svg>Paused</div><div class="d">Stops for a while, then resumes</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="ct"><svg class="i" style="width:12px;height:12px;color:var(--success)"><use href="#shield"/></svg>Always protected</div>
+        <div class="srow"><div class="lb"><div class="l">Copies marked private by other apps</div><div class="d">Windows "exclude from history" and password-manager markers</div></div><svg class="i lk"><use href="#lock"/></svg></div>
+        <div class="srow"><div class="lb"><div class="l">Darkshot screenshots marked private</div><div class="d">Darkshot's exclusion marker is always respected</div></div><svg class="i lk"><use href="#lock"/></svg></div>
+      </div>
+      <div class="card">
+        <div class="ct">Sensitive content</div>
+        <div class="srow"><div class="lb"><div class="l">Passwords, keys and card numbers</div><div class="d">Detected copies are hidden and never searchable</div></div><span class="select">Hide and expire in 1 h <svg class="i"><use href="#chevd"/></svg></span></div>
+      </div>
+      <div class="card">
+        <div class="ct">Don't save from these apps</div>
+        <div class="app"><span class="ico"><svg class="i"><use href="#app"/></svg></span><span class="nm">KeePassXC</span><span class="by"><svg class="i" style="width:12px;height:12px"><use href="#lock"/></svg>Built in</span><span class="ib"><svg class="i"><use href="#x"/></svg></span></div>
+        <div class="app"><span class="ico"><svg class="i"><use href="#app"/></svg></span><span class="nm">Bitwarden</span><span class="by"><svg class="i" style="width:12px;height:12px"><use href="#lock"/></svg>Built in</span><span class="ib"><svg class="i"><use href="#x"/></svg></span></div>
+        <div class="app"><span class="ico"><svg class="i"><use href="#app"/></svg></span><span class="nm">Banking.exe</span><span class="ib"><svg class="i"><use href="#x"/></svg></span></div>
+        <div class="app"><span class="btn ghost" style="padding:0 6px"><svg class="i"><use href="#plus"/></svg>Add app…</span></div>
+      </div>
+    </div>
+    <div class="savebar"><span class="t"><span class="dot"></span>1 unsaved change</span><span class="btn ghost">Revert</span><span class="btn primary"><svg class="i"><use href="#check"/></svg>Save <span class="kc" style="background:transparent;border-color:#11131840;color:var(--on-accent)">Ctrl S</span></span></div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ======================= 6 SETTINGS DATA ======================= -->
+<section class="shot" id="settings-data">
+<h2>6 · Settings: Data &amp; Transfer (new section)</h2>
+<p class="cap">Backup, restore, export and import move here from the long History section. Each destructive action is a row with a secondary button, and a confirmation dialog (unchanged behaviour) opens from it. The data folder and its size are here too. History &amp; Storage (not drawn) keeps the limits, the types to save, and clear/cleanup.</p>
+<div class="win settings" style="height:520px">
+  <div class="titlebar"><svg class="i" style="width:14px;height:14px"><use href="#settings"/></svg>Dark Clipboard: Settings<span class="sp"></span></div>
+  <div class="body">
+    <div class="side-nav">
+      <div class="nav"><svg class="i"><use href="#sliders"/></svg>General</div>
+      <div class="nav"><svg class="i"><use href="#shield"/></svg>Capture &amp; Privacy</div>
+      <div class="nav"><svg class="i"><use href="#db"/></svg>History &amp; Storage</div>
+      <div class="nav on"><svg class="i"><use href="#transfer"/></svg>Data &amp; Transfer</div>
+      <div class="nav"><svg class="i"><use href="#info"/></svg>About</div>
+    </div>
+    <div class="content">
+      <div><h3>Data &amp; Transfer</h3><p class="sub">Everything stays on this computer. Nothing is uploaded.</p></div>
+      <div class="card">
+        <div class="ct">Backup</div>
+        <div class="srow"><div class="lb"><div class="l">Back up history</div><div class="d">A private copy without hidden or expired clips</div></div><span class="btn"><svg class="i"><use href="#download"/></svg>Back up…</span></div>
+        <div class="srow"><div class="lb"><div class="l">Restore from a backup</div><div class="d">Replaces the current history; a safety copy is kept</div></div><span class="btn">Restore…</span></div>
+      </div>
+      <div class="card">
+        <div class="ct">Export and import</div>
+        <div class="srow"><div class="lb"><div class="l">Export clips</div><div class="d">Readable file; clips marked "never leave the device" are left out</div></div><span class="btn">Export…</span></div>
+        <div class="srow"><div class="lb"><div class="l">Import clips</div><div class="d">Imported data is checked like new copies</div></div><span class="btn">Import…</span></div>
+      </div>
+      <div class="card">
+        <div class="ct">Data folder</div>
+        <div class="srow"><div class="lb"><div class="l" style="font-family:var(--mono);font-size:12px">C:\Users\…\AppData\Roaming\DarkClipboard</div><div class="d">38 MB · 1,284 clips</div></div><span class="btn ghost"><svg class="i"><use href="#folder"/></svg>Open</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ======================= 7 KIT ======================= -->
+<section class="shot" id="kit">
+<h2>7 · Components and tokens</h2>
+<div class="sheet">
+  <div class="tile"><h5>Colour tokens</h5><div class="sw-grid">
+    <div class="swatch" style="background:#111318">canvas</div><div class="swatch" style="background:#1B2028">surface</div><div class="swatch" style="background:#232935">raised</div><div class="swatch" style="background:#262C45">selected</div>
+    <div class="swatch" style="background:#7887FF;color:#111318">accent</div><div class="swatch" style="background:#5FD4AA;color:#111318">success</div><div class="swatch" style="background:#F2C14E;color:#111318">warning</div><div class="swatch" style="background:#FF7A85;color:#111318">danger</div>
+  </div><p style="margin:10px 0 0;font-size:12px"><span style="color:var(--text)">text 17:1</span> · <span style="color:var(--text-2)">text-2 7.9:1</span> · <span style="color:var(--text-3)">text-3 6.4:1</span> (on canvas)</p></div>
+  <div class="tile"><h5>Icon buttons: default, hover, active, focus, danger</h5><div style="display:flex;gap:10px;align-items:center">
+    <span class="ib"><svg class="i"><use href="#copy"/></svg></span><span class="ib hover"><svg class="i"><use href="#copy"/></svg></span><span class="ib on"><svg class="i"><use href="#pin"/></svg></span><span class="ib focus"><svg class="i"><use href="#settings"/></svg></span><span class="ib danger hover" style="color:var(--danger)"><svg class="i"><use href="#trash"/></svg></span></div>
+    <p style="margin:10px 0 0;color:var(--text-3);font-size:12px">28 × 28 target, 16 px icon, tooltip "Name  Key" after 500 ms or on focus.</p></div>
+  <div class="tile"><h5>Buttons</h5><div style="display:flex;gap:8px;flex-wrap:wrap"><span class="btn primary">Save</span><span class="btn">Back up…</span><span class="btn ghost">Revert</span><span class="btn danger"><svg class="i"><use href="#trash"/></svg>Delete</span></div></div>
+  <div class="tile"><h5>Key caps, chips, switch</h5><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="kc">Ctrl K</span><span class="kc"><svg class="i"><use href="#enter"/></svg></span><span class="chip">sql <svg class="i"><use href="#x"/></svg></span><span class="sw2 on"></span><span class="sw2"></span></div></div>
+  <div class="tile" style="grid-column:span 2"><h5>Icon set (Lucide, 16 px, tint text-2)</h5><div class="icons">
+    <div><svg class="i"><use href="#search"/></svg></div><div><svg class="i"><use href="#settings"/></svg></div><div><svg class="i"><use href="#x"/></svg></div><div><svg class="i"><use href="#pin"/></svg></div><div><svg class="i"><use href="#star"/></svg></div><div><svg class="i"><use href="#lock"/></svg></div><div><svg class="i"><use href="#eyeoff"/></svg></div><div><svg class="i"><use href="#trash"/></svg></div>
+    <div><svg class="i"><use href="#copy"/></svg></div><div><svg class="i"><use href="#paste"/></svg></div><div><svg class="i"><use href="#type"/></svg></div><div><svg class="i"><use href="#wand"/></svg></div><div><svg class="i"><use href="#pencil"/></svg></div><div><svg class="i"><use href="#note"/></svg></div><div><svg class="i"><use href="#tag"/></svg></div><div><svg class="i"><use href="#folder"/></svg></div>
+    <div><svg class="i"><use href="#layers"/></svg></div><div><svg class="i"><use href="#text"/></svg></div><div><svg class="i"><use href="#link"/></svg></div><div><svg class="i"><use href="#code"/></svg></div><div><svg class="i"><use href="#image"/></svg></div><div><svg class="i"><use href="#file"/></svg></div><div><svg class="i"><use href="#clock"/></svg></div><div><svg class="i"><use href="#history"/></svg></div>
+    <div><svg class="i"><use href="#more"/></svg></div><div><svg class="i"><use href="#check"/></svg></div><div><svg class="i"><use href="#undo"/></svg></div><div><svg class="i"><use href="#keyboard"/></svg></div><div><svg class="i"><use href="#pause"/></svg></div><div><svg class="i"><use href="#shield"/></svg></div><div><svg class="i"><use href="#db"/></svg></div><div><svg class="i"><use href="#transfer"/></svg></div>
+  </div></div>
+</div>
+</section>
+</div>
+</body>
+</html>
