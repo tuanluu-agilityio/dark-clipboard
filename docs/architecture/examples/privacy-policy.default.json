@@ -10,6 +10,12 @@
       "builtin": true
     },
     {
+      "app_id": "keepass.exe",
+      "platform": "windows",
+      "name": "KeePass",
+      "builtin": true
+    },
+    {
       "app_id": "1password.exe",
       "platform": "windows",
       "name": "1Password",

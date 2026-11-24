@@ -758,8 +758,8 @@ messages! {
     SettingsRestoreDo => ("Restore from backup...", "Khôi phục từ bản sao lưu..."),
     SettingsImportDo => ("Import clips...", "Nhập mục..."),
     SettingsTransferNote => (
-        "Backups and exports leave out masked and sensitive clips. Imported clips are checked like copied ones: secrets follow your sensitive-content setting. Export a collection or marked clips from the history window with Ctrl+Shift+E.",
-        "Bản sao lưu và tệp xuất bỏ qua mục bị che và mục nhạy cảm. Mục được nhập được kiểm tra như mục sao chép: bí mật theo cài đặt nội dung nhạy cảm của bạn. Xuất một bộ sưu tập hoặc các mục đã chọn trong cửa sổ lịch sử bằng Ctrl+Shift+E."
+        "Backups and exports leave out masked and sensitive clips. A backup keeps every other clip, including clips that apps asked not to sync, in a plain zip file that is not encrypted: saving it in a synced folder (OneDrive, Dropbox) uploads your history. Exports also leave out those no-sync clips. Imported clips are checked like copied ones: secrets follow your sensitive-content setting. Export a collection or marked clips from the history window with Ctrl+Shift+E.",
+        "Bản sao lưu và tệp xuất bỏ qua mục bị che và mục nhạy cảm. Bản sao lưu giữ mọi mục khác, kể cả mục mà ứng dụng yêu cầu không đồng bộ, trong một tệp zip thường không mã hóa: lưu nó trong thư mục được đồng bộ (OneDrive, Dropbox) sẽ tải lịch sử của bạn lên mạng. Tệp xuất còn bỏ qua các mục không đồng bộ đó. Mục được nhập được kiểm tra như mục sao chép: bí mật theo cài đặt nội dung nhạy cảm của bạn. Xuất một bộ sưu tập hoặc các mục đã chọn trong cửa sổ lịch sử bằng Ctrl+Shift+E."
     ),
     SettingsRestoreConfirm => (
         "Replace your whole history with this backup? Your current history is kept as a safety copy until Dark Clipboard starts again.",
@@ -767,7 +767,10 @@ messages! {
     ),
     SettingsRestoreYes => ("Restore", "Khôi phục"),
     TransferWorking => ("Working...", "Đang xử lý..."),
-    TransferBackupDone => ("Backup saved: {n} clips", "Đã lưu bản sao lưu: {n} mục"),
+    TransferBackupDone => (
+        "Backup saved: {n} clips. It is not encrypted: keep it out of synced folders.",
+        "Đã lưu bản sao lưu: {n} mục. Tệp không được mã hóa: đừng để trong thư mục được đồng bộ."
+    ),
     TransferRestoreDone => ("History restored: {n} clips", "Đã khôi phục lịch sử: {n} mục"),
     TransferImportDone => (
         "Imported {n} new clips; {m} were already in your history",
@@ -823,6 +826,31 @@ messages! {
     OrgCollectionKeys => (
         "Ctrl+Shift+R rename the shown collection · Ctrl+Shift+Del delete it",
         "Ctrl+Shift+R đổi tên bộ sưu tập đang xem · Ctrl+Shift+Del xóa"
+    ),
+    // Start-up problems shown in a message window (Task 413). `{path}` is the data folder.
+    StartDbDamaged => (
+        "Dark Clipboard could not open its history: the database file is damaged.\n\nFolder: {path}\n\nChoose Yes to move the damaged history aside and start with an empty history. Nothing is deleted, and you can then restore a backup in Settings. The moved files (history.db.damaged-<time>, blobs.damaged-<time> and their companions in that folder) keep all your old clips, including ones that would have expired; Clear history does not remove them. Delete them yourself when you no longer need them.\n\nChoose No to quit.",
+        "Dark Clipboard không mở được lịch sử: tệp cơ sở dữ liệu bị hỏng.\n\nThư mục: {path}\n\nChọn Có để chuyển lịch sử bị hỏng sang một bên và bắt đầu với lịch sử trống. Không có gì bị xóa, và sau đó bạn có thể khôi phục bản sao lưu trong Cài đặt. Các tệp được chuyển (history.db.damaged-<thời điểm>, blobs.damaged-<thời điểm> và các tệp đi kèm trong thư mục đó) giữ mọi mục cũ, kể cả mục lẽ ra đã hết hạn; Xóa lịch sử không xóa chúng. Hãy tự xóa chúng khi không cần nữa.\n\nChọn Không để thoát."
+    ),
+    StartDbTooNew => (
+        "This history was created by a newer version of Dark Clipboard, so this version cannot open it. Install the newer version. Nothing was changed.\n\nFolder: {path}",
+        "Lịch sử này được tạo bởi phiên bản Dark Clipboard mới hơn nên phiên bản này không mở được. Hãy cài phiên bản mới hơn. Không có gì thay đổi.\n\nThư mục: {path}"
+    ),
+    StartDbFailed => (
+        "Dark Clipboard could not open its history. Check that the folder exists and that you can write to it.\n\nFolder: {path}",
+        "Dark Clipboard không mở được lịch sử. Hãy kiểm tra thư mục còn tồn tại và bạn có quyền ghi vào đó.\n\nThư mục: {path}"
+    ),
+    CliDbDamaged => (
+        "Dark Clipboard could not open its history: the database file is damaged. Start the app without --headless to move it aside and start empty. Nothing was changed.\n\nFolder: {path}",
+        "Dark Clipboard không mở được lịch sử: tệp cơ sở dữ liệu bị hỏng. Hãy mở ứng dụng không có --headless để chuyển nó sang một bên và bắt đầu với lịch sử trống. Không có gì thay đổi.\n\nThư mục: {path}"
+    ),
+    StartMoveAsideFailed => (
+        "The damaged history could not be moved aside. Nothing was deleted. Close any program that uses the folder and start Dark Clipboard again.\n\nFolder: {path}",
+        "Không chuyển được lịch sử bị hỏng sang một bên. Không có gì bị xóa. Hãy đóng các chương trình đang dùng thư mục rồi mở lại Dark Clipboard.\n\nThư mục: {path}"
+    ),
+    StartPipeInUse => (
+        "Dark Clipboard could not start: another program is using its connection.",
+        "Dark Clipboard không khởi động được: một chương trình khác đang dùng kết nối của nó."
     ),
 }
 

@@ -173,6 +173,7 @@ Deletion is real deletion: `DELETE` plus `PRAGMA secure_delete = ON` for the cli
 - Embedded SQL files `migrations/NNNN_name.sql`, applied in a transaction, guarded by `user_version`. No migration framework dependency.
 - Before any migration, copy `history.db` to `history.db.pre-vN.bak` (deleted after a successful first run of version N+1).
 - Downgrade is not supported: a DB with a newer `user_version` is refused (`SchemaTooNew`) in both modes and is never modified; the desktop shows a message and does not start capture (Phase 3).
+- (Changed by D-067, 2026-11-24, Task 413: every open, in both modes, runs `PRAGMA quick_check(1)` after the version check; a failure, `SQLITE_CORRUPT` or `SQLITE_NOTADB` is `StorageError::Corrupt`. The desktop then shows a message and may, on the user's Yes, rename `history.db` (with `-wal`/`-shm`), `blobs/` and the `history.db.pre-*` copies to `*.damaged-<ms>` names and start empty; nothing is deleted. Measured cost of a read-only open with the check: 34 to 41 ms for a 10,000-clip, 7.2 MB database, warm cache, release build.)
 
 ## 8. Backup and restore (P1)
 

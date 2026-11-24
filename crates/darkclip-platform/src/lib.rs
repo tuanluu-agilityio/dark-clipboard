@@ -3,6 +3,8 @@
 //! Must not depend on: OS crates (only traits, capability types, a fake for tests).
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+// No unsafe code in this crate (F407-11).
+#![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod caps;

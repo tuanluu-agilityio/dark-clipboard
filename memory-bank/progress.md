@@ -80,15 +80,16 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 406 Fuzzing | task/406-fuzzing | specialist | opus | done (stable fallback harness; libFuzzer not run, no nightly) | 295,069 | 98,678 (security-reviewer opus: APPROVED with 2 should-fix (secret-shaped seed corpus, decisions) → fixed) | 16,219 | 409,966 |
 | 412 Update check | task/412-update-check | builder | sonnet | done | 179,398 | 112,645 (security-reviewer opus: APPROVED with 5 should-fix (shown tag metadata, gate gaps, licence notice, docs, threat model) → fixed, verified by orchestrator gate) | 33,309 | 325,352 |
 | 407 Security re-review | task/407-security-review | specialist (as reviewer; needs to write the report) | opus | done: 1 high (WER crash dumps), 4 medium → Task 413 | 216,790 | (orchestrator) | | 216,790 |
-| 413 Release blockers (407 findings) | task/413-release-blockers | specialist | opus | pending | | | | |
+| 413 Release blockers (407 findings) | task/413-release-blockers | specialist | opus | done | 319,940 | 217,332 (security-reviewer opus ×2: CR (blocking: DACL could reach a user-chosen folder with other files) → APPROVED; CI confirmed the elevated-runner owner rule) | 44,656 | 581,928 |
 | 409 Licence | — | — | — | done in Task 201 (D-045) | | | | |
-| 408, 410 Release workflow, 0.1.0 docs | — | — | — | pending (owner authorized releases and tags, D-058) | | | | |
+| 408 Release workflow | task/408-release-workflow | builder | sonnet | pending | | | | |
+| 410 0.1.0 docs and version | task/410-docs-0.1.0 | scaffolder | sonnet | pending | | | | |
 
 ## Totals by model
 
 | Model | Tokens |
 |---|---|
-| opus | 10,779,530 |
+| opus | 11,361,458 |
 | sonnet | 5,043,527 |
 | haiku | 0 |
-| **Total** | **15,823,057** (subagents only; orchestrator not measured) |
+| **Total** | **16,404,985** (subagents only; orchestrator not measured) |

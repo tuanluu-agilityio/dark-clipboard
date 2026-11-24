@@ -37,6 +37,20 @@ pub(crate) fn backup(conn: &Connection, target: &Path) -> Result<(), StorageErro
     Ok(result?)
 }
 
+/// `PRAGMA quick_check(1)`: O(N) structural check of every b-tree page (no index-content or
+/// UNIQUE check). Anything but a single `ok` is `Corrupt`, and so is a `SQLITE_CORRUPT` or
+/// `SQLITE_NOTADB` while checking (the error mapping); other errors (busy, I/O) stay what they
+/// are, so a locked database is never offered for moving aside. The text of a failure (page
+/// numbers) is dropped.
+fn quick_check(conn: &Connection) -> Result<(), StorageError> {
+    let first: String = conn.query_row("PRAGMA quick_check(1)", [], |r| r.get(0))?;
+    if first == "ok" {
+        Ok(())
+    } else {
+        Err(StorageError::Corrupt)
+    }
+}
+
 pub(crate) fn open_with(
     data_dir: &Path,
     mode: OpenMode,
@@ -77,6 +91,9 @@ pub(crate) fn open_with(
     if found > supported {
         return Err(StorageError::SchemaTooNew { found, supported });
     }
+    // A damaged file is refused in both modes before anything is written or read from it
+    // (Task 413, F407-03); the desktop then offers to move it aside.
+    quick_check(&conn)?;
     conn.pragma_update(None, "foreign_keys", true)?;
 
     if mode == OpenMode::ReadOnly {

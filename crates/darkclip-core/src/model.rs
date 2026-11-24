@@ -651,6 +651,8 @@ impl Default for PrivacyPolicy {
             mode: CaptureMode::Normal,
             excluded_apps: vec![
                 app("keepassxc.exe", Platform::Windows, "KeePassXC"),
+                // KeePass 2 (classic), D-067 (F407-08).
+                app("keepass.exe", Platform::Windows, "KeePass"),
                 app("1password.exe", Platform::Windows, "1Password"),
                 app("bitwarden.exe", Platform::Windows, "Bitwarden"),
                 // Belt and braces: its own markers already exclude it (privacy-design 6).
@@ -739,6 +741,20 @@ mod tests {
             .unwrap();
         assert!(a.builtin);
         assert_eq!(a.platform, Platform::Windows);
+    }
+
+    #[test]
+    fn keepass_2_is_a_builtin_exclusion_on_windows() {
+        // D-067 (F407-08): KeePass 2 (classic) next to KeePassXC.
+        let d = PrivacyPolicy::default();
+        let a = d
+            .excluded_apps
+            .iter()
+            .find(|a| a.app_id == "keepass.exe")
+            .unwrap();
+        assert!(a.builtin);
+        assert_eq!(a.platform, Platform::Windows);
+        assert_eq!(a.name.as_deref(), Some("KeePass"));
     }
 
     #[test]

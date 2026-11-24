@@ -327,6 +327,26 @@ All rows **untested** until the owner runs them (agents never launch the UI or m
 | Turn the toggle off, restart | No request; the box stays unchecked | **untested** |
 | Vietnamese interface | Every label, the note and every result are Vietnamese | **untested** |
 
+## Windows: release blockers (Task 413)
+
+All rows **untested** until the owner runs them (agents never launch the UI, change the real data folder's ACL or the real WER registry from a test, GC-19). Use a scratch folder for the database rows: `dark-clipboard.exe --data-dir <empty folder>`.
+
+| Row | Expected | Result |
+|---|---|---|
+| Start the app once (any mode, for example `dark-clipboard.exe --help`), then `reg query "HKCU\Software\Microsoft\Windows\Windows Error Reporting\ExcludedApplications"` | A value named `dark-clipboard.exe` (the running file name) exists; the log of a normal start has `wer excluded=ok no_heap=ok` | **untested** |
+| Start the app normally (default folder), then `icacls "%LOCALAPPDATA%\DarkClipboard"` and `icacls "%LOCALAPPDATA%\DarkClipboard\history.db"` | The folder lists exactly your account and `NT AUTHORITY\SYSTEM` with `(OI)(CI)(F)` and no `(I)` entries from the parent; the file lists the same two with `(I)(F)`; no other principal (no Administrators, no extra groups). The log has `data_dir_acl result=applied ms=<n>` the first time (note `ms` on an install with many images) and `already_private` afterwards | **untested** |
+| Run the app as administrator (Run as administrator) on a fresh scratch folder it creates, then `icacls` on it | The folder is restricted as above (owner `BUILTIN\Administrators` is accepted for an elevated run); the log has `result=applied` | **untested** |
+| `--data-dir` pointing at an existing folder made by hand that holds another file; run it twice | `icacls` shows that folder unchanged after both runs although it now holds `history.db`; the log says `data_dir_acl result=not_ours` twice; there is no `.dark-clipboard-data` file in it | **untested** |
+| After moving a damaged history aside, use the app, then Settings > History > Clear history | The `*.damaged-*` files and `blobs.damaged-*` folder are still there (the message said so); deleting them by hand works | **untested** |
+| Scratch folder: start once, quit, replace `history.db` with a text file, start again | A message window names the folder and says the database file is damaged, with Yes and No; No quits and changes nothing | **untested** |
+| Same, choose Yes | The app starts with an empty history; the folder now has `history.db.damaged-<ms>` (and `-wal`/`-shm` if they existed) and `blobs.damaged-<ms>`; nothing was deleted; Settings > History > Restore from backup then works with a backup made before | **untested** |
+| Scratch folder with many clips (`--seed-demo-clips 2000`), overwrite 4 KiB in the middle of `history.db` with any bytes, start | The damaged message appears (the `quick_check` at open catches it); the app does not run on the damaged file | **untested** |
+| Scratch folder: set the database's `user_version` to 999 (for example with `sqlite3 history.db "PRAGMA user_version=999"`), start | A message says the history was made by a newer version, with only OK; the file's bytes are unchanged afterwards (compare a hash before and after) | **untested** |
+| `--headless --data-dir <damaged scratch folder> --exit-after-ms 3000` | Prints the damaged explanation with the folder (no question), exit code 1, nothing renamed | **untested** |
+| Squatted pipe: from a second local account (or a small tool) create `\\.\pipe\dark-clipboard-<hash>-s<session>` first, then start the app as the first account (the name is in the code; easiest with a `--data-dir` scope and a test tool) | A message says "Dark Clipboard could not start: another program is using its connection."; the log has `start_failed stage=ipc reason=squatted` | **untested** |
+| Install KeePass 2 (classic, `KeePass.exe`), copy a password from an entry with Dark Clipboard capturing | The copy is not stored (excluded app or its marker); on a fresh scratch folder Settings > Privacy lists KeePass as built-in, and removing it asks the password-manager confirmation | **untested** |
+| Settings > History > Backup and transfer, English and Vietnamese | The note says a backup is a plain unencrypted zip that keeps no-sync clips and that a synced folder uploads it; after a backup the message repeats "not encrypted" | **untested** |
+
 ## macOS
 
 All rows **untested** (no hardware, Q-04).
