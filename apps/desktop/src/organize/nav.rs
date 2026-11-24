@@ -16,9 +16,6 @@ pub const NAV_FAVORITES: i32 = 105;
 pub const NAV_COLLECTION: i32 = 1000;
 /// Tag chips are `NAV_TAG + index` into the tags.
 pub const NAV_TAG: i32 = 2000;
-/// Collections shown as popup chips at most (the popup lists them in "More filters" now).
-#[allow(dead_code)]
-pub const POPUP_MAX_COLLECTIONS: usize = 6;
 
 /// What the list pane knows about the organisation: loaded on the worker, never from clip content.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -110,32 +107,6 @@ pub fn history_nav_chips(f: &Filters, nav: &Nav, lang: Lang) -> Vec<ChipSpec> {
 
 fn index_id(base: i32, i: usize) -> i32 {
     base + i32::try_from(i).unwrap_or(0)
-}
-
-/// The popup's old chips: Favorites, then at most `POPUP_MAX_COLLECTIONS` user collections.
-#[allow(dead_code)]
-pub fn popup_nav_chips(f: &Filters, nav: &Nav, lang: Lang) -> Vec<ChipSpec> {
-    let mut v = Vec::new();
-    if let Some(fav) = nav.favorites() {
-        v.push(chip(
-            NAV_FAVORITES,
-            t(lang, Msg::OrgFavorites),
-            f.collection == Some(fav.id),
-        ));
-    }
-    for (i, c) in nav
-        .user_collections()
-        .into_iter()
-        .take(POPUP_MAX_COLLECTIONS)
-        .enumerate()
-    {
-        v.push(chip(
-            index_id(NAV_COLLECTION, i),
-            &c.name,
-            f.collection == Some(c.id),
-        ));
-    }
-    v
 }
 
 /// The filters after a click on nav chip `id` (the search text and other filters are kept), or
@@ -264,26 +235,6 @@ mod tests {
         let v = history_nav_chips(&Filters::default(), &nav(), Lang::Vi);
         assert_eq!(v[0].label, "Yêu thích (4)");
         assert_eq!(v[1].label, "Bộ sưu tập");
-    }
-
-    #[test]
-    fn the_popup_has_favorites_and_the_collections_without_counts() {
-        let v = popup_nav_chips(&Filters::default(), &nav(), Lang::En);
-        let labels: Vec<&str> = v.iter().map(|c| c.label.as_str()).collect();
-        assert_eq!(labels, ["Favorites", "Work", "Ideas"]);
-        assert!(v.iter().all(|c| !c.header && !c.on));
-        assert_eq!(v[0].id, NAV_FAVORITES);
-        assert_eq!(v[1].id, NAV_COLLECTION);
-    }
-
-    #[test]
-    fn the_popup_shows_at_most_six_collections() {
-        let mut n = nav();
-        for i in 0..10 {
-            n.collections.push(col(20 + i, &format!("c{i}"), false, 1));
-        }
-        let v = popup_nav_chips(&Filters::default(), &n, Lang::En);
-        assert_eq!(v.len(), 1 + POPUP_MAX_COLLECTIONS);
     }
 
     #[test]

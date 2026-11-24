@@ -74,30 +74,6 @@ fn source_chips(f: &Filters, sources: &[String]) -> Vec<ChipSpec> {
         .collect()
 }
 
-/// The popup's old chips: kinds, Pinned, Today, 7 days, then the source apps. The popup now
-/// shows the segment (`popup_segment`); this stays, with its tests, for the chip order and ids.
-#[allow(dead_code)]
-pub fn popup_chips(f: &Filters, sources: &[String], lang: Lang) -> Vec<ChipSpec> {
-    let mut v = kind_chips(f, lang);
-    v.push(chip(
-        CHIP_PINNED,
-        t(lang, Msg::UiFilterPinned),
-        f.pinned_only,
-    ));
-    v.push(chip(
-        CHIP_TODAY,
-        t(lang, Msg::UiFilterToday),
-        f.time == TimeFilter::Today,
-    ));
-    v.push(chip(
-        CHIP_WEEK,
-        t(lang, Msg::UiFilter7Days),
-        f.time == TimeFilter::Week,
-    ));
-    v.extend(source_chips(f, sources));
-    v
-}
-
 // ---- The popup's filter segment and "More filters" (Task 701) ----------------------------------
 //
 // Same `Filters` and same ids as the chips above: a tab or a menu entry is a different way to
@@ -451,14 +427,6 @@ mod tests {
 
     fn srcs() -> Vec<String> {
         vec!["Code".to_string(), "Edge".to_string()]
-    }
-
-    #[test]
-    fn the_popup_keeps_its_chip_order_and_ids() {
-        let v = popup_chips(&Filters::default(), &srcs(), Lang::En);
-        let ids: Vec<i32> = v.iter().map(|c| c.id).collect();
-        assert_eq!(ids, [0, 1, 2, 3, 4, 5, 6, 100, 101, 102, 200, 201]);
-        assert!(v.iter().all(|c| !c.on && !c.header));
     }
 
     #[test]
