@@ -105,7 +105,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 710 App icon (option A) | task/710-app-icon | builder | sonnet | done (ICO 8 sizes 57 KB; tray RGBA per state via `nearest_tray_size`; `embed-resource` 3.0.12 Windows build-dep) | 124,033 | 41,771 (reviewer sonnet: APPROVED, nits only) | 0 | 165,804 |
 | 701 Popup layout (package: scaffolder sonnet 140,626) | task/701-popup-layout | builder | sonnet | done (440×520, 48 px rows, row actions + kit row menu, filter segment + More filters, status line, floating toast; masked rows show only i18n text; F-31 closed) | 549,290 (incl. package) | 93,271 (reviewer opus: APPROVED, 1 should-fix → F-32) | 0 | 642,561 |
 | 702 Popup preview pane | | builder | sonnet | pending | | | | |
-| 703 History layout | | builder | sonnet | pending | | | | |
+| 703 History layout (package: scaffolder sonnet 100,719) | task/703-history-layout | builder | sonnet | in progress | | | | |
 | 704 History interaction | | builder | sonnet | pending | | | | |
 | 705 Settings | | builder | sonnet | pending | | | | |
 | 706 Secondary surfaces + F1 sheet | | builder | sonnet | pending | | | | |
