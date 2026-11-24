@@ -24,6 +24,8 @@ Branch `task/NNN-...` and package `docs/tasks/NNN-....md`.
    - Scope: no features beyond the package; no files outside "Files" without a stated reason.
    - The phase plan's "Review Focus" lines that this task owns.
 5. Do not report style preferences or internal variable naming.
+6. **Verify, do not infer.** A claim about build configuration, library defaults, OS or runtime behaviour must be backed by a probe or test you ran (state the command and output). Otherwise mark it `UNVERIFIED`; an unverified claim alone is never `blocking` (D-077).
+7. Check the diff against the package's **Known pitfalls** and `memory-bank/systemPatterns.md`.
 
 ## Report
 First line: `APPROVED` or `CHANGES REQUIRED`.

@@ -69,6 +69,21 @@ echo "== no window-title capture (SR-11)"
 hits="$(rs_files | xargs -r grep -nE '\b(GetWindowText(W|A|Length[A-Za-z]*)?|InternalGetWindowText)\b|\bWM_GETTEXT(LENGTH)?\b|_NET_WM_NAME|\bkCGWindowName\b' || true)"
 [ -z "$hits" ] || { echo "CHECK FAILED: window title API:"; echo "$hits"; exit 1; }
 
+echo "== SQLite connections keep temporary data in memory (D-073, D-077)"
+# Twin of the rule in check.ps1. Test code (tests.rs, tests/, #[cfg(test)] modules: an inline one up to its closing brace, `mod x;` just its line) is skipped.
+ts_fixture_bad="$(awk -f scripts/temp-store-check.awk scripts/fixtures/temp-store-bad.rs)"
+ts_fixture_good="$(awk -f scripts/temp-store-check.awk scripts/fixtures/temp-store-good.rs)"
+[ "$ts_fixture_bad" = "scripts/fixtures/temp-store-bad.rs:3" ] || fail "temp-store self-test: bad fixture not flagged exactly once (got: $ts_fixture_bad)"
+[ -z "$ts_fixture_good" ] || fail "temp-store self-test: good fixture flagged ($ts_fixture_good)"
+for ts_f in after-inline after-external; do
+  ts_out="$(awk -f scripts/temp-store-check.awk "scripts/fixtures/temp-store-bad-$ts_f.rs")"
+  [ -n "$ts_out" ] && [ "$(printf '%s
+' "$ts_out" | wc -l | tr -d ' ')" = 1 ] || fail "temp-store self-test: bad-$ts_f fixture not flagged exactly once (got: $ts_out)"
+done
+echo "self-test ok: bad fixture flagged ($ts_fixture_bad), good fixture passed"
+hits="$(rs_files | grep -vE '(^|/)tests\.rs$|/tests/' | xargs -r awk -f scripts/temp-store-check.awk || true)"
+[ -z "$hits" ] || { echo "CHECK FAILED: SQLite connection without keep_temp_in_memory (or '// temp-store: <reason>'):"; echo "$hits"; exit 1; }
+
 echo "== mandatory markers present (GC-07)"
 mf=crates/darkclip-core/src/markers.rs
 if [ -f "$mf" ]; then

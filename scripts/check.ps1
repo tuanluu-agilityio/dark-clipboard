@@ -145,6 +145,58 @@ foreach ($f in $rs) {
 }
 if ($bad) { exit 1 }
 
+Write-Host '== SQLite connections keep temporary data in memory (D-073, D-077)'
+# Every Connection::open*( in non-test code calls keep_temp_in_memory( within the next 25 lines of the same
+# function, or carries "// temp-store: <reason>" on its line or the line before. Test code (tests.rs, tests/,
+# #[cfg(test)] modules: an inline one up to its closing brace, `mod x;` just its line) is skipped. Bash twin: scripts/check.sh + scripts/temp-store-check.awk.
+function Get-TempStoreMisses([string]$path, [string]$label) {
+    $lines = @(Get-Content -LiteralPath $path)
+    $skipl = New-Object bool[] $lines.Count
+    for ($i = 0; $i -lt $lines.Count - 1; $i++) {
+        if ($lines[$i] -notmatch '^#\[cfg\(test\)\]\s*$' -or $lines[$i + 1] -notmatch '^(pub(\([a-z]+\))? )?mod\s') { continue }
+        $skipl[$i] = $true; $skipl[$i + 1] = $true
+        if ($lines[$i + 1] -match ';\s*$') { continue }
+        $depth = 0; $seen = $false
+        for ($j = $i + 1; $j -lt $lines.Count; $j++) {
+            $skipl[$j] = $true
+            $opens = ([regex]::Matches($lines[$j], '\{')).Count; $closes = ([regex]::Matches($lines[$j], '\}')).Count
+            $depth += $opens - $closes
+            if ($opens -gt 0) { $seen = $true }
+            if ($seen -and $depth -le 0) { break }
+        }
+    }
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($skipl[$i]) { continue }
+        $l = $lines[$i]
+        if ($l -match '^\s*//') { continue }
+        if ($l -notmatch 'Connection::open\w*\(' -or $l -match 'Connection::open_in_memory') { continue }
+        if ($l -match '// temp-store: ' -or ($i -gt 0 -and $lines[$i - 1] -match '// temp-store: ')) { continue }
+        $ok = $false
+        for ($j = $i; $j -le $i + 25 -and $j -lt $lines.Count; $j++) {
+            if ($j -gt $i -and $lines[$j] -match '^\s*(pub(\([a-z]+\))? )?(async )?(unsafe )?fn\s') { break }
+            if ($lines[$j] -match 'keep_temp_in_memory\(') { $ok = $true; break }
+        }
+        if (-not $ok) { "${label}:$($i + 1)" }
+    }
+}
+$tsBad = @(Get-TempStoreMisses 'scripts/fixtures/temp-store-bad.rs' 'scripts/fixtures/temp-store-bad.rs')
+$tsGood = @(Get-TempStoreMisses 'scripts/fixtures/temp-store-good.rs' 'scripts/fixtures/temp-store-good.rs')
+if ($tsBad.Count -ne 1 -or $tsBad[0] -ne 'scripts/fixtures/temp-store-bad.rs:3') { Fail "temp-store self-test: bad fixture not flagged exactly once (got: $($tsBad -join ' '))" }
+if ($tsGood.Count -ne 0) { Fail "temp-store self-test: good fixture flagged ($($tsGood -join ' '))" }
+foreach ($tsName in @('after-inline', 'after-external')) {
+    $tsOut = @(Get-TempStoreMisses "scripts/fixtures/temp-store-bad-$tsName.rs" "scripts/fixtures/temp-store-bad-$tsName.rs")
+    if ($tsOut.Count -ne 1) { Fail "temp-store self-test: bad-$tsName fixture not flagged exactly once (got: $($tsOut -join ' '))" }
+}
+Write-Host "self-test ok: bad fixture flagged ($($tsBad[0])), good fixture passed"
+foreach ($f in $rs) {
+    $rel = Rel $f
+    if ($rel -match '(^|/)tests\.rs$|/tests/') { continue }
+    foreach ($miss in @(Get-TempStoreMisses $f.FullName $rel)) {
+        Write-Host "CHECK FAILED: SQLite connection without keep_temp_in_memory (or '// temp-store: <reason>') at $miss"; $bad = $true
+    }
+}
+if ($bad) { exit 1 }
+
 Write-Host '== mandatory markers present (GC-07)'
 $markersFile = 'crates/darkclip-core/src/markers.rs'
 if (Test-Path -LiteralPath $markersFile) {

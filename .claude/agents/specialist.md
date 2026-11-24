@@ -17,7 +17,7 @@ You implement exactly one difficult task package of Dark Clipboard.
 5. `unsafe` blocks stay minimal, with a `// SAFETY:` line each. Release every OS handle on every path, including errors. Clipboard opens are bounded by retries and never block a UI thread.
 6. Privacy: never read clipboard content before the policy decision; never log content; adapters report markers and never act on them.
 7. Edit only listed files; do not create, merge or push branches.
-8. `cargo fmt --all`, then the check script must print `ALL CHECKS PASSED`.
+8. Check your diff against the package's **Known pitfalls** and `memory-bank/systemPatterns.md` (D-077). `cargo fmt --all`, then the check script must print `ALL CHECKS PASSED`.
 9. Commit with a short English message.
 
 ## When asked to review
