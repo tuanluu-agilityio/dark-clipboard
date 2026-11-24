@@ -12,6 +12,7 @@ use darkclip_platform::{Capabilities, ShortcutSupport, SourceSupport, Support};
 /// (crate, version, licence expression). Slint is used under its GPL-3.0-only option.
 pub const THIRD_PARTY: &[(&str, &str, &str)] = &[
     ("ctrlc", "3.5.3", "MIT/Apache-2.0"),
+    ("embed-resource", "3.0.12", "MIT"),
     ("flate2", "1.1.11", "MIT OR Apache-2.0"),
     ("global-hotkey", "0.10.0", "Apache-2.0 OR MIT"),
     ("png", "0.18.1", "MIT OR Apache-2.0"),
