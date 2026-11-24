@@ -87,12 +87,13 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | Hotfix release-notes exit code | fix/release-notes-exit (PR #32) | orchestrator | opus | done (first release dry run failed on a leaked `$LASTEXITCODE`) | not measured | | | |
 | Hotfix notices fetch | fix/notices-fetch (PR #34) | orchestrator | opus | done (second dry run: offline cargo-about needed all locked crates) | not measured | | | |
 | **Release 0.1.0** | tags `v0.1.0-rc.1`, `v0.1.0` | orchestrator | — | **released 2026-11-24** (D-069) | | | | |
+| 414 Icons without font glyphs; popup footer fits (owner report on 0.1.0) | task/414-icon-glyphs | builder | sonnet | done | 111,576 | 41,080 (reviewer sonnet: APPROVED, 1 should-fix (icon centring) → fixed) | 19,722 | 172,378 |
 
 ## Totals by model
 
 | Model | Tokens |
 |---|---|
 | opus | 11,585,721 |
-| sonnet | 5,254,032 |
+| sonnet | 5,426,410 |
 | haiku | 0 |
-| **Total** | **16,839,753** (subagents only; orchestrator not measured) |
+| **Total** | **17,012,131** (subagents only; orchestrator not measured) |

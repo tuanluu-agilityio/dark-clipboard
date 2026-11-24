@@ -26,6 +26,7 @@ Portable crates (core, platform, storage, app) have no OS, UI or async dependenc
 - **`SchemaVersion` unit type** serializes as `1` and rejects other values; every versioned model carries it (Task 002).
 - **i18n:** `messages! { Variant => ("en", "vi"), ... }` generates `Msg`, `Msg::ALL`, `t(lang, msg)`; identical strings must be listed in `SAME_IN_BOTH` (Task 002).
 - **Windows-only code must lint on macOS/Linux too** (F-19, Tasks 405, 406): the local gate builds only for Windows, CI also runs clippy `-D warnings` on macOS and Ubuntu. Items, fields, variants or `mut` used only under `#[cfg(windows)]` need `#[cfg_attr(not(windows), allow(dead_code))]` / `allow(unused_mut)` or a `cfg` of their own. Implementers check every `cfg(windows)` they add for what stays unused elsewhere.
+- **UI icons are vector `Path`s, never symbol glyphs** (Task 414): the software renderer has no font fallback, so ⚙/✕/★/emoji draw nothing on Windows. Use `ui/icons.slint` (`Icon`, `IconButton`); `apps/desktop/tests/no_font_glyphs.rs` fails on symbols in U+2190–U+2BFF or emoji (allow-list: →). Footer labels must fit the 420 px popup in both languages (`tests/footer_budget.rs`).
 
 ## Reused from Darkshot (practices only)
 Banned-crate check in the gate; single privacy choke point plus a static sink check; no logging in privacy modules; manual `Debug`; small task packages with an independent reviewer; memory-bank; token ledger; PR-only `main`.

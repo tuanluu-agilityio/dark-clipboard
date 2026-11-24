@@ -1,6 +1,7 @@
 import { ListView, Palette } from "std-widgets.slint";
 import { Theme, Strings } from "theme.slint";
-import { Seg, ClipRow, FileRow, Chip, ChipView, ActionButton, RowView, DetailPane, DetailState, RowMetrics } from "popup.slint";
+import { IconKind } from "icons.slint";
+import { Seg, ClipRow, FileRow, Chip, ChipView, ActionButton, IconButton, RowView, DetailPane, DetailState, RowMetrics } from "popup.slint";
 
 import { HistoryWindow, FilterItem } from "history.slint";
 import { TransformPanel } from "transform.slint";
@@ -164,21 +165,21 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    ActionButton {
-                        text: "⚙";
+                    IconButton {
+                        kind: IconKind.gear;
                         width: 32px;
                         height: 36px;
-                        accessible-label: Strings.settings-open;
+                        label: Strings.settings-open;
                         clicked => {
                             root.act-settings();
                         }
                     }
 
-                    ActionButton {
-                        text: "✕";
+                    IconButton {
+                        kind: IconKind.close;
                         width: 32px;
                         height: 36px;
-                        accessible-label: Strings.close;
+                        label: Strings.close;
                         clicked => {
                             root.act-close();
                         }
@@ -296,14 +297,16 @@ export component MainWindow inherits Window {
                         }
                     }
                     ActionButton {
-                        text: Strings.copy-plain;
+                        text: Strings.footer-copy-plain;
+                        accessible-label: Strings.copy-plain;
                         visible: root.has-selection;
                         clicked => {
                             root.act-copy-plain();
                         }
                     }
                     ActionButton {
-                        text: Strings.copy-as;
+                        text: Strings.footer-copy-as;
+                        accessible-label: Strings.copy-as;
                         visible: root.has-selection && root.can-transform;
                         clicked => {
                             root.act-copy-as();
