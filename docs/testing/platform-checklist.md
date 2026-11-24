@@ -355,6 +355,7 @@ All rows **untested** until the owner runs them (agents never launch the UI, cha
 | UI kit (Task 700): popup, hover the settings button and the close button and wait 0.5 s; move the mouse away | A small tooltip below the button after about 0.5 s ("Settings"; "Close" with an Esc key cap, in Vietnamese "Cài đặt", "Đóng"), right-aligned inside the popup, gone when the pointer leaves; never two tooltips at once; the search box keeps the keyboard focus (typing still works) | **untested** |
 | UI kit (Task 700): tooltip on keyboard focus (from the first redesign task that makes a kit IconButton focusable; until then n/a) | Tab to an icon button: its tooltip shows after 0.5 s and disappears when the focus moves on | **untested** |
 | UI kit (Task 700): the app (popup, History, Settings, Welcome) after the palette change | Every window renders in the new colours (darker canvas, blue-violet accent), no text is hard to read, no layout moved | **untested** |
+| UI kit (Task 700, P4): start the app on a scratch folder, open the popup, the History window and Settings once each, close them, then read private bytes of `dark-clipboard.exe` in Task Manager (Details, Memory (private working set) or `Get-Process`) | At most 4 MiB above the same steps on the 0.1.2 build (baseline numbers for the popup alone: `docs/testing/ui-redesign-baseline.md`) | **untested** |
 
 ## macOS
 

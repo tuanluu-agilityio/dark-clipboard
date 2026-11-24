@@ -13,8 +13,11 @@ fn manifest() -> PathBuf {
 }
 
 fn files_with_ext(dir: &Path, ext: &str) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = fs::read_dir(dir)
-        .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
+    // A missing folder gives an empty list; the tests that need files assert on the count.
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = entries
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == ext))
@@ -132,7 +135,9 @@ fn hex_literal_detector_works() {
 
 #[test]
 fn kit_colours_come_from_the_theme_only() {
-    for f in files_with_ext(&manifest().join("ui/kit"), "slint") {
+    let files = files_with_ext(&manifest().join("ui/kit"), "slint");
+    assert!(files.len() >= 8, "found only {} kit files", files.len());
+    for f in files {
         let src = fs::read_to_string(&f).unwrap_or_default();
         for (i, line) in src.lines().enumerate() {
             let code = line.split("//").next().unwrap_or_default();
