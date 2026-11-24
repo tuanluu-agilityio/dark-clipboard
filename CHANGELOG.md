@@ -7,6 +7,11 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 ### Added
 
 - Task 700: new design tokens (darker canvas, blue-violet accent, raised and selected surfaces, focus colour) and the Lucide icon set with a small shared UI kit (icon, icon button, button, key cap, tooltip, switch, menu). The popup's settings and close icons are Lucide icons with tooltips. No layout changed yet; the redesign of each window follows.
+- Task 701: the popup has a new layout: a header with the search field and four icon buttons (preview, history, settings, close), a filter segment (All, Text, Link, Code, Image, Files, Pinned, Favorites) with a More filters menu (Today, Last 7 days, Rich text, Color, Collections, Apps), 48 px rows with a kind icon, source and age, the Alt+1..9 number and copy, pin and more buttons on the hovered or selected row, PINNED and RECENT headings, a right-click row menu (Copy, Copy as plain text, Copy as..., Pin, Favorite, Delete; it has no paste item), a toast that floats above a status line (capture state and key hints). New keys: `Ctrl+K` (focus search), `Ctrl+,` (Settings), `Shift+F10` or the Menu key (row menu), `Ctrl+1` to `Ctrl+9` (filter segment), `Ctrl+Shift+F` (More filters). Every existing key keeps its action. A masked clip now shows a fixed "Hidden" line in the popup instead of the first characters of its masked preview.
+
+### Changed
+
+- Task 701: the popup is 440 x 520 (was 420 x 560). The text footer (Copy, Plain text, Copy as..., Pin, Delete) is replaced by the row buttons, the row menu and the keys that already existed (Enter, Shift+Enter, Ctrl+T, Ctrl+P, Del); the status line shows the capture state and at most three key hints. The preview still opens below the list until the side pane arrives.
 
 ## [0.1.2] - 2026-11-24
 
