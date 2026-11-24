@@ -26,6 +26,11 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 - Task 703: a masked clip (a clip that may hold a secret) no longer shows the first characters of the secret in the history list; the row and the detail panel show only the fixed "Hidden" text, and a search never highlights it.
 
+### Known issues
+
+- Phase 7 (UI redesign): the release exe is about 950 KiB larger than 0.1.2 (F-39, to investigate before the next release). Memory while hidden and idle CPU are unchanged; popup opening measured 22 ms (was 17 ms) on a quiet machine.
+
+
 ## [0.1.2] - 2026-11-24
 
 Privacy bug-fix release for Windows x64 (alpha, unsigned). The Known issues of 0.1.0 still apply. Release notes for the 0.1 line: https://github.com/tuanluu-agilityio/dark-clipboard/blob/v0.1.2/docs/user/release-notes-0.1.0.md

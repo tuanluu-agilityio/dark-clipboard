@@ -1,6 +1,6 @@
 # Phase 7: UI redesign (modern, minimal, keyboard-first)
 
-> **Status: approved by the owner 2026-11-24 (D-078)** (design: `docs/specs/ui-redesign/README.md`).
+> **Status: COMPLETE 2026-11-25** (phase review 709 APPROVED; budgets per D-086). Approved by the owner 2026-11-24 (D-078) (design: `docs/specs/ui-redesign/README.md`).
 > Task packages `docs/tasks/7NN-*.md` are written just before each task starts (700 and 710 first),
 > because later packages depend on what Task 700 finds (menus under the software renderer). Owner prompt
 > `prompts/ui-redesign.md` is requirements input (D-036). Numbered 7 because Phase 6 is
