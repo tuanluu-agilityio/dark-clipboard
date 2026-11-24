@@ -201,7 +201,9 @@ fn definition(name: &str) -> Option<(String, String)> {
 }
 
 fn def_or_fail(name: &str) -> (String, String) {
-    definition(name).unwrap_or_else(|| panic!("definition of {name} not found"))
+    let d = definition(name);
+    assert!(d.is_some(), "definition of {name} not found");
+    d.unwrap_or_default()
 }
 
 /// A label is bound to a model, property or i18n global, never to a literal or left empty.
@@ -432,10 +434,11 @@ fn settings_openers_record_themselves_and_get_the_focus_back() {
         "root.remove-app(i);",
         "root.save();",
     ] {
-        let at = lines
-            .iter()
-            .position(|l| *l == call)
-            .unwrap_or_else(|| panic!("settings.slint: {call} not found"));
+        let at = lines.iter().position(|l| *l == call).unwrap_or(0);
+        assert!(
+            lines.get(at) == Some(&call),
+            "settings.slint: {call} not found"
+        );
         assert!(
             lines[at - 1].starts_with("root.opener = "),
             "settings.slint: {call} must be preceded by `root.opener = ...;`"
