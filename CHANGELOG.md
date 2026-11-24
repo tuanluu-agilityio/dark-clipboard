@@ -28,7 +28,7 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ### Known issues
 
-- Phase 7 (UI redesign): the release exe is about 850 KiB larger than 0.1.2 (13,977,088 bytes against 13,105,664; Task 711 removed 100 KiB, the rest is the generated code of the redesigned windows and the new icon, no runtime cost measured). Memory while hidden and idle CPU are unchanged; popup opening measured 22 ms (was 17 ms) on a quiet machine.
+- Phase 7 (UI redesign): the release exe is about 850 KiB larger than 0.1.2 (13,977,088 bytes against 13,105,664; Task 712 removed 100 KiB, the rest is the generated code of the redesigned windows and the new icon, no runtime cost measured). Memory while hidden and idle CPU are unchanged; popup opening measured 22 ms (was 17 ms) on a quiet machine.
 
 
 ## [0.1.2] - 2026-11-24

@@ -60,7 +60,7 @@ fn window_icon_png_exists() {
     assert_eq!(&png[..png.len().min(8)], b"\x89PNG\r\n\x1a\n");
 }
 
-/// Task 711: the window icon is raw RGBA set from Rust. A PNG named in a `.slint` file pulls the
+/// Task 712: the window icon is raw RGBA set from Rust. A PNG named in a `.slint` file pulls the
 /// image decoders into the exe (+116 KiB), so no `.slint` file may embed a raster image.
 #[test]
 fn window_icon_rgba_is_a_64_square() {

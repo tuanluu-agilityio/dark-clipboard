@@ -84,7 +84,7 @@ Means (bytes, MiB): hidden baseline 10,162,176 (9.69), Phase 7 10,051,584 (9.59)
 - **P1 in a clean state**: three planned runs were disturbed by load on the owner's live machine; quiet runs 4 and 5 are the usable numbers. Re-run `scripts/measure-popup.ps1 -Trials 50 -SeedClips 10000` (the script writes no settings file, so on a fresh folder the welcome window shows and capture stays off) on an idle machine for a final answer.
 - Visual checks (icons, DPI, Narrator, Vietnamese) are owner rows: `docs/testing/platform-checklist.md`, section "Phase 7 demo checklist (Task 708, Windows)".
 
-## Task 711: exe size (F-39)
+## Task 712: exe size (F-39)
 
 Release exe (`cargo build --release -p dark-clipboard`, Windows, one shared `--target-dir`), built at each `main` merge commit of Phase 7. The v0.1.2 row reproduces the recorded 13,105,664 B and the Task 707 row reproduces the 14,079,488 B of D-086.
 

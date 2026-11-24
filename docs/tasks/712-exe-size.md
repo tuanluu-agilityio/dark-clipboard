@@ -1,6 +1,6 @@
-# Task 711: Release exe size after Phase 7 (F-39)
+# Task 712: Release exe size after Phase 7 (F-39)
 
-**Agent:** `builder` · **Model:** sonnet · **Branch:** `task/711-exe-size` (from `main`) · **Review:** `reviewer` (sonnet)
+**Agent:** `builder` · **Model:** sonnet · **Branch:** `task/712-exe-size` (from `main`) · **Review:** `reviewer` (sonnet)
 **Global Constraints:** GC-14, GC-18, GC-19. **Source:** owner request 2026-11-25 ("xử lý F-39"); D-086 (P6 missed: release exe 14,079,488 B vs 13,105,664 B at v0.1.2, +951 KiB; budget +300 KiB; Task 700 alone was +36 KiB).
 
 ## Goal
@@ -15,7 +15,7 @@ Find what made the release exe grow in Tasks 701–707 and bring the growth vs v
 1. Measure: release-build the exe at these `main` merge commits (one scratch worktree outside the repo, reused, removed afterwards; `--target-dir` per build is not needed, sizes only): v0.1.2 (`558f81f`), Task 700 merge, 710, 701, 702, 703, 705, 704, 706, 707 (use `git log --merges --oneline` to find them). Record the size of each in a table: which task added how much.
 2. For the biggest contributors, find the cause (e.g. compare the size of the generated Slint code in `target/release/build/dark-clipboard-*/out/*.rs` between commits; try removing `KitGallery`; try `@image-url` image count). No new tools or crates; `cargo bloat` is not installed and must not be installed.
 3. Apply the safe fixes (no visible or behavioural change; all existing tests keep passing; scans keep their coverage). Measure again.
-4. Record before/after numbers and commands in `docs/testing/ui-redesign-verification.md` (new section "Task 711: exe size"), a decision in `memory-bank/decisions.md` (next free number after D-086), and update `CHANGELOG.md` `[Unreleased]` Known issues (remove the size line if fixed, or update the number).
+4. Record before/after numbers and commands in `docs/testing/ui-redesign-verification.md` (new section "Task 712: exe size"), a decision in `memory-bank/decisions.md` (next free number after D-086), and update `CHANGELOG.md` `[Unreleased]` Known issues (remove the size line if fixed, or update the number).
 
 ## Files this task may edit
 `apps/desktop/ui/**`, `apps/desktop/src/**` (only for size fixes with no behaviour change), `apps/desktop/build.rs`, `apps/desktop/tests/**` (keep coverage), `docs/testing/ui-redesign-verification.md`, `memory-bank/decisions.md`, `CHANGELOG.md`. `Cargo.toml` profile only with before/after numbers and a decision.

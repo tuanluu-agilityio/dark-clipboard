@@ -40,7 +40,7 @@ pub const MONO_FONT: &str = "Menlo";
 #[cfg(not(any(windows, target_os = "macos")))]
 pub const MONO_FONT: &str = "DejaVu Sans Mono";
 
-/// The window icon: 64 x 64 raw RGBA made by `res/make_icon.py` (Task 711).
+/// The window icon: 64 x 64 raw RGBA made by `res/make_icon.py` (Task 712).
 const WINDOW_ICON: &[u8] = include_bytes!("../res/window-64.rgba");
 
 fn window_icon() -> Image {

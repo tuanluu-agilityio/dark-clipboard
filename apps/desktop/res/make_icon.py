@@ -5,7 +5,7 @@
 Needs Pillow. Writes next to this file:
   dark-clipboard.ico   16 20 24 32 40 48 64 256 (256 = PNG, others = 32-bit DIB)
   window-64.png        the window icon, source picture
-  window-64.rgba       the same, raw RGBA, embedded in the exe (Task 711: a PNG in `.slint` pulls in
+  window-64.rgba       the same, raw RGBA, embedded in the exe (Task 712: a PNG in `.slint` pulls in
                        the image decoders, +116 KiB)
   tray/<state>-<size>.png and .rgba   states normal, paused, private, unavailable; sizes 16 20 24 32
   preview.png          contact sheet (light and dark backgrounds, zoomed and real size)
