@@ -191,7 +191,7 @@ mod layout_tests {
             (
                 "Remove from collection",
                 vec![
-                    Panel("act-remove-collection"),
+                    Menu("act-remove-collection"),
                     Panel("org-remove-collection"),
                     K(Key::Char('l'), CTRL_SHIFT, A::RemoveFromCollection),
                 ],

@@ -49,6 +49,16 @@ impl Nav {
         self.collections.iter().filter(|c| !c.system).collect()
     }
 
+    /// Of `names` (the collections a clip is in), the ones the user made, in the same order.
+    /// The system Favorites collection is left out: a clip's favorite state has its own control.
+    pub fn user_names(&self, names: &[String]) -> Vec<String> {
+        names
+            .iter()
+            .filter(|n| self.user_collections().iter().any(|c| &c.name == *n))
+            .cloned()
+            .collect()
+    }
+
     /// (id, name) of every collection, for the name check.
     pub fn names(&self) -> Vec<(CollectionId, String)> {
         self.collections
@@ -321,6 +331,17 @@ mod tests {
         };
         assert!(n.shown_user_collection(&fav).is_none());
         assert!(n.shown_user_collection(&Filters::default()).is_none());
+    }
+
+    #[test]
+    fn a_clips_collection_chips_leave_out_favorites() {
+        let n = nav();
+        let names = vec![
+            "Favorites".to_string(),
+            "Work".to_string(),
+            "Gone".to_string(),
+        ];
+        assert_eq!(n.user_names(&names), ["Work"]);
     }
 
     #[test]

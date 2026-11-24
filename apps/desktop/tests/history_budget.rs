@@ -70,7 +70,7 @@ fn the_toolbar_fits_in_both_languages() {
         .fold(0.0_f32, f32::max);
         // 8 padding, 16 icon, 6 gap, label, 6 gap, 16 chevron, 8 padding.
         let date_button = 8.0 + 16.0 + 6.0 + widest_date + 6.0 + 16.0 + 8.0;
-        let needed = TITLE_MIN + SEARCH_MIN + date_button + BUTTON_PX + 3.0 * 8.0;
+        let needed = TITLE_MIN + SEARCH_MIN + date_button + 2.0 * BUTTON_PX + 3.0 * 8.0;
         assert!(
             needed <= inner,
             "{lang:?} toolbar needs {needed} px but has {inner} px"

@@ -241,8 +241,15 @@ impl Host {
             &self.collapsed,
             self.lang,
         );
-        self.win
-            .set_filter_title(sidebar::title_of(&rows, self.model.filters(), self.lang).into());
+        self.win.set_filter_title(
+            sidebar::filter_title(
+                self.model.filters(),
+                &self.org.nav,
+                &self.sources,
+                self.lang,
+            )
+            .into(),
+        );
         self.win
             .set_date_text(sidebar::date_label(self.model.filters(), self.lang).into());
         let items: Vec<FilterItem> = rows.into_iter().map(filter_item).collect();

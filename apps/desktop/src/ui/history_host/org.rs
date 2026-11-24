@@ -152,7 +152,13 @@ impl Host {
                     _ => (String::new(), Vec::new()),
                 };
                 w.set_org_note(note.into());
-                let cols: Vec<SharedString> = cols.iter().map(|s| s.as_str().into()).collect();
+                let cols: Vec<SharedString> = self
+                    .org
+                    .nav
+                    .user_names(&cols)
+                    .iter()
+                    .map(|s| s.as_str().into())
+                    .collect();
                 w.set_org_collections(ModelRc::new(VecModel::from(cols)));
             }
             _ => {
@@ -687,7 +693,7 @@ impl Host {
             return;
         };
         let name = match &self.org.note {
-            Some((id, _, cols)) if *id == item.id => cols.get(i).cloned(),
+            Some((id, _, cols)) if *id == item.id => self.org.nav.user_names(cols).get(i).cloned(),
             _ => None,
         };
         let Some(name) = name else {

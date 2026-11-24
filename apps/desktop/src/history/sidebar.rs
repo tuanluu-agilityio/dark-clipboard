@@ -320,8 +320,14 @@ pub fn choose_date(f: &Filters, i: usize) -> Option<Filters> {
     chips::toggle(f, date_chip(i, f)?, &[])
 }
 
-/// The window title bar text shown in the toolbar: the current filter's name, or "All".
-pub fn title_of(rows: &[SidebarRow], f: &Filters, lang: Lang) -> String {
+/// The toolbar title: the current filter's name, or "All". Built from every row, also those of
+/// collapsed groups, so a filter hidden by a collapsed group still names the list.
+pub fn filter_title(f: &Filters, nav: &Nav, sources: &[String], lang: Lang) -> String {
+    let rows = sidebar_groups(f, nav, sources, &BTreeSet::new(), lang);
+    title_of(&rows, f, lang)
+}
+
+fn title_of(rows: &[SidebarRow], f: &Filters, lang: Lang) -> String {
     // The most specific filter wins: a tag, a collection, an app, a type, Pinned, else All.
     let pick = |g: Group| rows.iter().find(|r| !r.header && r.on && r.group == g);
     for g in [
@@ -649,6 +655,21 @@ mod tests {
             date_label(&choose_date(&Filters::default(), 3).unwrap(), Lang::Vi),
             "30 ngày qua"
         );
+    }
+
+    #[test]
+    fn the_title_names_a_filter_in_a_collapsed_group() {
+        let n = nav();
+        let f = toggle(&Filters::default(), CHIP_SOURCE + 1, &n, &srcs()).unwrap();
+        // Apps is collapsed: the row is not shown, the title still names it.
+        let shown = sidebar_groups(&f, &n, &srcs(), &default_collapsed(), Lang::En);
+        assert!(shown.iter().all(|r| r.label != "Edge"));
+        assert_eq!(filter_title(&f, &n, &srcs(), Lang::En), "Edge");
+        let f = toggle(&Filters::default(), NAV_TAG + 1, &n, &srcs()).unwrap();
+        let all = BTreeSet::from(Group::ALL);
+        let shown = sidebar_groups(&f, &n, &srcs(), &all, Lang::En);
+        assert!(shown.iter().all(|r| r.label != "urgent"));
+        assert_eq!(filter_title(&f, &n, &srcs(), Lang::En), "urgent");
     }
 
     #[test]
