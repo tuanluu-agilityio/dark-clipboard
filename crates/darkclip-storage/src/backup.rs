@@ -116,6 +116,7 @@ thread_local! {
 /// default), and a temporary file would be a plain copy of the history in the system temp
 /// folder (same rule as `Storage::compact`, D-062). The connection is private to the copy.
 fn private_vacuum(c: &Connection) -> Result<(), StorageError> {
+    c.pragma_update(None, "temp_store", "MEMORY")?;
     #[cfg(test)]
     {
         let ts: i64 = c.pragma_query_value(None, "temp_store", |r| r.get(0))?;
@@ -138,6 +139,8 @@ fn private_snapshot(conn: &Connection, target: &Path, now: Timestamp) -> Result<
             target,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
+        // No temporary file (sort, merge, VACUUM) of this copy in the system temp folder.
+        c.pragma_update(None, "temp_store", "MEMORY")?;
         c.pragma_update(None, "foreign_keys", true)?;
         c.pragma_update(None, "secure_delete", true)?;
         let _: String = c.pragma_update_and_check(None, "journal_mode", "DELETE", |r| r.get(0))?;
@@ -394,6 +397,9 @@ fn check_staged(staging: &Path, clock: Arc<dyn Clock>, live: Header) -> Result<u
     let supported = migrate::target_version(migrate::MIGRATIONS);
     let check = || -> Result<u64, StorageError> {
         let c = &st.conn;
+        // The staged copy is the whole history: no temporary file of it in the system temp
+        // folder (checks, the page-size VACUUM below).
+        c.pragma_update(None, "temp_store", "MEMORY")?;
         if text_pragma(c, "integrity_check")? != "ok" {
             return Err(corrupt());
         }
