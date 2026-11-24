@@ -3,6 +3,7 @@
 //! here: the decisions are in `crate::popup` (pure view-models). Nothing is logged; previews,
 //! queries and paths are never formatted into messages (GC-06, SR-11).
 
+use super::generated::IconName;
 use super::{ClipRow, DetailState, FileRow, Poster, Seg, Strings};
 use crate::popup::detail::{
     file_entries, props, DetailData, DetailModel, DetailProps, DetailRequest, Pic, Want,
@@ -10,7 +11,10 @@ use crate::popup::detail::{
 };
 use crate::popup::highlight::{row_segments, Segment};
 use crate::popup::list::Item;
-use crate::popup::row::{fill, row_text, split_two_lines, LINE_CHARS, MONO_LINE_CHARS};
+use crate::popup::row::{
+    fill, kind_icon_name, popup_preview_text, popup_text, row_text, split_two_lines, KindIcon,
+    LINE_CHARS, MONO_LINE_CHARS,
+};
 use darkclip_app::api::Caller;
 use darkclip_app::{ClipDetailView, PixelsView};
 use darkclip_core::i18n::{t, Lang, Msg};
@@ -57,6 +61,69 @@ pub fn clip_row(item: &Item, index: usize, lang: Lang, query: &str) -> ClipRow {
         mono: text.mono,
         pinned: item.pinned,
         marked: false,
+        kind_icon: icon_name(kind_icon_name(item.kind)),
+        number: SharedString::new(),
+        section: 0,
+        masked: item.masked,
+    }
+}
+
+/// The kit icon for a row's kind.
+pub fn icon_name(k: KindIcon) -> IconName {
+    match k {
+        KindIcon::FileText => IconName::FileText,
+        KindIcon::Link => IconName::Link,
+        KindIcon::Code => IconName::Code,
+        KindIcon::Image => IconName::Image,
+        KindIcon::File => IconName::File,
+        KindIcon::Type => IconName::Type,
+    }
+}
+
+/// One popup row (Task 701): one preview line, source and age, the Alt+N number. A masked clip
+/// shows only the fixed i18n text: the stored masked preview (the first characters of the secret)
+/// is never drawn, searched for highlights or read aloud. The overline (`section`) is set by the
+/// host, which sees the neighbouring rows.
+pub fn popup_clip_row(item: &Item, index: usize, lang: Lang, query: &str) -> ClipRow {
+    let text = popup_text(item, index, lang, crate::SystemClock.now());
+    let line = if text.mono {
+        MONO_LINE_CHARS
+    } else {
+        LINE_CHARS
+    };
+    let segs: Vec<Segment> = match popup_preview_text(item, lang) {
+        Some(masked) => vec![Segment {
+            text: masked.to_string(),
+            hit: false,
+        }],
+        None => row_segments(&item.preview, query, line),
+    };
+    let label: String = segs.iter().map(|s| s.text.as_str()).collect();
+    let segs = ModelRc::new(VecModel::from(
+        segs.into_iter()
+            .map(|s| Seg {
+                text: s.text.into(),
+                hit: s.hit,
+            })
+            .collect::<Vec<_>>(),
+    ));
+    ClipRow {
+        segs,
+        segs2: ModelRc::new(VecModel::<Seg>::default()),
+        meta: text.meta.into(),
+        label: label.into(),
+        description: text.description.into(),
+        icon: SharedString::new(),
+        pin_badge: SharedString::new(),
+        favorite: text.favorite,
+        masked_badge: SharedString::new(),
+        mono: text.mono,
+        pinned: text.pinned,
+        marked: false,
+        kind_icon: icon_name(text.kind_icon),
+        number: text.number.into(),
+        section: 0,
+        masked: text.masked,
     }
 }
 

@@ -1,8 +1,10 @@
 // Menu (Task 700): a keyboard-navigable list of actions drawn as an in-window `PopupWindow`
 // (never an OS window, so the host window keeps the focus and "close on focus loss" is not
 // triggered). The host lists only the actions that are available, so every item can be
-// highlighted. Keys (mirrored by `tests/kit.rs`): Up/Down wrap, Home/End jump, Return activates
-// the highlighted item, Escape closes. Labels and key caps come from i18n.
+// highlighted. The menu does not decide what a key does (F-31, Task 701): its `FocusScope` forwards
+// every key text through `key(string) -> bool`, and the host (`src/popup/menu.rs`) owns the
+// state, moves the highlight through the `highlighted` property and closes the menu with
+// `close()`. Labels and key caps come from i18n.
 //
 // Use: `menu.open(x, y)` with a position in the host window. Slint moves a `PopupWindow` that
 // would cross the window edge back inside it (checked in the Task 700 investigation, D-079), so
@@ -20,6 +22,10 @@ export struct MenuEntry {
     shortcut: string,
     // Destructive entries are drawn in `danger`.
     danger: bool,
+    // Opens a second-level list: drawn with a chevron, and a click leaves the menu open.
+    submenu: bool,
+    // A filter that is on: drawn with a check.
+    checked: bool,
 }
 
 export component MenuItem inherits Rectangle {
@@ -33,6 +39,8 @@ export component MenuItem inherits Rectangle {
     background: root.highlighted ? Theme.selected : transparent;
     accessible-role: button;
     accessible-label: root.entry.label;
+    accessible-checkable: root.entry.checked;
+    accessible-checked: root.entry.checked;
     accessible-action-default => {
         root.activated();
     }
@@ -59,6 +67,18 @@ export component MenuItem inherits Rectangle {
             text: root.entry.shortcut;
             y: (parent.height - self.height) / 2;
         }
+        if root.entry.checked: Icon {
+            name: IconName.check;
+            size: 16px;
+            tint: Theme.accent;
+            y: (parent.height - self.height) / 2;
+        }
+        if root.entry.submenu: Icon {
+            name: IconName.chevron-right;
+            size: 16px;
+            tint: Theme.text-2;
+            y: (parent.height - self.height) / 2;
+        }
     }
 
     TouchArea {
@@ -75,8 +95,13 @@ export component MenuItem inherits Rectangle {
 export component Menu inherits Rectangle {
     in property <[MenuEntry]> entries;
     in property <length> menu-width: 220px;
-    in-out property <int> highlighted;
-    // Index of the entry the user chose.
+    // Driven by the host (hover and keys both go through Rust).
+    in property <int> highlighted;
+    // Every key text the open menu receives; true when the host handled it.
+    callback key(string) -> bool;
+    // The pointer moved over an entry.
+    callback hovered(int);
+    // Index of the entry the user clicked. The menu closes first, except for a `submenu` entry.
     callback activated(int);
     callback dismissed();
 
@@ -93,7 +118,6 @@ export component Menu inherits Rectangle {
     public function open(x: length, y: length) {
         root.px = x;
         root.py = y;
-        root.highlighted = 0;
         pop.show();
     }
 
@@ -119,39 +143,7 @@ export component Menu inherits Rectangle {
                     self.focus();
                 }
                 key-pressed(e) => {
-                    // An empty menu only closes (same as `menu_key` in tests/kit.rs).
-                    if (root.entries.length == 0) {
-                        if (e.text == Key.Escape) {
-                            pop.close();
-                            root.dismissed();
-                            return accept;
-                        }
-                        return reject;
-                    }
-                    if (e.text == Key.DownArrow) {
-                        root.highlighted = Math.mod(root.highlighted + 1, root.entries.length);
-                        return accept;
-                    }
-                    if (e.text == Key.UpArrow) {
-                        root.highlighted = Math.mod(root.highlighted + root.entries.length - 1, root.entries.length);
-                        return accept;
-                    }
-                    if (e.text == Key.Home) {
-                        root.highlighted = 0;
-                        return accept;
-                    }
-                    if (e.text == Key.End) {
-                        root.highlighted = root.entries.length - 1;
-                        return accept;
-                    }
-                    if (e.text == Key.Return) {
-                        pop.close();
-                        root.activated(root.highlighted);
-                        return accept;
-                    }
-                    if (e.text == Key.Escape) {
-                        pop.close();
-                        root.dismissed();
+                    if (root.key(e.text)) {
                         return accept;
                     }
                     reject
@@ -163,10 +155,12 @@ export component Menu inherits Rectangle {
                         entry: entry;
                         highlighted: root.highlighted == i;
                         hovered => {
-                            root.highlighted = i;
+                            root.hovered(i);
                         }
                         activated => {
-                            pop.close();
+                            if (!entry.submenu) {
+                                pop.close();
+                            }
                             root.activated(i);
                         }
                     }
