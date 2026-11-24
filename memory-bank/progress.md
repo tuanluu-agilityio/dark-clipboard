@@ -101,7 +101,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
 |---|---|---|---|---|---|---|---|---|
 | Design package (audit agent sonnet 204,608; builder check sonnet 74,866) | docs/ui-redesign-design | orchestrator + general-purpose | opus + sonnet | done | 279,474 | | | 279,474 |
-| 700 Foundation kit (tokens, SVG icons, components) | | builder | sonnet | pending | | | | |
+| 700 Foundation kit (tokens, SVG icons, components) | task/700-ui-foundation-kit | builder | sonnet | in progress | | | | |
 | 710 App icon (option A) | | builder | sonnet | pending | | | | |
 | 701 Popup layout | | builder | sonnet | pending | | | | |
 | 702 Popup preview pane | | builder | sonnet | pending | | | | |
