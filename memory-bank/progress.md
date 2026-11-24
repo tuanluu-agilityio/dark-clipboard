@@ -91,12 +91,13 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 414 Icons without font glyphs; popup footer fits (owner report on 0.1.0) | task/414-icon-glyphs | builder | sonnet | done | 111,576 | 41,080 (reviewer sonnet: APPROVED, 1 should-fix (icon centring) → fixed) | 19,722 | 172,378 |
 | Phase 5 review | — | specialist | opus | **CHANGES REQUIRED** (D-072): 1 blocking (B1: backup snapshot skips FTS merge/VACUUM unless masked/expired clips were purged, so evicted clips' and replaced notes' words can leave in a `.dcbackup`); 7 non-blocking. Gate: ALL CHECKS PASSED (1000 tests, 0 failed, 32 ignored) | 162,582 | | | 162,582 |
 | 415 Phase 5 review fixes | task/415-phase5-review-fixes | specialist | opus | done | 101,451 | 77,853 (security-reviewer opus ×2: CR (blocking: the now-unconditional snapshot VACUUM ran without temp_store=MEMORY; this SQLite is built TEMP_STORE=1, so >2 MiB histories spill a copy to %TEMP%) → APPROVED) | 11,441 | 190,745 |
+| Phase 5 re-review | — | specialist | opus | **APPROVED** (D-074); gate ALL CHECKS PASSED (1006 passed, 0 failed, 32 ignored). **Phase 5 complete** | 19,518 | | | 19,518 |
 
 ## Totals by model
 
 | Model | Tokens |
 |---|---|
-| opus | 11,939,048 |
+| opus | 11,958,566 |
 | sonnet | 5,426,410 |
 | haiku | 0 |
-| **Total** | **17,365,458** (subagents only; orchestrator not measured) |
+| **Total** | **17,384,976** (subagents only; orchestrator not measured) |
