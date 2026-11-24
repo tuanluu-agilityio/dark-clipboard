@@ -82,14 +82,14 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 407 Security re-review | task/407-security-review | specialist (as reviewer; needs to write the report) | opus | done: 1 high (WER crash dumps), 4 medium → Task 413 | 216,790 | (orchestrator) | | 216,790 |
 | 413 Release blockers (407 findings) | task/413-release-blockers | specialist | opus | done | 319,940 | 217,332 (security-reviewer opus ×2: CR (blocking: DACL could reach a user-chosen folder with other files) → APPROVED; CI confirmed the elevated-runner owner rule) | 44,656 | 581,928 |
 | 409 Licence | — | — | — | done in Task 201 (D-045) | | | | |
-| 408 Release workflow | task/408-release-workflow | builder | sonnet | in progress | | | | |
+| 408 Release workflow | task/408-release-workflow | builder | sonnet | done (workflow first runs after merge: dispatch dry run) | 83,653 | 108,640 (reviewer opus ×2: CR (blocking: release.yml invalid YAML) → APPROVED) | 12,141 | 204,434 |
 | 410 0.1.0 docs and version | task/410-docs-0.1.0 | scaffolder | sonnet | pending | | | | |
 
 ## Totals by model
 
 | Model | Tokens |
 |---|---|
-| opus | 11,361,458 |
-| sonnet | 5,043,527 |
+| opus | 11,470,098 |
+| sonnet | 5,139,321 |
 | haiku | 0 |
-| **Total** | **16,404,985** (subagents only; orchestrator not measured) |
+| **Total** | **16,609,419** (subagents only; orchestrator not measured) |

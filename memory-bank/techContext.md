@@ -50,3 +50,5 @@ Updated: 2026-11-22
 - Release profile: `opt-level="z"`, `lto=true`, `codegen-units=1`, `panic="abort"`, `strip=true` (Darkshot).
 - No network crates in P0/P1. No async runtime.
 - `cargo deny` policy in `deny.toml` (Task 001).
+
+- Release tooling (Task 408): `cargo-about` 0.8.4 (installed in the release workflow, `--frozen`), `yaml` 2.9.1 (npm, `tools/schema-check`, workflow YAML gate).
