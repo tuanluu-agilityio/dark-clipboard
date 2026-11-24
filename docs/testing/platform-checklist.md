@@ -435,6 +435,25 @@ All rows **untested** until the owner runs them (agents never click, type, take 
 | Focus a bulk bar button, the rail or the drawer button, then press Ctrl+P, Del, Ctrl+A | Only `Esc`, `F6`, `Ctrl+B`, `Ctrl+F` / `Ctrl+K` and `Ctrl+,` reach the window while a control that handles Enter, Space or the arrows has the focus; the rest waits until the focus is back in the search box or the list. Check the keys work again after the bulk bar disappears | **untested** |
 | Narrator | It reads the row menu entries, the bulk bar ("N selected" and the buttons), the rail items (name and count), the row checkboxes and the drawer | **untested** |
 
+## Phase 7 demo checklist (Task 708, Windows)
+
+The consolidated owner pass for the UI redesign, most important checks first. Each row condenses the detailed rows of the task named in it (open that section for the full wording and all variants). All rows **untested** until the owner runs them (agents never click, type, take screenshots or write the real clipboard, GC-19). Use a scratch history: `dark-clipboard.exe --seed-demo-clips 200 --data-dir <temp>`, then run with the same `--data-dir`. Measurements by the agent (P1, P3, P5, P6) are in `docs/testing/ui-redesign-verification.md`.
+
+| Check | Expected | Condenses | Status |
+|---|---|---|---|
+| 1. Popup: open it (shortcut and tray), type a search, move with the arrows, copy with Enter, open the row menu (right click, `Shift+F10`), open and close the preview (`Space`, `Right`) | Two-pane popup with 48 px rows, hover buttons, a row menu without a paste item, a preview pane that does not move the list, `Esc` unwinds one layer at a time (menu, preview, popup); typing never stalls | Task 701 rows, Task 702 rows (in "Windows: release blockers") | **untested** |
+| 2. Popup: a masked clip (copy a fake secret while capturing) | Only "Hidden" in the row, tooltip, menu, preview and Narrator | Task 701 masked row, Task 702 masked row | **untested** |
+| 3. History window: open from the tray, search, filter in the sidebar, mark several rows, bulk bar, row menu, detail panel, drag the window to 640, 820 and 1000 px | Sidebar, icon rail and drawer layouts switch at the widths; bulk bar acts on all marks; every key still works; nothing clipped | Task 703 and Task 704 sections | **untested** |
+| 4. Settings: change every setting, Save, restart | The save bar shows only after a change; every value is kept; the two "Always protected" marker rows cannot be clicked, focused or toggled; the five confirmation dialogs work with Enter and Esc | Task 705 rows (in "Windows: release blockers") | **untested** |
+| 5. App icon: Explorer, taskbar, Alt+Tab, window title bars, tray in each state | The new icon everywhere; tray badges for paused, private and unavailable | Task 710 rows | **untested** |
+| 6. F1 shortcuts sheet in the popup and in the history window; Welcome from Settings > About | The sheet lists that window's keys and closes with `Esc` first; Welcome is one card, `Enter` starts, capture stays off until Start | Task 706 section | **untested** |
+| 7. Vietnamese: switch the language, walk popup, history, settings, welcome, F1 sheet and dialogs | No label is cut off at the minimum window sizes | Task 701, 703, 704, 705, 706, 707 Vietnamese rows | **untested** |
+| 8. DPI 100 %, 150 % and 200 %, and a mixed-DPI two-monitor setup, for the popup, preview, history and settings | Icons crisp, rows the right height, no clipped text, the popup stays on its monitor | Task 700, 701, 702, 703, 704, 705 scaling rows | **untested** |
+| 9. Narrator (Win+Ctrl+Enter) and the Tab walk in every window and dialog | A 2 px focus ring on every control in a sensible order, no trap; names and states are read; tooltips show on keyboard focus; the focus returns to the opener after a Settings question closes | Task 707 section, Narrator rows of Tasks 701, 704, 705, 706 | **untested** |
+| 10. P2 search timing: type 20 different one-word queries in the popup, then `Select-String <data dir>\logs\dark-clipboard.log -Pattern 'perf what=search_done'` | p95 of the 20 values at most 10 % above the 0.1.2 build (or at most 30 ms per keystroke, NFR-02); write the numbers down | `docs/specs/ui-redesign/05-acceptance.md` P2, `docs/testing/perf-windows.md` (search timing steps) | **untested** |
+| 11. P4 with all windows: open popup, History and Settings once, close them, read private bytes of `dark-clipboard.exe` | At most 4 MiB above the same steps on the 0.1.2 build | Task 700 P4 row; popup-only numbers in `docs/testing/ui-redesign-verification.md` | **untested** |
+| 12. P8 scrolling: seed 10,000 clips, scroll the popup list and the history list fast with the wheel and by dragging the scroll bar | No stutter, no blank rows | `docs/specs/ui-redesign/05-acceptance.md` P8 | **untested** |
+
 ## macOS
 
 All rows **untested** (no hardware, Q-04).
