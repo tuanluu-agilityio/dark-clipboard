@@ -116,7 +116,7 @@ thread_local! {
 /// default), and a temporary file would be a plain copy of the history in the system temp
 /// folder (same rule as `Storage::compact`, D-062). The connection is private to the copy.
 fn private_vacuum(c: &Connection) -> Result<(), StorageError> {
-    c.pragma_update(None, "temp_store", "MEMORY")?;
+    db::keep_temp_in_memory(c)?;
     #[cfg(test)]
     {
         let ts: i64 = c.pragma_query_value(None, "temp_store", |r| r.get(0))?;
@@ -140,7 +140,7 @@ fn private_snapshot(conn: &Connection, target: &Path, now: Timestamp) -> Result<
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         // No temporary file (sort, merge, VACUUM) of this copy in the system temp folder.
-        c.pragma_update(None, "temp_store", "MEMORY")?;
+        db::keep_temp_in_memory(&c)?;
         c.pragma_update(None, "foreign_keys", true)?;
         c.pragma_update(None, "secure_delete", true)?;
         let _: String = c.pragma_update_and_check(None, "journal_mode", "DELETE", |r| r.get(0))?;
@@ -345,6 +345,9 @@ fn precheck_raw(db: &Path, manifest_version: u32, supported: u32) -> Result<u32,
     )
     .map_err(|_| corrupt())?;
     let check = || -> Result<u32, StorageError> {
+        // The staged file is a whole history: integrity_check sorts index keys; no temporary
+        // file of it in the system temp folder (Task 416).
+        db::keep_temp_in_memory(&c)?;
         c.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
         c.pragma_update(None, "trusted_schema", false)?;
         c.pragma_update(None, "cell_size_check", true)?;
@@ -398,8 +401,9 @@ fn check_staged(staging: &Path, clock: Arc<dyn Clock>, live: Header) -> Result<u
     let check = || -> Result<u64, StorageError> {
         let c = &st.conn;
         // The staged copy is the whole history: no temporary file of it in the system temp
-        // folder (checks, the page-size VACUUM below).
-        c.pragma_update(None, "temp_store", "MEMORY")?;
+        // folder (checks, the page-size VACUUM below). `Storage::open` already set it; kept
+        // here so these checks never depend on that.
+        db::keep_temp_in_memory(c)?;
         if text_pragma(c, "integrity_check")? != "ok" {
             return Err(corrupt());
         }
@@ -508,6 +512,8 @@ impl Storage {
                 &snap,
                 OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
             )?;
+            // The referenced-blob query may build a temporary b-tree (DISTINCT/ORDER BY).
+            db::keep_temp_in_memory(&c)?;
             let n: i64 = c.query_row("SELECT count(*) FROM clips", [], |r| r.get(0))?;
             let mut referenced: Vec<String> = blobs::referenced_set(&c)?.into_iter().collect();
             referenced.sort();
@@ -703,6 +709,9 @@ impl Storage {
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
         .map_err(staged_err_sqlite)?;
+        // Only read page by page by the online backup API (no sort, no temporary table); set
+        // anyway so no future query on this whole-history source can spill to the temp folder.
+        db::keep_temp_in_memory(&from).map_err(staged_err)?;
         #[cfg(test)]
         let fail = self.fail_restore_swap;
         let backup = Backup::new(&from, &mut self.conn)?;

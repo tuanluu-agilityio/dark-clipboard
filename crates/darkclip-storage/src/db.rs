@@ -37,6 +37,38 @@ pub(crate) fn backup(conn: &Connection, target: &Path) -> Result<(), StorageErro
     Ok(result?)
 }
 
+/// Keeps SQLite's temporary tables, sorters, index builds and VACUUM working copies in memory
+/// on `conn` (Task 416, F-29). The bundled SQLite is built with `SQLITE_TEMP_STORE=1`, so by
+/// default they spill to files in the system temp folder: plain fragments of the history
+/// outside the private data folder (T-04, T-05). Every connection this crate opens on the
+/// user's data calls this first; in-memory connections do not need it.
+pub(crate) fn keep_temp_in_memory(conn: &Connection) -> Result<(), StorageError> {
+    conn.pragma_update(None, "temp_store", "MEMORY")?;
+    Ok(())
+}
+
+/// Merges the contentless FTS index before the pre-migration copy (Task 416, F-30), so the
+/// words of evicted clips and replaced notes or tags whose merge is still pending (a session
+/// that ended without its shutdown merge) are not carried into `history.db.pre-v{N}.bak`.
+/// Skipped when there is no `clips_fts` table (a database older than the index still migrates).
+///
+/// Best-effort, by choice: the merge only serves privacy, and a failing merge (a full disk, an
+/// index problem `quick_check` does not see) must never leave the history unopenable or block
+/// the upgrade; the copy is still made. The copy is short-lived (removed by the next good open)
+/// and the actor merges the live index at startup.
+fn merge_fts_before_copy(conn: &Connection) {
+    let has_fts = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'clips_fts')",
+            [],
+            |r| r.get::<_, bool>(0),
+        )
+        .unwrap_or(false);
+    if has_fts {
+        crate::maintenance::fts_optimize(conn);
+    }
+}
+
 /// `PRAGMA quick_check(1)`: O(N) structural check of every b-tree page (no index-content or
 /// UNIQUE check). Anything but a single `ok` is `Corrupt`, and so is a `SQLITE_CORRUPT` or
 /// `SQLITE_NOTADB` while checking (the error mapping); other errors (busy, I/O) stay what they
@@ -85,6 +117,9 @@ pub(crate) fn open_with(
         }
     };
     conn.busy_timeout(BUSY_TIMEOUT)?;
+    // Before anything reads or sorts: quick_check, migrations, the sweep and every search
+    // on this connection keep their temporary data in memory (both modes).
+    keep_temp_in_memory(&conn)?;
 
     // Check the version before changing anything: a newer database is never touched.
     let found = migrate::user_version(&conn)?;
@@ -118,6 +153,7 @@ pub(crate) fn open_with(
                 r.get(0)
             })?;
         if found > 0 || has_schema {
+            merge_fts_before_copy(&conn);
             backup(&conn, &backup_path(data_dir, supported))?;
         }
         migrate::run(&mut conn, migrations)?;
