@@ -25,6 +25,7 @@ Status: Phase 0, 2026-11-22.
 | No logging macros in privacy modules | check scripts | GC-06 | now (no-op until the files exist) |
 | Clipboard read/write only in `capture.rs` | check scripts | GC-03 | now |
 | No window-title APIs | check scripts | SR-11 | now |
+| Every non-test `Connection::open*(` calls `keep_temp_in_memory(` within 25 lines of its function, or carries `// temp-store: <reason>`; self-test with `scripts/fixtures/temp-store-{bad,good}.rs` | check scripts | D-073, D-077 (Task 417) | now |
 | Mandatory markers present in `markers.rs` | check scripts | GC-07 | Task 003 |
 | JSON Schema validation: 14 valid examples, 10 invalid examples rejected | check scripts (node + ajv) | the data contracts are consistent | **now** |
 | Required docs present; relative links resolve | check scripts | the blueprint stays navigable | **now** |
