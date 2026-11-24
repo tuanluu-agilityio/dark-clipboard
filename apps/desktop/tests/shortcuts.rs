@@ -9,13 +9,17 @@
 
 #![allow(dead_code)]
 
+// `#[path]` only at the top level: inside an inline module rustfmt on Linux/macOS resolves the
+// path through a `tests/<module>/` folder that does not exist (Windows normalises it).
+#[path = "../src/popup/keys.rs"]
+pub mod popup_keys;
 mod popup {
-    #[path = "../../src/popup/keys.rs"]
-    pub mod keys;
+    pub use super::popup_keys as keys;
 }
+#[path = "../src/history/keys.rs"]
+pub mod history_keys;
 mod history {
-    #[path = "../../src/history/keys.rs"]
-    pub mod keys;
+    pub use super::history_keys as keys;
 }
 #[path = "../src/shortcuts.rs"]
 mod shortcuts;
