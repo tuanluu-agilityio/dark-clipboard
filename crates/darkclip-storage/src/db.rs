@@ -174,3 +174,92 @@ impl Storage {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::retention::test_support::*;
+
+    /// A word that is unique in the file and far from secret-shaped (GC-09).
+    const TOKEN: &str = "qzvkjxwpremigrate";
+
+    fn temp_store(c: &Connection) -> i64 {
+        c.pragma_query_value(None, "temp_store", |r| r.get(0))
+            .unwrap()
+    }
+
+    fn contains(hay: &[u8], needle: &str) -> bool {
+        hay.windows(needle.len()).any(|w| w == needle.as_bytes())
+    }
+
+    /// The shipped migrations plus one more at the next version whose SQL is `body`
+    /// (it must not set `user_version`; that is appended here).
+    fn with_extra(body: &str) -> (Vec<Migration>, u32) {
+        let next = migrate::target_version(MIGRATIONS) + 1;
+        let sql: &'static str =
+            Box::leak(format!("{body}\nPRAGMA user_version = {next};").into_boxed_str());
+        let mut list: Vec<Migration> = MIGRATIONS
+            .iter()
+            .map(|m| Migration {
+                version: m.version,
+                sql: m.sql,
+            })
+            .collect();
+        list.push(Migration { version: next, sql });
+        (list, next)
+    }
+
+    #[test]
+    fn writer_and_reader_connections_keep_temporary_data_in_memory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let w = open(tmp.path(), clock());
+        assert_eq!(temp_store(&w.conn), 2, "read-write connection");
+        let r = Storage::open(tmp.path(), OpenMode::ReadOnly, clock()).unwrap();
+        assert_eq!(temp_store(&r.conn), 2, "read-only connection");
+    }
+
+    #[test]
+    fn migrations_already_run_with_temporary_data_in_memory() {
+        // A test-only migration records the connection's temp_store while it runs.
+        let (list, _) = with_extra(
+            "CREATE TABLE temp_store_probe AS SELECT temp_store AS ts FROM pragma_temp_store;",
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let s = open_with(tmp.path(), OpenMode::ReadWrite, clock(), &list).unwrap();
+        let ts: i64 = s
+            .conn
+            .query_row("SELECT ts FROM temp_store_probe", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ts, 2);
+    }
+
+    /// Building a database at an older shipped version with pending index deletions is not
+    /// practical (the current code only writes the current schema), so the store is made at
+    /// the current version and opened with one extra no-op migration: the same migrating
+    /// branch of `open`, with the same pre-migration copy.
+    #[test]
+    fn migration_backup_has_no_pending_fts_tokens() {
+        let tmp = tempfile::tempdir().unwrap();
+        {
+            let mut s = open(tmp.path(), clock());
+            let id = ins(&mut s, text_clip("a clip to annotate"));
+            s.set_note(&id, Some(&format!("note {TOKEN}"))).unwrap();
+            // Replaced: the old words wait for the batched merge, which never runs here
+            // (as when a session ends without its shutdown merge).
+            s.set_note(&id, Some("a different note")).unwrap();
+            assert!(s.fts_pending() > 0);
+        }
+        let mut bytes = std::fs::read(tmp.path().join(DB_FILE)).unwrap();
+        if let Ok(wal) = std::fs::read(tmp.path().join(format!("{DB_FILE}-wal"))) {
+            bytes.extend(wal);
+        }
+        assert!(contains(&bytes, TOKEN), "precondition: merge pending");
+
+        let (list, next) = with_extra("SELECT 1;");
+        let s = open_with(tmp.path(), OpenMode::ReadWrite, clock(), &list).unwrap();
+        assert_eq!(s.schema_version().unwrap(), next);
+        let bak = backup_path(tmp.path(), next);
+        assert!(bak.is_file(), "the copy is still made");
+        assert!(!contains(&std::fs::read(&bak).unwrap(), TOKEN));
+    }
+}
