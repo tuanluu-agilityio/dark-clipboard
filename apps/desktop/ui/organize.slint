@@ -78,13 +78,16 @@ export component OrgStrip inherits Rectangle {
             HorizontalLayout {
                 spacing: 6px;
                 height: 26px;
-                if root.favorite: Icon {
-                    kind: IconKind.star;
-                    tint: Theme.warning;
+                if root.favorite: VerticalLayout {
                     width: 14px;
-                    height: 14px;
-                    y: (parent.height - self.height) / 2;
-                    accessible-role: AccessibleRole.none;
+                    alignment: center;
+                    Icon {
+                        kind: IconKind.star;
+                        tint: Theme.warning;
+                        width: 14px;
+                        height: 14px;
+                        accessible-role: AccessibleRole.none;
+                    }
                 }
                 ActionButton {
                     text: root.fav-text;

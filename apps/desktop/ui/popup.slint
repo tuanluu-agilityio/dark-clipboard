@@ -300,13 +300,16 @@ export component RowView inherits Rectangle {
                     horizontal-stretch: 1;
                     min-width: 0px;
                 }
-                if data.favorite: Icon {
-                    kind: IconKind.star;
-                    tint: Theme.warning;
+                if data.favorite: VerticalLayout {
                     width: 13px;
-                    height: 13px;
-                    y: (parent.height - self.height) / 2;
-                    accessible-role: none;
+                    alignment: center;
+                    Icon {
+                        kind: IconKind.star;
+                        tint: Theme.warning;
+                        width: 13px;
+                        height: 13px;
+                        accessible-role: none;
+                    }
                 }
                 if data.pin-badge != "": Badge {
                     text: data.pin-badge;
