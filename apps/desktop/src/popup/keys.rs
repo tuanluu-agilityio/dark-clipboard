@@ -226,6 +226,13 @@ mod tests {
         search_focused: true,
         undo_available: false,
         chips_focused: false,
+        control_focused: false,
+    };
+    /// A header button or the filter segment has the focus.
+    const CONTROL: KeyCtx = KeyCtx {
+        search_focused: false,
+        control_focused: true,
+        ..TYPING
     };
     /// Just opened: search box focused and empty.
     const FRESH: KeyCtx = KeyCtx {
@@ -290,7 +297,12 @@ mod tests {
         assert_eq!(key_from_text("ab"), Key::Other);
         assert_eq!(key_from_text(&text(SlintKey::LeftArrow)), Key::Left);
         assert_eq!(key_from_text(&text(SlintKey::RightArrow)), Key::Right);
-        assert_eq!(key_from_text(&text(SlintKey::F1)), Key::Other);
+        assert_eq!(key_from_text(&text(SlintKey::F1)), Key::F1);
+        assert_eq!(key_from_text(&text(SlintKey::F10)), Key::F10);
+        assert_eq!(key_from_text(&text(SlintKey::F2)), Key::Other);
+        // Ctrl+K and Ctrl+F may arrive as their control codes.
+        assert_eq!(key_from_text("\u{b}"), Key::Char('\u{b}'));
+        assert_eq!(key_from_text("\u{6}"), Key::Char('\u{6}'));
     }
 
     #[test]
@@ -525,5 +537,148 @@ mod tests {
         assert_eq!(map_key(Key::Char('\u{8}'), NONE, FRESH), None);
         // The context-menu key is mapped to its own key (the history window uses it).
         assert_eq!(key_from_text(&text(SlintKey::Menu)), Key::Menu);
+    }
+
+    const CTRL_SHIFT: Mods = Mods {
+        ctrl: true,
+        shift: true,
+        ..NONE
+    };
+
+    #[test]
+    fn new_keys_work_while_typing_on_a_fresh_box_in_the_list_and_on_a_control() {
+        for ctx in [TYPING, FRESH, LIST, CONTROL] {
+            for c in ['k', 'K', '\u{b}'] {
+                assert_eq!(
+                    map_key(Key::Char(c), CTRL, ctx),
+                    Some(Action::FocusSearch),
+                    "{c:?}"
+                );
+            }
+            assert_eq!(
+                map_key(Key::Char(','), CTRL, ctx),
+                Some(Action::OpenSettings)
+            );
+            assert_eq!(
+                map_key(Key::F10, SHIFT, ctx),
+                Some(Action::RowMenu),
+                "Shift+F10"
+            );
+            assert_eq!(map_key(Key::Menu, NONE, ctx), Some(Action::RowMenu));
+            for c in ['f', 'F', '\u{6}'] {
+                assert_eq!(
+                    map_key(Key::Char(c), CTRL_SHIFT, ctx),
+                    Some(Action::MoreFilters),
+                    "{c:?}"
+                );
+            }
+            assert_eq!(map_key(Key::F1, NONE, ctx), Some(Action::Shortcuts));
+            assert_eq!(map_key(Key::Char('/'), CTRL, ctx), Some(Action::Shortcuts));
+            for n in 1..=9u8 {
+                let c = char::from(b'0' + n);
+                assert_eq!(
+                    map_key(Key::Char(c), CTRL, ctx),
+                    Some(Action::Segment(n)),
+                    "Ctrl+{n}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn new_keys_do_not_take_look_alike_chords() {
+        for ctx in [TYPING, LIST] {
+            // Plain letters and digits are typing; Alt+digit is the existing copy-nth key.
+            assert_eq!(map_key(Key::Char('k'), NONE, ctx), None);
+            assert_eq!(map_key(Key::Char(','), NONE, ctx), None);
+            assert_eq!(map_key(Key::Char('1'), NONE, ctx), None);
+            assert_eq!(map_key(Key::Char('0'), CTRL, ctx), None);
+            assert_eq!(map_key(Key::Char('1'), ALT, ctx), Some(Action::CopyNth(0)));
+            // Ctrl+F alone is not the filters key; plain F10 is not the menu key.
+            assert_eq!(map_key(Key::Char('f'), CTRL, ctx), None);
+            assert_eq!(map_key(Key::F10, NONE, ctx), None);
+            assert_eq!(map_key(Key::Char('k'), ALT, ctx), None);
+        }
+    }
+
+    #[test]
+    fn a_focused_control_keeps_enter_space_and_arrows() {
+        for k in [
+            Key::Enter,
+            Key::Char(' '),
+            Key::Left,
+            Key::Right,
+            Key::Up,
+            Key::Down,
+            Key::Delete,
+            Key::Home,
+        ] {
+            assert_eq!(map_key(k, NONE, CONTROL), None, "{k:?}");
+        }
+        assert_eq!(map_key(Key::Enter, CTRL, CONTROL), None);
+        assert_eq!(map_key(Key::Escape, NONE, CONTROL), Some(Action::Close));
+    }
+
+    /// Every popup key that existed before Task 701 keeps its action (Review Focus 4).
+    #[test]
+    fn every_existing_popup_key_keeps_its_action() {
+        let undo = KeyCtx {
+            undo_available: true,
+            ..LIST
+        };
+        let cases: Vec<(Key, Mods, KeyCtx, Option<Action>)> = vec![
+            (Key::Up, NONE, TYPING, Some(Action::Move(Move::Up))),
+            (Key::Down, NONE, TYPING, Some(Action::Move(Move::Down))),
+            (Key::PageUp, NONE, TYPING, Some(Action::Move(Move::PageUp))),
+            (
+                Key::PageDown,
+                NONE,
+                TYPING,
+                Some(Action::Move(Move::PageDown)),
+            ),
+            (Key::Home, NONE, FRESH, Some(Action::Move(Move::Home))),
+            (Key::End, NONE, LIST, Some(Action::Move(Move::End))),
+            (Key::Home, CTRL, TYPING, Some(Action::Move(Move::Home))),
+            (Key::End, CTRL, TYPING, Some(Action::Move(Move::End))),
+            (
+                Key::Enter,
+                NONE,
+                TYPING,
+                Some(Action::Copy(CopyKind::Original)),
+            ),
+            (
+                Key::Enter,
+                SHIFT,
+                TYPING,
+                Some(Action::Copy(CopyKind::Plain)),
+            ),
+            (
+                Key::Enter,
+                CTRL,
+                TYPING,
+                Some(Action::Copy(CopyKind::Paste)),
+            ),
+            (Key::Char(' '), NONE, FRESH, Some(Action::ToggleDetail)),
+            (Key::Right, NONE, FRESH, Some(Action::OpenDetail)),
+            (Key::Left, NONE, LIST, Some(Action::CloseDetail)),
+            (Key::Delete, NONE, FRESH, Some(Action::Delete)),
+            (Key::Char('z'), CTRL, undo, Some(Action::Undo)),
+            (Key::Char('p'), CTRL, TYPING, Some(Action::TogglePin)),
+            (Key::Char('d'), CTRL, TYPING, Some(Action::ToggleFavorite)),
+            (Key::Char('t'), CTRL, TYPING, Some(Action::CopyAs)),
+            (Key::Char('h'), CTRL, TYPING, Some(Action::OpenHistory)),
+            (Key::Char('\u{8}'), CTRL, FRESH, Some(Action::OpenHistory)),
+            (Key::Escape, NONE, TYPING, Some(Action::Close)),
+        ];
+        for (k, m, ctx, want) in cases {
+            assert_eq!(map_key(k, m, ctx), want, "{k:?} {m:?}");
+        }
+        for n in 1..=9u8 {
+            let c = char::from(b'0' + n);
+            assert_eq!(
+                map_key(Key::Char(c), ALT, TYPING),
+                Some(Action::CopyNth(usize::from(n) - 1))
+            );
+        }
     }
 }
