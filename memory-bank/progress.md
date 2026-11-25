@@ -120,6 +120,12 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 The owner reviewed the Phase 7 demo on 2026-11-25 ("đã review", D-089); no release was made (version 0.1.2).
 | **Release 0.2.0** (Phase 7 + 711-714; owner approved, review waived, D-090) | tag `v0.2.0` | orchestrator | — | **released 2026-11-25** (D-091) | | | | |
 
+## Owner requests after 0.2.0
+
+| Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
+|---|---|---|---|---|---|---|---|---|
+| 715 Project website EN/VI + GitHub Pages (owner request, D-092; prototype by orchestrator, reviewed by owner) | task/715-website | scaffolder | sonnet | done (`website/index.html` one file, self-hosted Geist/Geist Mono with vietnamese subset, EN/VI switch, `pages.yml` with an external-load check; owner must review the VI copy) | 150,471 | 71,507 + 2,461 re-review (reviewer sonnet: APPROVED; should-fix duplicate id fixed, KeePassXC wording aligned to the matrix) | 3,689 | 228,128 |
+
 Phase 7 complete 2026-11-25 (709 APPROVED; budgets per D-086; every visual, keyboard, Narrator and DPI check is an untested owner row, see the "Phase 7 demo checklist" in `docs/testing/platform-checklist.md`).
 
 ## Totals by model
