@@ -174,10 +174,12 @@ export component Menu inherits Rectangle {
                         }
                         activated => {
                             // Call out first: closing the popup destroys this repeated item, so
-                            // anything after `pop.close()` would never run (Task 713). A submenu
+                            // anything after `pop.close()` would never run (Task 713). The flag is read before the call:
+                            // the host swaps the entries inside it. A submenu
                             // entry keeps the menu open (the host swaps the entries).
+                            let keep-open = entry.submenu;
                             root.activated(i);
-                            if (!entry.submenu) {
+                            if (!keep-open) {
                                 pop.close();
                             }
                         }

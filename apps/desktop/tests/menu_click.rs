@@ -102,7 +102,23 @@ fn menu_click_activates_and_hover_reports() {
     let hovered = Rc::new(RefCell::new(Vec::<i32>::new()));
     {
         let a = activated.clone();
-        ui.on_activated(move |i| a.borrow_mut().push(i));
+        let weak = ui.as_weak();
+        ui.on_activated(move |i| {
+            a.borrow_mut().push(i);
+            // Like the host: a submenu click swaps the entries (to non-submenu ones) inside
+            // the callback, and the menu must stay open.
+            if i == 2 {
+                if let Some(ui) = weak.upgrade() {
+                    // Rewrite the rows of the same model in place: the repeated row that is
+                    // running this handler sees its new entry at once.
+                    use slint::Model;
+                    let model = ui.get_entries();
+                    for (r, l) in ["X", "Y", "Z"].iter().enumerate() {
+                        model.set_row_data(r, entry(l, false));
+                    }
+                }
+            }
+        });
         let h = hovered.clone();
         ui.on_hovered(move |i| h.borrow_mut().push(i));
     }
@@ -139,6 +155,6 @@ fn menu_click_activates_and_hover_reports() {
     assert_eq!(
         *activated.borrow(),
         vec![2, 0],
-        "popup stayed open after a submenu click"
+        "popup stayed open after a submenu click that swapped the entries"
     );
 }
