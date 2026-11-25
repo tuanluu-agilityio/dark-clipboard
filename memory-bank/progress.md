@@ -125,6 +125,7 @@ The owner reviewed the Phase 7 demo on 2026-11-25 ("đã review", D-089); no rel
 | Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
 |---|---|---|---|---|---|---|---|---|
 | 715 Project website EN/VI + GitHub Pages (owner request, D-092; prototype by orchestrator, reviewed by owner) | task/715-website | scaffolder | sonnet | done (`website/index.html` one file, self-hosted Geist/Geist Mono with vietnamese subset, EN/VI switch, `pages.yml` with an external-load check; owner must review the VI copy) | 150,471 | 71,507 + 2,461 re-review (reviewer sonnet: APPROVED; should-fix duplicate id fixed, KeePassXC wording aligned to the matrix) | 3,689 | 228,128 |
+| 716 Pages deploy fix (hotfix, orchestrator) | task/716-pages-actions | orchestrator | opus | done (first deploy after PR #66 failed twice: `deploy-pages@v4` found 0 artifacts although `upload-pages-artifact@v3` finalized one; bumped to configure-pages@v6, upload-pages-artifact@v5, deploy-pages@v5, the current majors) | | reviewer sonnet (resumed) | | |
 
 Phase 7 complete 2026-11-25 (709 APPROVED; budgets per D-086; every visual, keyboard, Narrator and DPI check is an untested owner row, see the "Phase 7 demo checklist" in `docs/testing/platform-checklist.md`).
 
