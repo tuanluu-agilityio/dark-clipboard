@@ -4,6 +4,10 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ## [Unreleased]
 
+### Added
+
+- Project website (English and Vietnamese), published with GitHub Pages from `website/`.
+
 ## [0.2.0] - 2026-11-25
 
 Phase 7: a redesign of every window (D-078), plus the fixes found in the owner's demo review (Tasks 711-714). Windows x64 only, unsigned, alpha. No setting, default, save rule or privacy rule changed.
