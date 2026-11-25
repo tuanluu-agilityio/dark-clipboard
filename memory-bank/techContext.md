@@ -54,3 +54,5 @@ Updated: 2026-11-22
 - `cargo deny` policy in `deny.toml` (Task 001).
 
 - Release tooling (Task 408): `cargo-about` 0.8.4 (installed in the release workflow, `--frozen`), `yaml` 2.9.1 (npm, `tools/schema-check`, workflow YAML gate).
+
+- Website (Task 715, D-092): static `website/index.html` (inline CSS and JS, English and Vietnamese, no build step, no network). Geist and Geist Mono (SIL OFL 1.1) are self-hosted in `website/fonts/`. Published by `.github/workflows/pages.yml` (GitHub Pages, source GitHub Actions; a step fails the deploy if the page loads anything from another origin). Not part of the Rust workspace or the release.

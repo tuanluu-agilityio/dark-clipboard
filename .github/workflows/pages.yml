@@ -1,0 +1,41 @@
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['website/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if the page loads anything from another origin
+        run: |
+          f=website/index.html
+          if grep -nEi "<(link|script|img|iframe|source)[^>]*(src|href)=[\"']?(https?:)?//" "$f"; then
+            echo "external load in a tag"; exit 1
+          fi
+          if grep -nEi "(url\(|@import)[ \"']*(https?:)?//" "$f"; then
+            echo "external load in CSS"; exit 1
+          fi
+          echo "no external loads"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website
+      - id: deployment
+        uses: actions/deploy-pages@v4

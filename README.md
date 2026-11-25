@@ -1,5 +1,7 @@
 # Dark Clipboard
 
+Website: https://tuanluu-agilityio.github.io/dark-clipboard/
+
 A local-first clipboard manager for Windows, macOS and Linux, written in Rust. It is part of the Darkshot family.
 
 > **Status: 0.2.0 alpha, Windows only.** Windows 11 x64 has a desktop app you can download (see [Download](#download-windows-x64)). macOS and Linux have no app yet and nothing is claimed for them. The latest release is 0.2.0, with the redesigned interface (Phase 7). The app is **unsigned**, and most of its screens have **not been checked by hand** on a real desktop: see [What is tested](#what-is-tested) and the Known issues in the [CHANGELOG](CHANGELOG.md).

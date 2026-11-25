@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="title">Dark Clipboard</title>
+<meta name="description" content="A local-first clipboard manager written in Rust. Remembers what you copy, never stores what is marked private. No account, no cloud, no telemetry." data-i18n-attr="content:desc">
+<meta name="theme-color" content="#111318">
+<meta property="og:title" content="Dark Clipboard" data-i18n-attr="content:title">
+<meta property="og:description" content="A local-first clipboard manager written in Rust. Remembers what you copy, never stores what is marked private. No account, no cloud, no telemetry." data-i18n-attr="content:desc">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tuanluu-agilityio.github.io/dark-clipboard/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2056%2056%22%3E%3Crect%20x=%222%22%20y=%222%22%20width=%2252%22%20height=%2252%22%20rx=%2213%22%20fill=%22%23202328%22%20stroke=%22%233A3E45%22%20stroke-width=%221.2%22/%3E%3Crect%20x=%2216%22%20y=%2215%22%20width=%2224%22%20height=%2230%22%20rx=%224.5%22%20fill=%22none%22%20stroke=%22%237887FF%22%20stroke-width=%224%22/%3E%3Crect%20x=%2221.5%22%20y=%2210.5%22%20width=%2213%22%20height=%228%22%20rx=%222.5%22%20fill=%22%23F3F5F9%22/%3E%3Cpath%20d=%22M22%2028h12M22%2035h8%22%20stroke=%22%23F3F5F9%22%20stroke-width=%223.5%22%20stroke-linecap=%22round%22/%3E%3C/svg%3E">
+<style>
+/* Geist and Geist Mono (SIL OFL 1.1), self-hosted: see fonts/README.md */
+@font-face{font-family:'Geist';font-style:normal;font-weight:400 700;font-display:swap;src:url(fonts/geist-vietnamese.woff2) format('woff2');unicode-range:U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB}
+@font-face{font-family:'Geist';font-style:normal;font-weight:400 700;font-display:swap;src:url(fonts/geist-latin-ext.woff2) format('woff2');unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:'Geist';font-style:normal;font-weight:400 700;font-display:swap;src:url(fonts/geist-latin.woff2) format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:'Geist Mono';font-style:normal;font-weight:400 500;font-display:swap;src:url(fonts/geist-mono-vietnamese.woff2) format('woff2');unicode-range:U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB}
+@font-face{font-family:'Geist Mono';font-style:normal;font-weight:400 500;font-display:swap;src:url(fonts/geist-mono-latin-ext.woff2) format('woff2');unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:'Geist Mono';font-style:normal;font-weight:400 500;font-display:swap;src:url(fonts/geist-mono-latin.woff2) format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+/* VOICE: quiet, precise, honest; a tool page written by the people who built it.
+   IDEA: the page behaves like the app's own popup: the hero is the popup, live, over a document.
+   PICTURE: real UI built from the approved design tokens (popup, history, settings), plus a capture-path diagram.
+   COLOUR and TYPE: always dark (#111318 canvas, #1B2028 surface), one accent #7887FF, green only for "capturing"; Geist + Geist Mono.
+   LAYOUT: centred title over a wide stage; bands full width; mockups scale down, never overflow. */
+:root{color-scheme:dark;
+  --canvas:#111318;--surface:#1B2028;--raised:#232935;--selected:#262C45;--border:#2D3440;--border-strong:#4A5263;
+  --text:#F3F5F9;--text-2:#A1AAB8;--text-3:#8F98A8;--accent:#7887FF;--on-accent:#111318;--focus:#9AA6FF;
+  --success:#5FD4AA;--warning:#F2C14E;--danger:#FF7A85;--mono:"Geist Mono",Consolas,monospace;
+  --deep:#0B0C10;--sans:"Geist","Segoe UI",system-ui,sans-serif}
+:root[data-theme=light],:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+html{scroll-behavior:smooth;scroll-padding-top:72px}
+body{margin:0;background:var(--deep);color:var(--text);font:16px/1.6 var(--sans);overflow-x:clip}
+a{color:var(--accent)} a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.band{padding:clamp(48px,7vw,104px) max(5vw,16px)}
+.wrap{max-width:1240px;margin:0 auto}
+h1,h2,h3{font-weight:600;letter-spacing:-.02em;text-wrap:balance;margin:0}
+h1{font-size:clamp(36px,5.4vw,60px);line-height:1.04}
+h2{font-size:clamp(28px,3.4vw,42px);line-height:1.08}
+h3{font-size:18px;line-height:1.3}
+p{margin:0}
+.lede{font-size:clamp(17px,1.6vw,19px);color:var(--text-2);max-width:60ch}
+.sub{color:var(--text-2);max-width:62ch;margin-top:14px}
+code,.k{font-family:var(--mono);font-size:.88em}
+.k{display:inline-flex;align-items:center;height:22px;padding:0 7px;border-radius:5px;background:var(--raised);border:1px solid var(--border);color:var(--text);white-space:nowrap}
+.i{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+/* top bar */
+.top{position:sticky;top:0;z-index:20;background:#0B0C10e6;backdrop-filter:blur(8px);border-bottom:1px solid var(--border)}
+.top .wrap{display:flex;align-items:center;gap:20px;height:60px;padding:0 max(5vw,16px);max-width:none}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;color:var(--text);text-decoration:none;flex:none}
+.brand svg{width:30px;height:30px}
+.links{display:flex;gap:22px;margin-left:auto;font-size:15px}
+.links a{color:var(--text-2);text-decoration:none}.links a:hover{color:var(--text)}
+.cta{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 20px;border-radius:8px;font:600 15px var(--sans);text-decoration:none;border:1px solid var(--border-strong);color:var(--text);background:var(--surface);cursor:pointer;white-space:nowrap}
+.cta.p{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.cta:hover{filter:brightness(1.08)}
+.top .cta{min-height:38px;padding:0 14px;font-size:14px}
+@media(max-width:760px){.links{display:none}}
+
+
+/* language switch */
+.lang{display:flex;gap:2px;padding:2px;border:1px solid var(--border);border-radius:8px;background:var(--surface);margin-left:0}
+.lang button{font:600 13px var(--sans);min-height:32px;min-width:38px;padding:0 8px;border:0;border-radius:6px;background:none;color:var(--text-2);cursor:pointer}
+.lang button[aria-pressed=true]{background:var(--accent);color:var(--on-accent)}
+.lang button:not([aria-pressed=true]):hover{color:var(--text)}
+@media(pointer:coarse){.lang button{min-height:44px;min-width:44px}}
+.links{margin-right:0}
+@media(max-width:760px){.top .lang{margin-left:auto}.top .cta{margin-left:0}}
+
+/* hero */
+.hero{padding-bottom:0;background:radial-gradient(1200px 520px at 50% 100%,#1a1f33 0%,transparent 70%),var(--deep)}
+.hero .intro{text-align:center;display:flex;flex-direction:column;align-items:center;gap:18px}
+.pill{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2);border:1px solid var(--border);border-radius:99px;padding:5px 12px;background:var(--surface)}
+.pill .d{width:7px;height:7px;border-radius:50%;background:var(--warning)}
+.hero .acts{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:6px}
+.fine{font-size:13px;color:var(--text-3)}
+.stage{position:relative;margin:44px auto 0;max-width:1080px;height:600px}
+.doc{position:absolute;left:0;right:0;top:40px;bottom:0;background:#15181e;border:1px solid var(--border);border-bottom:0;border-radius:12px 12px 0 0;overflow:hidden}
+.doc .bar{height:36px;display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--border);color:var(--text-3);font-size:13px}
+.doc .bar i{width:10px;height:10px;border-radius:50%;background:var(--raised)}
+.doc .txt{padding:28px 40px;font:15px/1.9 var(--mono);color:#6d7585;max-width:560px}
+.doc .txt b{font-weight:400;color:var(--text-2)}
+.caret{display:inline-block;width:2px;height:18px;background:var(--accent);vertical-align:-3px;animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+@media(prefers-reduced-motion:reduce){.caret{animation:none}html{scroll-behavior:auto}}
+.float{position:absolute;left:min(46%,calc(100% - 460px));top:0;filter:drop-shadow(0 30px 60px #000a)}
+.demo-note{position:absolute;right:16px;bottom:14px;font-size:12px;color:var(--text-3)}
+@media(max-width:980px){.stage{height:auto;padding-bottom:12px}.doc{display:none}.float{position:relative;left:auto;margin:0 auto;width:min(440px,100%)}.demo-note{position:static;text-align:center;margin-top:10px}}
+
+/* the live popup */
+.ui{font:13px/1.4 "Segoe UI","Segoe UI Variable",system-ui,sans-serif;color:var(--text);text-align:left}
+.float .popup{max-width:100%}
+.ui input.qin{all:unset;flex:1;color:var(--text);font:13px "Segoe UI",system-ui,sans-serif;min-width:0}
+.ui input.qin::placeholder{color:var(--text-3)}
+.ui .seg .t{cursor:pointer;border:0;font:inherit;background:none}
+.ui .clip{cursor:pointer}
+.ui .empty{padding:40px 16px;text-align:center;color:var(--text-3)}
+.ui .toast{transition:opacity .12s}
+.ui .toast[hidden]{display:flex;opacity:0;pointer-events:none}
+
+/* scaled mockups */
+.shot{position:relative;width:100%;overflow:hidden}
+.shot>.ui{position:absolute;left:0;top:0;transform-origin:0 0}
+
+/* facts strip */
+.strip{border-block:1px solid var(--border);background:var(--canvas);padding-block:34px}
+.facts4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:28px}
+.facts4 div{display:flex;gap:14px}
+.facts4 svg{color:var(--accent);margin-top:3px}
+.facts4 b{display:block;font-weight:600}
+.facts4 span{color:var(--text-2);font-size:15px}
+@media(max-width:900px){.facts4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.facts4{grid-template-columns:minmax(0,1fr)}}
+
+/* sections */
+.sec-head{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:40px;align-items:end;margin-bottom:40px}
+@media(max-width:860px){.sec-head{grid-template-columns:minmax(0,1fr);gap:12px}}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--border);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-top:40px}
+.grid3>div{background:var(--canvas);padding:26px 24px;display:flex;flex-direction:column;gap:8px}
+.grid3 svg{color:var(--accent)}
+.grid3 p{color:var(--text-2);font-size:15px}
+@media(max-width:900px){.grid3{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.grid3{grid-template-columns:minmax(0,1fr)}}
+.frame{border-radius:12px;padding:10px;background:var(--canvas);border:1px solid var(--border)}
+.cap{font-size:13px;color:var(--text-3);margin-top:12px}
+
+/* privacy */
+.priv{background:var(--canvas);border-block:1px solid var(--border)}
+.flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;position:relative}
+.step{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;position:relative}
+.step h3{display:flex;gap:10px;align-items:center;margin-bottom:8px}
+.step h3 svg{color:var(--accent)}
+.step p{color:var(--text-2);font-size:15px}
+.step:not(:last-child)::after{content:"";position:absolute;right:-12px;top:50%;width:10px;height:10px;border-top:2px solid var(--border-strong);border-right:2px solid var(--border-strong);transform:translateY(-50%) rotate(45deg)}
+.step.stop{border-color:#FF7A8566}
+.step.stop h3 svg{color:var(--danger)}
+.step.keep{border-color:#5FD4AA66}
+.step.keep h3 svg{color:var(--success)}
+.branch{grid-column:2/4;display:flex;gap:10px;align-items:center;color:var(--danger);font-size:14px;padding:4px 20px 0}
+.branch::before{content:"";flex:1;max-width:40px;height:0;border-top:2px dashed #FF7A8580}
+@media(max-width:900px){.flow{grid-template-columns:minmax(0,1fr)}.step:not(:last-child)::after{right:50%;top:auto;bottom:-12px;transform:translateX(50%) rotate(135deg)}.branch{grid-column:auto}}
+.priv-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:48px;align-items:start;margin-top:64px}
+@media(max-width:960px){.priv-grid{grid-template-columns:minmax(0,1fr)}}
+.ticks{list-style:none;padding:0;margin:22px 0 0;display:flex;flex-direction:column;gap:14px}
+.ticks li{display:flex;gap:12px;color:var(--text-2)}
+.ticks li b{color:var(--text);font-weight:600}
+.ticks svg{color:var(--success);margin-top:4px}
+
+/* keys */
+.keys{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 48px;margin-top:8px}
+.keys div{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:13px 0;border-bottom:1px solid var(--border);color:var(--text-2)}
+.keys div span:last-child{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+@media(max-width:760px){.keys{grid-template-columns:minmax(0,1fr)}}
+
+/* status table */
+table{width:100%;border-collapse:collapse;font-size:15px}
+th,td{text-align:left;padding:14px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+th{color:var(--text-3);font-weight:500;font-size:14px}
+td:first-child{font-weight:600;white-space:nowrap}
+.tag{display:inline-flex;gap:6px;align-items:center;font-size:13px;padding:2px 9px;border-radius:99px;border:1px solid var(--border);white-space:nowrap}
+.tag.y{color:var(--success);border-color:#5FD4AA55}.tag.n{color:var(--text-3)}.tag.w{color:var(--warning);border-color:#F2C14E55}
+@media(max-width:600px){table{font-size:14px}.stack thead{display:none}.stack tr{display:grid;padding-block:10px;border-bottom:1px solid var(--border)}.stack td{display:flow-root;border:0;padding:3px 0;padding-inline-start:7em;white-space:normal}.stack td::before{content:attr(data-l);float:inline-start;width:6.5em;margin-inline-start:-7em;color:var(--text-3);font-weight:400}}
+
+/* download */
+.dl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px}
+@media(max-width:900px){.dl{grid-template-columns:minmax(0,1fr)}}
+.steps{margin:24px 0 0;padding-left:22px;display:flex;flex-direction:column;gap:14px;color:var(--text-2)}
+.steps li::marker{color:var(--accent);font-weight:600}
+.steps b{color:var(--text)}
+.term{background:var(--canvas);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.term .tb{display:flex;align-items:center;justify-content:space-between;padding:8px 8px 8px 16px;border-bottom:1px solid var(--border);font-size:13px;color:var(--text-3)}
+.term pre{margin:0;padding:18px 16px;font:14px/1.7 var(--mono);color:var(--text);overflow-x:auto}
+.term pre .c{color:var(--text-3)}
+.copy{min-height:36px;padding:0 12px;font-size:13px}
+.warn{display:flex;gap:12px;margin-top:20px;padding:16px;border-radius:12px;background:#F2C14E12;border:1px solid #F2C14E40;color:var(--text-2);font-size:15px}
+.warn svg{color:var(--warning);margin-top:3px}
+
+footer{border-top:1px solid var(--border);padding:40px max(5vw,16px);color:var(--text-3);font-size:14px}
+footer .wrap{display:flex;gap:24px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+footer a{color:var(--text-2)}
+
+svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+svg.i18{width:18px;height:18px}
+svg.fill{fill:currentColor}
+
+/* ---------- shared components ---------- */
+.win{background:var(--canvas);border:1px solid var(--border);border-radius:10px;overflow:hidden;position:relative;display:flex;flex-direction:column}
+.titlebar{height:32px;display:flex;align-items:center;padding:0 10px;color:var(--text-3);font-size:12px;border-bottom:1px solid var(--border);gap:8px}
+.titlebar .sp{flex:1}
+.ib{width:28px;height:28px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;color:var(--text-2);flex:none;position:relative}
+.ib:hover,.ib.hover{background:var(--raised);color:var(--text)}
+.ib.on{color:var(--accent);background:var(--selected)}
+.ib.danger:hover{color:var(--danger)}
+.ib.focus{outline:2px solid var(--focus);outline-offset:1px}
+.search{height:32px;flex:1;display:flex;align-items:center;gap:8px;padding:0 10px;background:var(--surface);border:1px solid var(--border-strong);border-radius:6px;color:var(--text-3)}
+.search.focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.search .q{color:var(--text);flex:1}
+.search .q .caret{display:inline-block;width:1px;height:14px;background:var(--text);vertical-align:-2px;margin-left:1px}
+.kc{display:inline-flex;align-items:center;gap:2px;height:18px;padding:0 5px;border-radius:4px;background:var(--raised);color:var(--text-2);font-size:11px;border:1px solid var(--border)}
+.kc svg.i{width:12px;height:12px}
+.seg{display:flex;gap:2px;padding:2px;background:var(--surface);border-radius:8px;border:1px solid var(--border)}
+.seg .t{height:26px;min-width:28px;padding:0 7px;border-radius:6px;display:flex;align-items:center;gap:5px;color:var(--text-2);font-size:12px}
+.seg .t.on{background:var(--selected);color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
+.seg .t.on svg{color:var(--accent)}
+.seg .div{width:1px;background:var(--border);margin:4px 2px}
+.overline{font-size:11px;font-weight:600;letter-spacing:.4px;color:var(--text-3);text-transform:uppercase;display:flex;align-items:center;gap:6px;padding:8px 12px 4px}
+.overline .n{font-weight:400;letter-spacing:0}
+.clip{display:flex;align-items:center;gap:10px;height:48px;padding:0 8px 0 10px;margin:0 6px;border-radius:6px;position:relative}
+.clip:hover{background:var(--raised)}
+.clip.sel{background:var(--selected)}
+.clip.sel::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:2px;background:var(--accent)}
+.clip .kind{width:28px;height:28px;border-radius:6px;background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--text-2);flex:none}
+.clip.sel .kind{background:var(--canvas);color:var(--accent)}
+.clip .cb{flex:1;min-width:0}
+.clip .pv{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+.clip .pv.mono{font-family:var(--mono);font-size:12.5px}
+.clip .pv mark{background:transparent;color:var(--accent);font-weight:600}
+.clip .meta{font-size:11px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;gap:6px;align-items:center}
+.clip .meta svg.i{width:12px;height:12px}
+.clip .side{display:flex;align-items:center;gap:4px;color:var(--text-3);font-size:11px}
+.clip .side .b{color:var(--text-2)}
+.clip .side .b.star{color:var(--warning)}
+.clip .side .b.lock{color:var(--danger)}
+.clip .acts{display:flex;gap:2px}
+.clip .num{min-width:16px;text-align:center}
+.clip.masked .pv{color:var(--text-3);font-style:italic}
+.status{height:30px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:0 10px;font-size:11px;color:var(--text-3)}
+.status .dot{width:7px;height:7px;border-radius:50%;background:var(--success)}
+.status .sp{flex:1}
+.status .h{display:flex;align-items:center;gap:5px}
+.toast{position:absolute;left:12px;right:12px;bottom:40px;height:36px;border-radius:8px;background:var(--raised);border:1px solid var(--border-strong);display:flex;align-items:center;gap:8px;padding:0 6px 0 12px;font-size:12px}
+.toast .sp{flex:1}
+.toast .u{color:var(--accent);font-weight:600;display:flex;gap:6px;align-items:center;padding:0 8px;height:26px;border-radius:6px}
+.tip{position:absolute;background:var(--raised);border:1px solid var(--border-strong);color:var(--text);font-size:12px;padding:4px 8px;border-radius:6px;white-space:nowrap;display:flex;gap:8px;align-items:center;z-index:5}
+.btn{height:32px;padding:0 14px;border-radius:6px;display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:13px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--text-2)}
+.btn.danger{color:var(--danger)}
+.chip{height:24px;padding:0 8px;border-radius:12px;display:inline-flex;align-items:center;gap:5px;background:var(--surface);border:1px solid var(--border);font-size:12px;color:var(--text-2)}
+.chip svg.i{width:12px;height:12px}
+
+/* ---------- popup ---------- */
+.popup{width:440px;height:520px;box-shadow:none}
+.popup .head{display:flex;align-items:center;gap:4px;padding:10px 10px 8px}
+.popup .filters{padding:0 10px 4px;display:flex;align-items:center;gap:6px}
+.popup .list{flex:1;overflow:hidden;padding-bottom:6px}
+.popup.wide{width:760px}
+.popup .split{flex:1;display:flex;min-height:0}
+.popup .split .left{width:440px;display:flex;flex-direction:column;border-right:1px solid var(--border)}
+.preview{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--canvas)}
+.preview .ph{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--border)}
+.preview .ph .t{flex:1;font-weight:600}
+.preview .pc{flex:1;padding:12px;overflow:hidden}
+.preview pre{margin:0;font-family:var(--mono);font-size:12px;line-height:1.5;color:var(--text);white-space:pre-wrap}
+.preview .facts{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;padding:10px 12px;border-top:1px solid var(--border);font-size:12px}
+.preview .facts dt{color:var(--text-3)} .preview .facts dd{margin:0;color:var(--text-2)}
+.img-ph{height:170px;border-radius:8px;border:1px solid var(--border);background:
+  linear-gradient(135deg,#2b3350 0%,#3a2f55 45%,#1f3b45 100%);display:flex;align-items:flex-end;padding:8px;color:var(--text-2);font-size:11px}
+
+/* ---------- history ---------- */
+.history{width:1060px;height:660px}
+.history .body{flex:1;display:flex;min-height:0}
+.side-nav{width:216px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:8px 8px}
+.side-nav .brand{display:flex;align-items:center;gap:8px;padding:4px 6px 10px;font-weight:600}
+.side-nav .brand .logo{width:22px;height:22px;border-radius:6px;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center}
+.nav{display:flex;align-items:center;gap:10px;height:30px;padding:0 8px;border-radius:6px;color:var(--text-2);position:relative}
+.nav .n{margin-left:auto;font-size:11px;color:var(--text-3)}
+.nav:hover{background:var(--raised);color:var(--text)}
+.nav.on{background:var(--selected);color:var(--text)}
+.nav.on svg{color:var(--accent)}
+.nav.on::before{content:"";position:absolute;left:-8px;top:7px;bottom:7px;width:3px;border-radius:2px;background:var(--accent)}
+.nav .sw{width:9px;height:9px;border-radius:3px;flex:none}
+.side-nav .grp{font-size:11px;font-weight:600;letter-spacing:.4px;color:var(--text-3);text-transform:uppercase;padding:14px 8px 4px;display:flex;align-items:center}
+.side-nav .grp .ib{width:22px;height:22px;margin-left:auto}
+.side-nav .sp{flex:1}
+.mid{flex:1;display:flex;flex-direction:column;min-width:0}
+.toolbar{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--border)}
+.toolbar .tt{font-weight:600;font-size:15px;margin-right:8px}
+.dd{height:32px;display:flex;align-items:center;gap:6px;padding:0 10px;border:1px solid var(--border);border-radius:6px;color:var(--text-2);font-size:12px}
+.mid .list{flex:1;overflow:hidden;padding:4px 0}
+.mid .clip{height:56px}
+.mid .clip .pv2{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-2);font-size:12px}
+.chk{width:16px;height:16px;border-radius:4px;border:1.5px solid var(--border-strong);flex:none;display:flex;align-items:center;justify-content:center}
+.chk.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.chk.on svg{width:12px;height:12px;stroke-width:3}
+.detail{width:340px;border-left:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+.detail .dh{display:flex;align-items:center;gap:2px;padding:10px 10px;border-bottom:1px solid var(--border)}
+.detail .dh .sp{flex:1}
+.detail .dc{padding:12px;overflow:hidden;flex:1;display:flex;flex-direction:column;gap:14px}
+.detail .box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;max-height:170px;overflow:hidden}
+.detail h4{margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:.4px;color:var(--text-3);text-transform:uppercase;display:flex;align-items:center;gap:6px}
+.detail .tags{display:flex;gap:6px;flex-wrap:wrap}
+.detail .note{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text-2);font-size:12.5px}
+.facts2{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12px}
+.facts2 dt{color:var(--text-3)} .facts2 dd{margin:0;color:var(--text-2)}
+.bulk{display:flex;align-items:center;gap:4px;margin:8px 12px 4px;padding:4px 6px 4px 12px;height:40px;background:var(--selected);border:1px solid var(--accent);border-radius:8px}
+.bulk .t{font-weight:600;margin-right:auto}
+.menu{position:absolute;width:236px;background:var(--raised);border:1px solid var(--border-strong);border-radius:10px;padding:4px;z-index:6}
+.menu .mi{display:flex;align-items:center;gap:10px;height:30px;padding:0 8px;border-radius:6px;color:var(--text)}
+.menu .mi svg{color:var(--text-2)}
+.menu .mi.hl{background:var(--selected);outline:2px solid var(--focus);outline-offset:-2px}
+.menu .mi .k{margin-left:auto;font-size:11px;color:var(--text-3)}
+.menu .mi.d{color:var(--danger)} .menu .mi.d svg{color:var(--danger)}
+.menu hr{border:0;border-top:1px solid var(--border);margin:4px 2px}
+.narrow{width:720px;height:560px}
+.rail{width:52px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:4px}
+.rail .ib{width:36px;height:36px}
+.rail .ib.on{box-shadow:inset 3px 0 0 var(--accent)}
+.rail hr{width:24px;border:0;border-top:1px solid var(--border);margin:6px 0}
+
+/* ---------- settings ---------- */
+.settings{width:860px;height:640px}
+.settings .body{flex:1;display:flex;min-height:0}
+.settings .side-nav{width:220px}
+.settings .content{flex:1;overflow:hidden;padding:20px 24px;display:flex;flex-direction:column;gap:16px}
+.settings h3{margin:0;font-size:18px}
+.settings .sub{color:var(--text-2);margin:2px 0 0;font-size:12.5px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px}
+.card .ct{padding:10px 14px 4px;font-size:11px;font-weight:600;letter-spacing:.4px;color:var(--text-3);text-transform:uppercase;display:flex;align-items:center;gap:6px}
+.srow{display:flex;align-items:center;gap:12px;padding:10px 14px;min-height:44px}
+.srow+.srow{border-top:1px solid var(--border)}
+.srow .lb{flex:1;min-width:0}
+.srow .lb .l{color:var(--text)}
+.srow .lb .d{color:var(--text-3);font-size:12px}
+.srow .lk{color:var(--success)}
+.sw2{width:34px;height:20px;border-radius:10px;background:var(--border-strong);position:relative;flex:none}
+.sw2::after{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--text-2)}
+.sw2.on{background:var(--accent)} .sw2.on::after{left:17px;background:var(--on-accent)}
+.mode{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:6px 14px 14px}
+.mode .m{border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:4px;background:var(--canvas)}
+.mode .m .h{display:flex;align-items:center;gap:8px;font-weight:600}
+.mode .m .d{color:var(--text-3);font-size:12px}
+.mode .m.on{border-color:var(--accent);background:var(--selected)}
+.mode .m.on .h svg{color:var(--success)}
+.app{display:flex;align-items:center;gap:10px;padding:8px 14px}
+.app+.app{border-top:1px solid var(--border)}
+.app .ico{width:24px;height:24px;border-radius:6px;background:var(--raised);display:flex;align-items:center;justify-content:center;color:var(--text-2)}
+.app .nm{flex:1} .app .by{font-size:11px;color:var(--text-3);display:flex;gap:4px;align-items:center}
+.savebar{display:flex;align-items:center;gap:8px;padding:10px 24px;border-top:1px solid var(--border);background:var(--surface)}
+.savebar .dot{width:7px;height:7px;border-radius:50%;background:var(--warning)}
+.savebar .t{flex:1;color:var(--text-2);font-size:12px;display:flex;gap:8px;align-items:center}
+.select{height:30px;display:flex;align-items:center;gap:6px;padding:0 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--canvas);font-size:12px;min-width:150px;justify-content:space-between}
+
+/* ---------- components sheet ---------- */
+
+svg.i:not(.ui svg.i){width:18px;height:18px}
+</style>
+</head>
+<body>
+<!-- Lucide icon geometry (ISC licence), simplified where noted; the app embeds the real .svg files. -->
+<svg width="0" height="0" style="position:absolute">
+<defs>
+<symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+<symbol id="settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+<symbol id="pin" viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></symbol>
+<symbol id="star" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></symbol>
+<symbol id="lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+<symbol id="eyeoff" viewBox="0 0 24 24"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.53 13.53 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><path d="m2 2 20 20"/></symbol>
+<symbol id="trash" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+<symbol id="copy" viewBox="0 0 24 24"><rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+<symbol id="type" viewBox="0 0 24 24"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></symbol>
+<symbol id="wand" viewBox="0 0 24 24"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3M5 6v4M19 14v4M10 2v2M7 8H3M21 16h-4M11 3H9"/></symbol>
+<symbol id="pencil" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></symbol>
+<symbol id="note" viewBox="0 0 24 24"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z"/><path d="M15 3v6h6"/></symbol>
+<symbol id="tag" viewBox="0 0 24 24"><path d="M12.59 2.59A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.7 8.7a2.43 2.43 0 0 0 3.42 0l6.58-6.58a2.43 2.43 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5"/></symbol>
+<symbol id="folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+<symbol id="layers" viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65M22 12.65l-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
+<symbol id="text" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4M10 9H8M16 13H8M16 17H8"/></symbol>
+<symbol id="link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+<symbol id="code" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></symbol>
+<symbol id="image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/></symbol>
+<symbol id="file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></symbol>
+<symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+<symbol id="history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5M12 7v5l4 2"/></symbol>
+<symbol id="more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
+<symbol id="check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+<symbol id="undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+<symbol id="keyboard" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></symbol>
+<symbol id="pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></symbol>
+<symbol id="shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+<symbol id="db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/></symbol>
+<symbol id="transfer" viewBox="0 0 24 24"><path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/></symbol>
+<symbol id="info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+<symbol id="panel" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></symbol>
+<symbol id="listchecks" viewBox="0 0 24 24"><path d="m3 17 2 2 4-4M3 7l2 2 4-4M13 6h8M13 12h8M13 18h8"/></symbol>
+<symbol id="chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+<symbol id="chevd" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+<symbol id="enter" viewBox="0 0 24 24"><path d="m9 10-5 5 5 5"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></symbol>
+<symbol id="paste" viewBox="0 0 24 24"><path d="M15 2H9a1 1 0 0 0-1 1v2c0 .6.4 1 1 1h6c.6 0 1-.4 1-1V3c0-.6-.4-1-1-1Z"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2M16 4h2a2 2 0 0 1 2 2v2M11 14h10M17 10l4 4-4 4"/></symbol>
+<symbol id="app" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4M2 8h20M6 4v4"/></symbol>
+<symbol id="sliders" viewBox="0 0 24 24"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></symbol>
+<symbol id="calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+<symbol id="dl" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></symbol>
+<symbol id="refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+<symbol id="clipboard" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></symbol>
+</defs>
+</svg>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="logo" viewBox="0 0 56 56"><rect x="2" y="2" width="52" height="52" rx="13" fill="#202328" stroke="#3A3E45" stroke-width="1.2"/><rect x="16" y="15" width="24" height="30" rx="4.5" fill="none" stroke="#7887FF" stroke-width="4"/><rect x="21.5" y="10.5" width="13" height="8" rx="2.5" fill="#F3F5F9"/><path d="M22 28h12M22 35h8" stroke="#F3F5F9" stroke-width="3.5" stroke-linecap="round"/></symbol>
+<symbol id="gh" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></symbol>
+<symbol id="cloudoff" viewBox="0 0 24 24"><path d="m2 2 20 20M5.78 5.78A7 7 0 0 0 9 19h8.5a4.5 4.5 0 0 0 1.31-.2M21.53 16.05A4.5 4.5 0 0 0 17.5 10h-1.79A7 7 0 0 0 9.66 5.08"/></symbol>
+<symbol id="bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
+<symbol id="list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+<symbol id="hdd" viewBox="0 0 24 24"><path d="M22 12H2M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11zM6 16h.01M10 16h.01"/></symbol>
+<symbol id="ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></symbol>
+<symbol id="rust" viewBox="0 0 24 24"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M9 9h4a2 2 0 0 1 0 4H9zm0 0v6m4-2 2 2"/></symbol>
+<symbol id="globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/></symbol>
+</defs></svg>
+
+<header class="top"><div class="wrap">
+  <a class="brand" href="#top"><svg><use href="#logo"/></svg>Dark Clipboard</a>
+  <nav class="links" aria-label="Sections" data-i18n-attr="aria-label:nav_aria"><a href="#features" data-i18n="nav_features">Features</a><a href="#privacy" data-i18n="nav_privacy">Privacy</a><a href="#keys" data-i18n="nav_keys">Keyboard</a><a href="#status" data-i18n="nav_status">Status</a><a href="#download" data-i18n="nav_download">Download</a></nav>
+  <div class="lang" role="group" aria-label="Language" data-i18n-attr="aria-label:lang_aria"><button type="button" data-lang="en" aria-pressed="true">EN</button><button type="button" data-lang="vi" aria-pressed="false">VI</button></div>
+  <a class="cta" href="https://github.com/tuanluu-agilityio/dark-clipboard"><svg class="i"><use href="#gh"/></svg>GitHub</a>
+</div></header>
+
+<main id="top">
+<section class="band hero">
+  <div class="wrap intro">
+    <span class="pill"><span class="d"></span>0.2.0 alpha · Windows 11 x64</span>
+    <h1 data-i18n="h1">Everything you copied.<br>Nothing you wanted kept private.</h1>
+    <p class="lede" data-i18n="lede">Dark Clipboard remembers text, links, code, images and files you copy, and finds them again as you type. It runs only on your PC, with no account, no cloud and no telemetry.</p>
+    <div class="acts">
+      <a class="cta p" href="#download"><svg class="i"><use href="#dl"/></svg><span data-i18n="cta_dl">Download for Windows</span></a>
+      <a class="cta" href="https://github.com/tuanluu-agilityio/dark-clipboard"><svg class="i"><use href="#gh"/></svg><span data-i18n="cta_src">View the source</span></a>
+    </div>
+    <p class="fine" data-i18n="fine">Free software under GPLv3, written in Rust. macOS and Linux are planned, not available yet.</p>
+  </div>
+
+  <div class="stage" aria-label="Interactive demo of the popup" data-i18n-attr="aria-label:stage_aria">
+    <div class="doc" aria-hidden="true">
+      <div class="bar"><i></i><i></i><i></i><span>release-notes.md</span></div>
+      <div class="txt"><b>## What changed</b><br>The meeting moved to Tuesday.<br>Room and agenda: <span class="caret"></span><br><br><b>## Links</b><br>Slint release notes:<br>Test command for storage:</div>
+    </div>
+    <div class="float">
+      <div class="ui win popup" id="demo">
+        <div class="head">
+          <label class="search focus"><svg class="i"><use href="#search"/></svg><input class="qin" id="q" placeholder="Search clipboard" aria-label="Search the sample clips" data-i18n-attr="placeholder:q_ph;aria-label:q_aria" autocomplete="off"><span class="kc">Ctrl K</span></label>
+          <span class="ib"><svg class="i"><use href="#panel"/></svg></span>
+          <span class="ib"><svg class="i"><use href="#history"/></svg></span>
+          <span class="ib"><svg class="i"><use href="#settings"/></svg></span>
+          <span class="ib"><svg class="i"><use href="#x"/></svg></span>
+        </div>
+        <div class="filters"><div class="seg" id="seg" role="group" aria-label="Filter by kind" data-i18n-attr="aria-label:seg_aria"></div></div>
+        <div class="list" id="clips" role="listbox" aria-label="Sample clips" data-i18n-attr="aria-label:list_aria"></div>
+        <div class="toast" id="toast" hidden><svg class="i" style="color:var(--success)"><use href="#check"/></svg><span id="toastT" data-i18n="copied">Copied</span><span class="sp"></span></div>
+        <div class="status"><span class="dot"></span><span data-i18n="s_capturing">Capturing</span><span class="sp"></span>
+          <span class="h"><span class="kc"><svg class="i"><use href="#enter"/></svg></span><span data-i18n="s_copy">Copy</span></span>
+          <span class="h"><span class="kc">Ctrl <svg class="i"><use href="#enter"/></svg></span><span data-i18n="s_paste">Paste</span></span>
+          <span class="h"><span class="kc">F1</span><span data-i18n="s_keys">Keys</span></span></div>
+      </div>
+    </div>
+    <p class="demo-note" data-i18n="demo_note">Try it: type, use ↑ ↓ and Enter. Sample clips, drawn from the app's design.</p>
+  </div>
+</section>
+
+<section class="strip"><div class="wrap facts4" style="padding-inline:max(5vw,16px);max-width:calc(1240px + 10vw)">
+  <div><svg class="i"><use href="#hdd"/></svg><p><b data-i18n="f1b">Stays on your PC</b><span data-i18n="f1s">History lives in a local database in your own profile.</span></p></div>
+  <div><svg class="i"><use href="#cloudoff"/></svg><p><b data-i18n="f2b">No network</b><span data-i18n="f2s">No account, no sync, no telemetry. One opt-in update check.</span></p></div>
+  <div><svg class="i"><use href="#keyboard"/></svg><p><b data-i18n="f3b">Keyboard first</b><span data-i18n="f3s"><span class="k">Ctrl+Shift+V</span>, type, <span class="k">Enter</span>.</span></p></div>
+  <div><svg class="i"><use href="#pause"/></svg><p><b data-i18n="f4b">Off until you say so</b><span data-i18n="f4s">Nothing is captured until you press Start.</span></p></div>
+</div></section>
+
+<section class="band" id="features"><div class="wrap">
+  <div class="sec-head">
+    <h2 data-i18n="feat_h2">A popup for the next paste. A full window for the rest.</h2>
+    <p class="sub" data-i18n="feat_sub">The popup opens next to your cursor for the clip you need right now. The history window is where you organise: collections, tags, notes, favorites, select several and export.</p>
+  </div>
+  <div class="frame"><div class="shot" data-w="1060" data-h="660"><div class="ui win history" aria-hidden="true">
+  <div class="titlebar"><svg class="i" style="width:14px;height:14px"><use href="#clipboard"/></svg>Dark Clipboard: History<span class="sp"></span></div>
+  <div class="body">
+    <div class="side-nav">
+      <div class="nav on"><svg class="i"><use href="#layers"/></svg>All clips</div>
+      <div class="nav"><svg class="i"><use href="#pin"/></svg>Pinned</div>
+      <div class="nav"><svg class="i"><use href="#star"/></svg>Favorites</div>
+      <div class="grp">Types</div>
+      <div class="nav"><svg class="i"><use href="#text"/></svg>Text</div>
+      <div class="nav"><svg class="i"><use href="#link"/></svg>Links</div>
+      <div class="nav"><svg class="i"><use href="#code"/></svg>Code</div>
+      <div class="nav"><svg class="i"><use href="#image"/></svg>Images</div>
+      <div class="nav"><svg class="i"><use href="#file"/></svg>Files</div>
+      <div class="grp">Collections <span class="ib"><svg class="i" style="width:14px;height:14px"><use href="#plus"/></svg></span></div>
+      <div class="nav"><svg class="i"><use href="#folder"/></svg>Snippets</div>
+      <div class="nav"><svg class="i"><use href="#folder"/></svg>Release notes</div>
+      <div class="grp">Tags</div>
+      <div class="nav"><span class="sw" style="background:#7887FF"></span>work</div>
+      <div class="nav"><span class="sw" style="background:#5FD4AA"></span>sql</div>
+      <div class="grp">Apps <svg class="i" style="width:14px;height:14px;margin-left:auto"><use href="#chev"/></svg></div>
+      <div class="sp"></div>
+      <div class="nav"><svg class="i"><use href="#settings"/></svg>Settings</div>
+    </div>
+    <div class="mid">
+      <div class="toolbar">
+        <span class="tt">All clips</span>
+        <div class="search"><svg class="i"><use href="#search"/></svg><span class="q" style="color:var(--text-3)">Search clips</span><span class="kc">Ctrl F</span></div>
+        <span class="dd"><svg class="i"><use href="#calendar"/></svg>Any time<svg class="i"><use href="#chevd"/></svg></span>
+        <span class="ib" title="Select (Ctrl+A selects all)"><svg class="i"><use href="#listchecks"/></svg></span>
+      </div>
+      <div class="list">
+        <div class="clip sel">
+          <div class="kind"><svg class="i"><use href="#code"/></svg></div>
+          <div class="cb"><div class="pv mono">SELECT id, kind, created_at FROM clips</div><div class="pv2 mono">WHERE pinned = 1 ORDER BY created_at DESC;</div><div class="meta">DBeaver · 1 h · <svg class="i"><use href="#tag"/></svg>sql</div></div>
+          <div class="side"><svg class="i fill b star"><use href="#star"/></svg></div>
+        </div>
+        <div class="clip">
+          <div class="kind"><svg class="i"><use href="#link"/></svg></div>
+          <div class="cb"><div class="pv">https://github.com/slint-ui/slint/releases/tag/v1.19.0</div><div class="pv2">github.com</div><div class="meta">Firefox · 2 h</div></div>
+        </div>
+        <div class="clip">
+          <div class="kind"><svg class="i"><use href="#text"/></svg></div>
+          <div class="cb"><div class="pv">Weekly sync: Tuesdays 10:00, room 4B</div><div class="pv2">Agenda: release 0.2, icon review, Paste Stack scope</div><div class="meta">Outlook · 3 d · <svg class="i"><use href="#folder"/></svg>Snippets</div></div>
+          <div class="side"><svg class="i b"><use href="#pin"/></svg></div>
+        </div>
+        <div class="clip">
+          <div class="kind"><svg class="i"><use href="#image"/></svg></div>
+          <div class="cb"><div class="pv">Image · 1920 × 1080</div><div class="pv2">PNG · 412 KB</div><div class="meta">Darkshot · 3 d</div></div>
+        </div>
+        <div class="clip">
+          <div class="kind"><svg class="i"><use href="#file"/></svg></div>
+          <div class="cb"><div class="pv">report-q3.xlsx, summary.pdf</div><div class="pv2">D:\Reports\2026</div><div class="meta">Explorer · 5 d · 2 files</div></div>
+        </div>
+        <div class="clip">
+          <div class="kind"><svg class="i"><use href="#text"/></svg></div>
+          <div class="cb"><div class="pv">Cảm ơn anh, em sẽ gửi bản cập nhật trước thứ Sáu.</div><div class="pv2">Teams</div><div class="meta">Teams · 6 d</div></div>
+        </div>
+      </div>
+      <div class="status"><span>Sample history</span><span class="sp"></span><span class="h"><span class="kc">Menu</span>Actions</span><span class="h"><span class="kc">F1</span>Keys</span></div>
+    </div>
+    <div class="detail">
+      <div class="dh">
+        <span class="ib"><svg class="i"><use href="#copy"/></svg></span>
+        <span class="ib"><svg class="i"><use href="#type"/></svg></span>
+        <span class="ib"><svg class="i"><use href="#wand"/></svg></span>
+        <span class="ib"><svg class="i"><use href="#pencil"/></svg></span>
+        <span class="sp"></span>
+        <span class="ib"><svg class="i"><use href="#pin"/></svg></span>
+        <span class="ib on"><svg class="i fill"><use href="#star"/></svg></span>
+        <span class="ib danger"><svg class="i"><use href="#trash"/></svg></span>
+      </div>
+      <div class="dc">
+        <div class="box"><pre style="margin:0;font-family:var(--mono);font-size:12px;line-height:1.5">SELECT id, kind, created_at
+FROM clips
+WHERE pinned = 1
+ORDER BY created_at DESC;</pre></div>
+        <dl class="facts2" style="margin:0"><dt>Type</dt><dd>Code · 4 lines</dd><dt>From</dt><dd>DBeaver</dd><dt>Copied</dt><dd>Today 13:05 · 3 times</dd></dl>
+        <div><h4><svg class="i" style="width:12px;height:12px"><use href="#tag"/></svg>Tags</h4><div class="tags"><span class="chip">sql <svg class="i"><use href="#x"/></svg></span><span class="chip">work <svg class="i"><use href="#x"/></svg></span><span class="chip" style="border-style:dashed"><svg class="i"><use href="#plus"/></svg>Add</span></div></div>
+        <div><h4><svg class="i" style="width:12px;height:12px"><use href="#note"/></svg>Note</h4><div class="note">Query for the pinned-clips report. Ctrl+N to edit.</div></div>
+        <div><h4><svg class="i" style="width:12px;height:12px"><use href="#folder"/></svg>Collections</h4><div class="tags"><span class="chip"><svg class="i"><use href="#folder"/></svg>Snippets</span><span class="chip" style="border-style:dashed"><svg class="i"><use href="#plus"/></svg>Add</span></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="menu" style="left:420px;top:150px">
+    <div class="mi"><svg class="i"><use href="#copy"/></svg>Copy<span class="k">Enter</span></div>
+    <div class="mi"><svg class="i"><use href="#type"/></svg>Copy as plain text<span class="k">Shift+Enter</span></div>
+    <div class="mi"><svg class="i"><use href="#wand"/></svg>Copy as…<span class="k">Ctrl+T</span></div>
+    <div class="mi"><svg class="i"><use href="#pencil"/></svg>Edit a copy…<span class="k">Ctrl+E</span></div>
+    <hr>
+    <div class="mi"><svg class="i"><use href="#pin"/></svg>Pin<span class="k">Ctrl+P</span></div>
+    <div class="mi"><svg class="i"><use href="#star"/></svg>Remove from favorites<span class="k">Ctrl+D</span></div>
+    <div class="mi hl"><svg class="i"><use href="#folder"/></svg>Add to collection<span class="k"><svg class="i" style="width:12px;height:12px"><use href="#chev"/></svg></span></div>
+    <div class="mi"><svg class="i"><use href="#tag"/></svg>Tags…<span class="k">Ctrl+G</span></div>
+    <div class="mi"><svg class="i"><use href="#note"/></svg>Note…<span class="k">Ctrl+N</span></div>
+    <hr>
+    <div class="mi d"><svg class="i"><use href="#trash"/></svg>Delete…<span class="k">Del</span></div>
+  </div>
+</div>
+</div></div>
+  <p class="cap" data-i18n="cap_hist">History window, 1060 × 660. Sample content. The screenshot shows the English interface; the app also has Vietnamese.</p>
+  <div class="grid3">
+    <div><svg class="i"><use href="#search"/></svg><h3 data-i18n="t1h">Search as you type</h3><p data-i18n="t1p">Full-text search over everything you kept, with filters for text, links, code, images, files, colours, dates and apps.</p></div>
+    <div><svg class="i"><use href="#pin"/></svg><h3 data-i18n="t2h">Pin what you reuse</h3><p data-i18n="t2p">Pinned clips stay on top and never expire. Star favorites, sort them into collections, add tags and a note.</p></div>
+    <div><svg class="i"><use href="#wand"/></svg><h3 data-i18n="t3h">Copy as…</h3><p data-i18n="t3p">Trim, change case or line endings, pretty-print or minify JSON, encode URLs or Base64, strip HTML. The original never changes.</p></div>
+    <div><svg class="i"><use href="#paste"/></svg><h3 data-i18n="t4h">Paste back</h3><p data-i18n="t4p"><span class="k">Enter</span> copies. <span class="k">Ctrl+Enter</span> pastes into the app you came from, if you turn it on.</p></div>
+    <div><svg class="i"><use href="#dl"/></svg><h3 data-i18n="t5h">Backup and export</h3><p data-i18n="t5p">Back up the whole history to a file, restore it, import and export collections. Masked clips, which may hold a secret, are left out.</p></div>
+    <div><svg class="i"><use href="#globe"/></svg><h3 data-i18n="t6h">English and Vietnamese</h3><p data-i18n="t6p">The whole interface in both languages, with room for Vietnamese diacritics in every row.</p></div>
+  </div>
+</div></section>
+
+<section class="band priv" id="privacy"><div class="wrap">
+  <div class="sec-head">
+    <h2 data-i18n="p_h2">It checks before it reads.</h2>
+    <p class="sub" data-i18n="p_sub">When something is copied, Dark Clipboard first looks only at the list of formats and the app that copied it. If the copy is marked private, the content is never read at all.</p>
+  </div>
+  <div class="flow">
+    <div class="step"><h3><svg class="i"><use href="#bell"/></svg><span data-i18n="s1h">A copy happens</span></h3><p data-i18n="s1p">Windows tells Dark Clipboard that the clipboard changed.</p></div>
+    <div class="step"><h3><svg class="i"><use href="#list"/></svg><span data-i18n="s2h">Look, don't read</span></h3><p data-i18n="s2p">It reads the format list and the source app. Not the text, not the image.</p></div>
+    <div class="step stop"><h3><svg class="i"><use href="#ban"/></svg><span data-i18n="s3h">Private? Skip.</span></h3><p data-i18n="s3p">Private markers, an excluded app, Pause or Private mode: the copy is skipped unread.</p></div>
+    <div class="step keep"><h3><svg class="i"><use href="#hdd"/></svg><span data-i18n="s4h">Kept locally</span></h3><p data-i18n="s4p">Otherwise it is stored on this PC. Text that looks like a password, key or card number is not stored by default.</p></div>
+  </div>
+  <div class="priv-grid">
+    <div>
+      <h3 style="font-size:24px" data-i18n="prot_h">Protections you cannot turn off</h3>
+      <ul class="ticks">
+        <li><svg class="i"><use href="#shield"/></svg><span data-i18n="tk1"><b>Windows privacy markers.</b> Copies that ask to stay out of clipboard history, cloud sync or clipboard monitors.</span></li>
+        <li><svg class="i"><use href="#shield"/></svg><span data-i18n="tk2"><b>Password managers.</b> Their privacy markers are always respected. KeePassXC, KeePass 2, Bitwarden and 1Password are also on the built-in excluded list, which you can edit after a confirmation.</span></li>
+        <li><svg class="i"><use href="#shield"/></svg><span data-i18n="tk3"><b>Darkshot.</b> Screenshots Darkshot marks private are never stored.</span></li>
+        <li><svg class="i"><use href="#shield"/></svg><span data-i18n="tk4"><b>Your own rules.</b> Exclude more apps, pause for a while, or switch to Private mode from the tray.</span></li>
+      </ul>
+      <p class="cap" style="margin-top:22px" data-i18n="verified">Verified by hand: Darkshot 0.6.0 private copies were not stored. KeePassXC 2.8.0 privacy markers were seen on its copies. KeePass 2, Bitwarden and 1Password are not yet verified.</p>
+    </div>
+    <div><div class="frame"><div class="shot" data-w="860" data-h="640"><div class="ui win settings" aria-hidden="true">
+  <div class="titlebar"><svg class="i" style="width:14px;height:14px"><use href="#settings"/></svg>Dark Clipboard: Settings<span class="sp"></span></div>
+  <div class="body">
+    <div class="side-nav">
+      <div class="nav"><svg class="i"><use href="#sliders"/></svg>General</div>
+      <div class="nav on"><svg class="i"><use href="#shield"/></svg>Capture &amp; Privacy</div>
+      <div class="nav"><svg class="i"><use href="#db"/></svg>History &amp; Storage</div>
+      <div class="nav"><svg class="i"><use href="#transfer"/></svg>Data &amp; Transfer</div>
+      <div class="nav"><svg class="i"><use href="#info"/></svg>About</div>
+      <div class="sp"></div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;min-width:0">
+    <div class="content">
+      <div><h3>Capture &amp; Privacy</h3><p class="sub">What Dark Clipboard saves, and what it never saves.</p></div>
+      <div class="card">
+        <div class="ct">Capture</div>
+        <div class="mode">
+          <div class="m on"><div class="h"><svg class="i"><use href="#clipboard"/></svg>Recording</div><div class="d">Saves new copies</div></div>
+          <div class="m"><div class="h"><svg class="i"><use href="#eyeoff"/></svg>Private</div><div class="d">Nothing saved until you switch back</div></div>
+          <div class="m"><div class="h"><svg class="i"><use href="#pause"/></svg>Paused</div><div class="d">Stops for a while, then resumes</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="ct"><svg class="i" style="width:12px;height:12px;color:var(--success)"><use href="#shield"/></svg>Always protected</div>
+        <div class="srow"><div class="lb"><div class="l">Copies marked private by other apps</div><div class="d">Windows "exclude from history" and password-manager markers</div></div><svg class="i lk"><use href="#lock"/></svg></div>
+        <div class="srow"><div class="lb"><div class="l">Darkshot screenshots marked private</div><div class="d">Darkshot's exclusion marker is always respected</div></div><svg class="i lk"><use href="#lock"/></svg></div>
+      </div>
+      <div class="card">
+        <div class="ct">Sensitive content</div>
+        <div class="srow"><div class="lb"><div class="l">Sensitive data (keys, passwords, cards)</div><div class="d">Copies that look like a secret</div></div><span class="select">Do not store <svg class="i"><use href="#chevd"/></svg></span></div>
+      </div>
+      <div class="card">
+        <div class="ct">Don't save from these apps</div>
+        <div class="app"><span class="ico"><svg class="i"><use href="#app"/></svg></span><span class="nm">KeePassXC</span><span class="by"><svg class="i" style="width:12px;height:12px"><use href="#lock"/></svg>Built in</span><span class="ib"><svg class="i"><use href="#x"/></svg></span></div>
+        <div class="app"><span class="ico"><svg class="i"><use href="#app"/></svg></span><span class="nm">Bitwarden</span><span class="by"><svg class="i" style="width:12px;height:12px"><use href="#lock"/></svg>Built in</span><span class="ib"><svg class="i"><use href="#x"/></svg></span></div>
+        <div class="app"><span class="ico"><svg class="i"><use href="#app"/></svg></span><span class="nm">Darkshot</span><span class="by"><svg class="i" style="width:12px;height:12px"><use href="#lock"/></svg>Built in</span><span class="ib"><svg class="i"><use href="#x"/></svg></span></div>
+        
+        <div class="app"><span class="btn ghost" style="padding:0 6px"><svg class="i"><use href="#plus"/></svg>Add app…</span></div>
+      </div>
+    </div>
+    </div>
+  </div>
+</div>
+</div></div>
+    <p class="cap" data-i18n="cap_set">Settings window, Capture &amp; Privacy. The screenshot shows the English interface; the app also has Vietnamese.</p></div>
+  </div>
+</div></section>
+
+<section class="band" id="keys"><div class="wrap">
+  <div class="sec-head">
+    <h2 data-i18n="k_h2">Your hands stay on the keyboard.</h2>
+    <p class="sub" data-i18n="k_sub">Every action has a key, and <span class="k">F1</span> shows them all inside the app. A few you will use every day:</p>
+  </div>
+  <div class="keys">
+    <div><span data-i18n="kr1">Open the popup</span><span><span class="k">Ctrl+Shift+V</span></span></div>
+    <div><span data-i18n="kr2">Copy the selected clip</span><span><span class="k">Enter</span></span></div>
+    <div><span data-i18n="kr3">Copy as plain text</span><span><span class="k">Shift+Enter</span></span></div>
+    <div><span data-i18n="kr4">Copy and paste into the previous app</span><span><span class="k">Ctrl+Enter</span></span></div>
+    <div><span data-i18n="kr5">Copy row 1 to 9</span><span><span class="k">Alt+1</span>…<span class="k">Alt+9</span></span></div>
+    <div><span data-i18n="kr6">Preview pane</span><span><span class="k">Space</span></span></div>
+    <div><span data-i18n="kr7">Copy as… (transforms)</span><span><span class="k">Ctrl+T</span></span></div>
+    <div><span data-i18n="kr8">Pin / favorite</span><span><span class="k">Ctrl+P</span><span class="k">Ctrl+D</span></span></div>
+    <div><span data-i18n="kr9">Delete, then undo</span><span><span class="k">Del</span><span class="k">Ctrl+Z</span></span></div>
+    <div><span data-i18n="kr10">Open the history window</span><span><span class="k">Ctrl+H</span></span></div>
+  </div>
+</div></section>
+
+<section class="band priv" id="status"><div class="wrap">
+  <div class="sec-head">
+    <h2 data-i18n="st_h2">Where it stands today</h2>
+    <p class="sub" data-i18n="st_sub">An early alpha, said plainly. We only list a platform as supported once it has been tested on a real machine.</p>
+  </div>
+  <table class="stack">
+    <thead><tr><th data-i18n="th_p">Platform</th><th data-i18n="th_s">State</th><th data-i18n="th_n">Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Windows 11 x64</td><td data-l="State" data-i18n-attr="data-l:th_s"><span class="tag y" data-i18n="tg_alpha">Alpha, downloadable</span></td><td data-l="Notes" data-i18n-attr="data-l:th_n" data-i18n="n_w11">Capture tested on one Windows 11 machine. The binary is unsigned. Most screens have not been checked by hand yet.</td></tr>
+      <tr><td>Windows 10</td><td data-l="State" data-i18n-attr="data-l:th_s"><span class="tag n" data-i18n="tg_untested">Untested</span></td><td data-l="Notes" data-i18n-attr="data-l:th_n" data-i18n="n_w10">Not run there yet.</td></tr>
+      <tr><td>macOS</td><td data-l="State" data-i18n-attr="data-l:th_s"><span class="tag n" data-i18n="tg_planned">Planned</span></td><td data-l="Notes" data-i18n-attr="data-l:th_n" data-i18n="n_mac">No app yet.</td></tr>
+      <tr><td>Linux</td><td data-l="State" data-i18n-attr="data-l:th_s"><span class="tag n" data-i18n="tg_planned">Planned</span></td><td data-l="Notes" data-i18n-attr="data-l:th_n" data-i18n="n_lin">No app yet. Wayland support will be listed per desktop once tested.</td></tr>
+      <tr><td data-i18n="pl_later">Paste Stack, CLI, AI access</td><td data-l="State" data-i18n-attr="data-l:th_s"><span class="tag w" data-i18n="tg_later">Later</span></td><td data-l="Notes" data-i18n-attr="data-l:th_n" data-i18n="n_ai">AI tools will see nothing unless you grant access, and only what you grant.</td></tr>
+    </tbody>
+  </table>
+</div></section>
+
+<section class="band" id="download"><div class="wrap dl">
+  <div>
+    <h2 data-i18n="dl_h2">Get the alpha</h2>
+    <p class="sub" data-i18n="dl_sub">Version 0.2.0 for Windows 11 x64: a single exe, no installer, nothing to uninstall.</p>
+    <ol class="steps">
+      <li data-i18n="d1">Download <b>dark-clipboard-0.2.0-windows-x64.zip</b> and <b>SHA256SUMS.txt</b> from the release page.</li>
+      <li data-i18n="d2">Check the hash in PowerShell (right). It must match the line for the zip.</li>
+      <li data-i18n="d3">Unzip and start <b>dark-clipboard.exe</b>. It sits in the notification area; press <span class="k">Ctrl+Shift+V</span>.</li>
+      <li data-i18n="d4">The welcome explains what is never captured. <b>Nothing is captured until you press Start.</b></li>
+    </ol>
+    <div class="acts" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:28px">
+      <a class="cta p" href="https://github.com/tuanluu-agilityio/dark-clipboard/releases/tag/v0.2.0"><svg class="i"><use href="#dl"/></svg><span data-i18n="rel_btn">Release 0.2.0 on GitHub</span></a>
+      <a class="cta" href="https://github.com/tuanluu-agilityio/dark-clipboard/blob/main/CHANGELOG.md" data-i18n="changelog">Changelog</a>
+    </div>
+  </div>
+  <div>
+    <div class="term">
+      <div class="tb"><span>PowerShell</span><button class="cta copy" id="cp" type="button"><svg class="i"><use href="#copy"/></svg><span data-i18n="copy">Copy</span></button></div>
+      <pre id="cmd"><span class="c" data-i18n="cmd_c"># in the folder with both files</span>
+Get-FileHash .\dark-clipboard-0.2.0-windows-x64.zip -Algorithm SHA256
+Get-Content .\SHA256SUMS.txt</pre>
+    </div>
+    <div class="warn"><svg class="i"><use href="#info"/></svg><p data-i18n="warn">The exe is <b>not signed</b>, so SmartScreen may say "Windows protected your PC". Run it only after the hash matches, then choose More info and Run anyway. Smart App Control may block it entirely.</p></div>
+    <p class="cap" style="margin-top:16px" data-i18n="build">Prefer to build it? <code>cargo build --release -p dark-clipboard</code> with a recent stable Rust on Windows 11.</p>
+  </div>
+</div></section>
+</main>
+
+<footer><div class="wrap">
+  <a class="brand" href="#top" style="font-size:15px"><svg style="width:24px;height:24px"><use href="#logo"/></svg>Dark Clipboard</a>
+  <span data-i18n="ft1">Part of the Darkshot family. GPLv3. Made with Rust and Slint.</span>
+  <span><a href="https://github.com/tuanluu-agilityio/dark-clipboard" data-i18n="ft_src">Source</a> · <a href="https://github.com/tuanluu-agilityio/dark-clipboard/blob/main/LICENSE" data-i18n="ft_lic">Licence</a> · <a href="https://github.com/tuanluu-agilityio/dark-clipboard/issues" data-i18n="ft_bug">Report a problem</a></span>
+</div></footer>
+
+<script>
+{
+const L={
+"en": {
+"title": "Dark Clipboard",
+"desc": "A local-first clipboard manager written in Rust. Remembers what you copy, never stores what is marked private. No account, no cloud, no telemetry.",
+"nav_aria": "Sections",
+"nav_features": "Features",
+"nav_privacy": "Privacy",
+"nav_keys": "Keyboard",
+"nav_status": "Status",
+"nav_download": "Download",
+"lang_aria": "Language",
+"h1": "Everything you copied.<br>Nothing you wanted kept private.",
+"lede": "Dark Clipboard remembers text, links, code, images and files you copy, and finds them again as you type. It runs only on your PC, with no account, no cloud and no telemetry.",
+"cta_dl": "Download for Windows",
+"cta_src": "View the source",
+"fine": "Free software under GPLv3, written in Rust. macOS and Linux are planned, not available yet.",
+"stage_aria": "Interactive demo of the popup",
+"q_ph": "Search clipboard",
+"q_aria": "Search the sample clips",
+"seg_aria": "Filter by kind",
+"list_aria": "Sample clips",
+"copied": "Copied",
+"copied_n": "Copied: ",
+"s_capturing": "Capturing",
+"s_copy": "Copy",
+"s_paste": "Paste",
+"s_keys": "Keys",
+"pinned": "Pinned",
+"recent": "Recent",
+"nomatch": "No clips match",
+"f_all": "All",
+"f_text": "Text",
+"f_link": "Links",
+"f_code": "Code",
+"f_image": "Images",
+"f_file": "Files",
+"f_pin": "Pinned",
+"f_star": "Favorites",
+"demo_note": "Try it: type, use ↑ ↓ and Enter. Sample clips, drawn from the app's design.",
+"f1b": "Stays on your PC",
+"f1s": "History lives in a local database in your own profile.",
+"f2b": "No network",
+"f2s": "No account, no sync, no telemetry. One opt-in update check.",
+"f3b": "Keyboard first",
+"f3s": "<span class=\"k\">Ctrl+Shift+V<\/span>, type, <span class=\"k\">Enter<\/span>.",
+"f4b": "Off until you say so",
+"f4s": "Nothing is captured until you press Start.",
+"feat_h2": "A popup for the next paste. A full window for the rest.",
+"feat_sub": "The popup opens next to your cursor for the clip you need right now. The history window is where you organise: collections, tags, notes, favorites, select several and export.",
+"cap_hist": "History window, 1060 × 660. Sample content. The screenshot shows the English interface; the app also has Vietnamese.",
+"t1h": "Search as you type",
+"t1p": "Full-text search over everything you kept, with filters for text, links, code, images, files, colours, dates and apps.",
+"t2h": "Pin what you reuse",
+"t2p": "Pinned clips stay on top and never expire. Star favorites, sort them into collections, add tags and a note.",
+"t3h": "Copy as…",
+"t3p": "Trim, change case or line endings, pretty-print or minify JSON, encode URLs or Base64, strip HTML. The original never changes.",
+"t4h": "Paste back",
+"t4p": "<span class=\"k\">Enter<\/span> copies. <span class=\"k\">Ctrl+Enter<\/span> pastes into the app you came from, if you turn it on.",
+"t5h": "Backup and export",
+"t5p": "Back up the whole history to a file, restore it, import and export collections. Masked clips, which may hold a secret, are left out.",
+"t6h": "English and Vietnamese",
+"t6p": "The whole interface in both languages, with room for Vietnamese diacritics in every row.",
+"p_h2": "It checks before it reads.",
+"p_sub": "When something is copied, Dark Clipboard first looks only at the list of formats and the app that copied it. If the copy is marked private, the content is never read at all.",
+"s1h": "A copy happens",
+"s1p": "Windows tells Dark Clipboard that the clipboard changed.",
+"s2h": "Look, don't read",
+"s2p": "It reads the format list and the source app. Not the text, not the image.",
+"s3h": "Private? Skip.",
+"s3p": "Private markers, an excluded app, Pause or Private mode: the copy is skipped unread.",
+"s4h": "Kept locally",
+"s4p": "Otherwise it is stored on this PC. Text that looks like a password, key or card number is not stored by default.",
+"prot_h": "Protections you cannot turn off",
+"tk1": "<b>Windows privacy markers.<\/b> Copies that ask to stay out of clipboard history, cloud sync or clipboard monitors.",
+"tk2": "<b>Password managers.<\/b> Their privacy markers are always respected. KeePassXC, KeePass 2, Bitwarden and 1Password are also on the built-in excluded list, which you can edit after a confirmation.",
+"tk3": "<b>Darkshot.<\/b> Screenshots Darkshot marks private are never stored.",
+"tk4": "<b>Your own rules.<\/b> Exclude more apps, pause for a while, or switch to Private mode from the tray.",
+"verified": "Verified by hand: Darkshot 0.6.0 private copies were not stored. KeePassXC 2.8.0 privacy markers were seen on its copies. KeePass 2, Bitwarden and 1Password are not yet verified.",
+"cap_set": "Settings window, Capture &amp; Privacy. The screenshot shows the English interface; the app also has Vietnamese.",
+"k_h2": "Your hands stay on the keyboard.",
+"k_sub": "Every action has a key, and <span class=\"k\">F1<\/span> shows them all inside the app. A few you will use every day:",
+"kr1": "Open the popup",
+"kr2": "Copy the selected clip",
+"kr3": "Copy as plain text",
+"kr4": "Copy and paste into the previous app",
+"kr5": "Copy row 1 to 9",
+"kr6": "Preview pane",
+"kr7": "Copy as… (transforms)",
+"kr8": "Pin / favorite",
+"kr9": "Delete, then undo",
+"kr10": "Open the history window",
+"st_h2": "Where it stands today",
+"st_sub": "An early alpha, said plainly. We only list a platform as supported once it has been tested on a real machine.",
+"th_p": "Platform",
+"th_s": "State",
+"th_n": "Notes",
+"tg_alpha": "Alpha, downloadable",
+"n_w11": "Capture tested on one Windows 11 machine. The binary is unsigned. Most screens have not been checked by hand yet.",
+"tg_untested": "Untested",
+"n_w10": "Not run there yet.",
+"tg_planned": "Planned",
+"n_mac": "No app yet.",
+"n_lin": "No app yet. Wayland support will be listed per desktop once tested.",
+"pl_later": "Paste Stack, CLI, AI access",
+"tg_later": "Later",
+"n_ai": "AI tools will see nothing unless you grant access, and only what you grant.",
+"dl_h2": "Get the alpha",
+"dl_sub": "Version 0.2.0 for Windows 11 x64: a single exe, no installer, nothing to uninstall.",
+"d1": "Download <b>dark-clipboard-0.2.0-windows-x64.zip<\/b> and <b>SHA256SUMS.txt<\/b> from the release page.",
+"d2": "Check the hash in PowerShell (right). It must match the line for the zip.",
+"d3": "Unzip and start <b>dark-clipboard.exe<\/b>. It sits in the notification area; press <span class=\"k\">Ctrl+Shift+V<\/span>.",
+"d4": "The welcome explains what is never captured. <b>Nothing is captured until you press Start.<\/b>",
+"rel_btn": "Release 0.2.0 on GitHub",
+"changelog": "Changelog",
+"cmd_c": "# in the folder with both files",
+"copy": "Copy",
+"selcopy": "Select and copy",
+"warn": "The exe is <b>not signed<\/b>, so SmartScreen may say \"Windows protected your PC\". Run it only after the hash matches, then choose More info and Run anyway. Smart App Control may block it entirely.",
+"build": "Prefer to build it? <code>cargo build --release -p dark-clipboard<\/code> with a recent stable Rust on Windows 11.",
+"ft1": "Part of the Darkshot family. GPLv3. Made with Rust and Slint.",
+"ft_src": "Source",
+"ft_lic": "Licence",
+"ft_bug": "Report a problem"
+},
+"vi": {
+"title": "Dark Clipboard",
+"desc": "Trình quản lý bảng nhớ tạm ưu tiên chạy cục bộ, viết bằng Rust. Nhớ những gì bạn sao chép, không bao giờ lưu thứ được đánh dấu riêng tư. Không tài khoản, không đám mây, không telemetry.",
+"nav_aria": "Các mục",
+"nav_features": "Tính năng",
+"nav_privacy": "Riêng tư",
+"nav_keys": "Bàn phím",
+"nav_status": "Tình trạng",
+"nav_download": "Tải về",
+"lang_aria": "Ngôn ngữ",
+"h1": "Mọi thứ bạn đã sao chép.<br>Không lưu thứ bạn muốn giữ kín.",
+"lede": "Dark Clipboard nhớ văn bản, liên kết, mã nguồn, hình ảnh và tệp bạn sao chép, rồi tìm lại ngay khi bạn gõ. Chỉ chạy trên máy của bạn, không tài khoản, không đám mây, không telemetry.",
+"cta_dl": "Tải về cho Windows",
+"cta_src": "Xem mã nguồn",
+"fine": "Phần mềm tự do theo GPLv3, viết bằng Rust. macOS và Linux đang trong kế hoạch, chưa có bản dùng.",
+"stage_aria": "Bản demo tương tác của cửa sổ nhanh",
+"q_ph": "Tìm trong bảng nhớ tạm",
+"q_aria": "Tìm trong các mục mẫu",
+"seg_aria": "Lọc theo loại",
+"list_aria": "Các mục mẫu",
+"copied": "Đã sao chép",
+"copied_n": "Đã sao chép: ",
+"s_capturing": "Đang ghi nhớ",
+"s_copy": "Sao chép",
+"s_paste": "Dán",
+"s_keys": "Phím",
+"pinned": "Đã ghim",
+"recent": "Gần đây",
+"nomatch": "Không có mục nào khớp",
+"f_all": "Tất cả",
+"f_text": "Văn bản",
+"f_link": "Liên kết",
+"f_code": "Mã nguồn",
+"f_image": "Hình ảnh",
+"f_file": "Tệp",
+"f_pin": "Đã ghim",
+"f_star": "Yêu thích",
+"demo_note": "Thử ngay: gõ, dùng ↑ ↓ và Enter. Các mục mẫu, vẽ theo thiết kế của ứng dụng.",
+"f1b": "Ở lại trên máy của bạn",
+"f1s": "Lịch sử nằm trong một cơ sở dữ liệu cục bộ, trong hồ sơ người dùng của bạn.",
+"f2b": "Không dùng mạng",
+"f2s": "Không tài khoản, không đồng bộ, không telemetry. Chỉ có kiểm tra cập nhật, và chỉ khi bạn bật.",
+"f3b": "Ưu tiên bàn phím",
+"f3s": "<span class=\"k\">Ctrl+Shift+V<\/span>, gõ, <span class=\"k\">Enter<\/span>.",
+"f4b": "Tắt cho đến khi bạn bật",
+"f4s": "Không ghi nhớ gì cho đến khi bạn bấm Bắt đầu.",
+"feat_h2": "Một cửa sổ nhanh cho lần dán tiếp theo. Một cửa sổ đầy đủ cho phần còn lại.",
+"feat_sub": "Cửa sổ nhanh mở ngay cạnh con trỏ để bạn lấy mục cần dùng lúc này. Cửa sổ lịch sử là nơi bạn sắp xếp: bộ sưu tập, thẻ, ghi chú, yêu thích, chọn nhiều mục và xuất.",
+"cap_hist": "Cửa sổ lịch sử, 1060 × 660. Nội dung mẫu. Ảnh minh họa dùng giao diện tiếng Anh; ứng dụng cũng có giao diện tiếng Việt.",
+"t1h": "Tìm khi bạn gõ",
+"t1p": "Tìm toàn văn trong mọi thứ đã lưu, kèm bộ lọc theo văn bản, liên kết, mã nguồn, hình ảnh, tệp, màu, ngày và ứng dụng.",
+"t2h": "Ghim thứ bạn hay dùng",
+"t2p": "Mục đã ghim luôn ở trên cùng và không bao giờ hết hạn. Đánh dấu yêu thích, xếp vào bộ sưu tập, thêm thẻ và ghi chú.",
+"t3h": "Sao chép dưới dạng…",
+"t3p": "Cắt khoảng trắng, đổi chữ hoa thường hoặc kiểu xuống dòng, định dạng hoặc nén JSON, mã hóa URL hoặc Base64, bỏ HTML. Bản gốc không bao giờ bị đổi.",
+"t4h": "Dán lại",
+"t4p": "<span class=\"k\">Enter<\/span> để sao chép. <span class=\"k\">Ctrl+Enter<\/span> để dán vào ứng dụng bạn vừa rời khỏi, nếu bạn bật tính năng này.",
+"t5h": "Sao lưu và xuất",
+"t5p": "Sao lưu toàn bộ lịch sử ra một tệp, khôi phục, nhập và xuất bộ sưu tập. Các mục đã che (có thể chứa bí mật) sẽ không được đưa vào.",
+"t6h": "Tiếng Anh và tiếng Việt",
+"t6p": "Toàn bộ giao diện có cả hai ngôn ngữ, đủ chỗ cho dấu tiếng Việt ở mọi dòng.",
+"p_h2": "Kiểm tra trước khi đọc.",
+"p_sub": "Khi có thứ được sao chép, Dark Clipboard chỉ xem danh sách định dạng và ứng dụng đã sao chép. Nếu bản sao được đánh dấu riêng tư, nội dung hoàn toàn không bị đọc.",
+"s1h": "Có một lần sao chép",
+"s1p": "Windows báo cho Dark Clipboard rằng bảng nhớ tạm đã thay đổi.",
+"s2h": "Chỉ nhìn, không đọc",
+"s2p": "Chỉ lấy danh sách định dạng và ứng dụng nguồn. Không đọc văn bản, không đọc hình ảnh.",
+"s3h": "Riêng tư? Bỏ qua.",
+"s3p": "Dấu riêng tư, ứng dụng bị loại trừ, Tạm dừng hoặc Chế độ riêng tư: bản sao bị bỏ qua mà không đọc.",
+"s4h": "Lưu trên máy",
+"s4p": "Nếu không, nó được lưu trên máy này. Văn bản trông như mật khẩu, khóa hoặc số thẻ mặc định không được lưu.",
+"prot_h": "Các biện pháp bảo vệ bạn không thể tắt",
+"tk1": "<b>Dấu riêng tư của Windows.<\/b> Các bản sao yêu cầu không đi vào lịch sử bảng nhớ tạm, đồng bộ đám mây hay trình theo dõi bảng nhớ tạm.",
+"tk2": "<b>Trình quản lý mật khẩu.<\/b> Dấu riêng tư của chúng luôn được tôn trọng. KeePassXC, KeePass 2, Bitwarden và 1Password còn nằm sẵn trong danh sách loại trừ, bạn có thể sửa sau khi xác nhận.",
+"tk3": "<b>Darkshot.<\/b> Ảnh chụp màn hình mà Darkshot đánh dấu riêng tư không bao giờ được lưu.",
+"tk4": "<b>Quy tắc của riêng bạn.<\/b> Loại trừ thêm ứng dụng, tạm dừng một lúc, hoặc chuyển sang Chế độ riêng tư từ khay hệ thống.",
+"verified": "Đã kiểm tra thủ công: các bản sao riêng tư từ Darkshot 0.6.0 không được lưu. Đã thấy dấu riêng tư của KeePassXC 2.8.0 trên các bản sao của nó. KeePass 2, Bitwarden và 1Password chưa được kiểm chứng.",
+"cap_set": "Cửa sổ cài đặt, mục Ghi nhớ &amp; Riêng tư. Ảnh minh họa dùng giao diện tiếng Anh; ứng dụng cũng có giao diện tiếng Việt.",
+"k_h2": "Tay bạn không rời bàn phím.",
+"k_sub": "Mỗi thao tác đều có phím tắt, và <span class=\"k\">F1<\/span> hiện tất cả ngay trong ứng dụng. Vài phím bạn sẽ dùng hằng ngày:",
+"kr1": "Mở cửa sổ nhanh",
+"kr2": "Sao chép mục đang chọn",
+"kr3": "Sao chép dạng văn bản thuần",
+"kr4": "Sao chép và dán vào ứng dụng trước đó",
+"kr5": "Sao chép dòng 1 đến 9",
+"kr6": "Khung xem trước",
+"kr7": "Sao chép dưới dạng… (biến đổi)",
+"kr8": "Ghim / yêu thích",
+"kr9": "Xóa, rồi hoàn tác",
+"kr10": "Mở cửa sổ lịch sử",
+"st_h2": "Hiện đang ở đâu",
+"st_sub": "Một bản alpha sớm, nói thẳng. Chúng tôi chỉ ghi một nền tảng là được hỗ trợ khi đã thử trên máy thật.",
+"th_p": "Nền tảng",
+"th_s": "Trạng thái",
+"th_n": "Ghi chú",
+"tg_alpha": "Alpha, có thể tải về",
+"n_w11": "Việc ghi nhớ đã được thử trên một máy Windows 11. Tệp chạy chưa được ký. Phần lớn màn hình chưa được kiểm tra thủ công.",
+"tg_untested": "Chưa thử",
+"n_w10": "Chưa chạy thử ở đó.",
+"tg_planned": "Dự kiến",
+"n_mac": "Chưa có ứng dụng.",
+"n_lin": "Chưa có ứng dụng. Hỗ trợ Wayland sẽ được ghi theo từng môi trường desktop sau khi đã thử.",
+"pl_later": "Paste Stack, CLI, truy cập AI",
+"tg_later": "Sau này",
+"n_ai": "Công cụ AI sẽ không thấy gì trừ khi bạn cấp quyền, và chỉ thấy phần bạn cấp.",
+"dl_h2": "Tải bản alpha",
+"dl_sub": "Phiên bản 0.2.0 cho Windows 11 x64: một tệp exe, không cần cài đặt, không có gì phải gỡ.",
+"d1": "Tải <b>dark-clipboard-0.2.0-windows-x64.zip<\/b> và <b>SHA256SUMS.txt<\/b> từ trang phát hành.",
+"d2": "Kiểm tra mã băm trong PowerShell (bên phải). Nó phải khớp với dòng của tệp zip.",
+"d3": "Giải nén và chạy <b>dark-clipboard.exe<\/b>. Nó nằm ở khu vực thông báo; bấm <span class=\"k\">Ctrl+Shift+V<\/span>.",
+"d4": "Màn hình chào mừng giải thích những gì không bao giờ được ghi nhớ. <b>Không có gì được ghi nhớ cho đến khi bạn bấm Bắt đầu.<\/b>",
+"rel_btn": "Bản phát hành 0.2.0 trên GitHub",
+"changelog": "Nhật ký thay đổi",
+"cmd_c": "# trong thư mục có cả hai tệp",
+"copy": "Sao chép",
+"selcopy": "Chọn rồi sao chép",
+"warn": "Tệp exe <b>chưa được ký<\/b>, nên SmartScreen có thể báo \"Windows protected your PC\". Chỉ chạy sau khi mã băm khớp, rồi chọn More info và Run anyway. Smart App Control có thể chặn hoàn toàn.",
+"build": "Muốn tự biên dịch? <code>cargo build --release -p dark-clipboard<\/code> với Rust stable mới trên Windows 11.",
+"ft1": "Thuộc họ Darkshot. GPLv3. Làm bằng Rust và Slint.",
+"ft_src": "Mã nguồn",
+"ft_lic": "Giấy phép",
+"ft_bug": "Báo lỗi"
+}
+};
+const C=[
+ {k:'text',pin:1,t:'Weekly sync: Tuesdays 10:00, room 4B, agenda in the shared doc',m:'Outlook · 3 d'},
+ {k:'code',pin:1,t:'cargo test -p darkclip-storage -- --nocapture',m:'Windows Terminal · 1 w',mono:1},
+ {k:'link',t:'https://github.com/slint-ui/slint/releases/tag/v1.19.0',m:'Firefox · 2 min',star:1},
+ {k:'image',t:'Image · 1920 × 1080',m:'Snipping Tool · 6 min'},
+ {k:'text',t:'Cảm ơn anh, em sẽ gửi bản cập nhật trước thứ Sáu.',m:'Teams · 9 min'},
+ {k:'file',t:'report-q3.xlsx, summary.pdf',m:'Explorer · 12 min · 2 files'},
+ {k:'code',t:'{"theme":"dark","accent":"#7887FF"}',m:'VS Code · 20 min',mono:1},
+ {k:'link',t:'https://www.rust-lang.org/tools/install',m:'Edge · 1 h'},
+ {k:'text',t:'Room 4B is booked until 11:30.',m:'Outlook · 2 h'}];
+const F=[['all','layers'],['text','text'],['link','link'],['code','code'],['image','image'],['file','file'],'|',['pin','pin'],['star','star']];
+let lang='en';
+const T=k=>L[lang][k];
+const ico=n=>`<svg class="i"><use href="#${n}"/></svg>`;
+const esc=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const q=document.getElementById('q'),list=document.getElementById('clips'),seg=document.getElementById('seg'),toast=document.getElementById('toast'),toastT=document.getElementById('toastT');
+let f='all',sel=0,shown=[],tt;
+function drawSeg(){seg.innerHTML=F.map(x=>x==='|'?'<span class="div"></span>':`<button class="t${x[0]===f?' on':''}" data-f="${x[0]}" aria-label="${T('f_'+x[0])}">${ico(x[1])}${x[0]==='all'?T('f_all'):''}</button>`).join('')}
+function mark(s,w){const e=esc(s);if(!w)return e;const i=s.toLowerCase().indexOf(w.toLowerCase());if(i<0)return e;return esc(s.slice(0,i))+'<mark>'+esc(s.slice(i,i+w.length))+'</mark>'+esc(s.slice(i+w.length))}
+function row(c,n,i,w){return `<div class="clip${i===sel?' sel':''}" role="option" aria-selected="${i===sel}" data-i="${i}"><div class="kind">${ico(c.k)}</div><div class="cb"><div class="pv${c.mono?' mono':''}">${mark(c.t,w)}</div><div class="meta">${esc(c.m)}</div></div>${i===sel?`<div class="acts"><span class="ib">${ico('copy')}</span><span class="ib${c.pin?' on':''}">${ico('pin')}</span><span class="ib">${ico('more')}</span></div>`:`<div class="side">${c.pin?`<svg class="i b">${'<use href="#pin"/>'}</svg>`:''}${c.star?'<svg class="i fill b star"><use href="#star"/></svg>':''}<span class="num">${n<=9?n:''}</span></div>`}</div>`}
+function draw(){const w=q.value.trim();shown=C.filter(c=>(f==='all'||c.k===f||(f==='pin'&&c.pin)||(f==='star'&&c.star))&&(!w||c.t.toLowerCase().includes(w.toLowerCase())||c.m.toLowerCase().includes(w.toLowerCase())));
+ if(sel>=shown.length)sel=Math.max(0,shown.length-1);
+ if(!shown.length){list.innerHTML=`<div class="empty">${esc(T('nomatch'))} “${esc(w)}”</div>`;return}
+ const p=shown.filter(c=>c.pin),r=shown.filter(c=>!c.pin);let h='',i=0;
+ if(p.length)h+=`<div class="overline">${T('pinned')} <span class="n">${p.length}</span></div>`+p.map(c=>row(c,i+1,i++,w)).join('');
+ if(r.length)h+=`<div class="overline">${T('recent')} <span class="n">${r.length}</span></div>`+r.map(c=>row(c,i+1,i++,w)).join('');
+ shown=p.concat(r);list.innerHTML=h}
+function copy(i){const c=shown[i];if(!c)return;toastT.textContent=T('copied_n')+(c.t.length>34?c.t.slice(0,34)+'…':c.t);toast.hidden=false;clearTimeout(tt);tt=setTimeout(()=>toast.hidden=true,1800)}
+q.addEventListener('input',()=>{sel=0;draw()});
+q.addEventListener('keydown',e=>{if(e.key==='ArrowDown'){sel=Math.min(sel+1,shown.length-1);draw();e.preventDefault()}else if(e.key==='ArrowUp'){sel=Math.max(sel-1,0);draw();e.preventDefault()}else if(e.key==='Enter'){copy(sel);e.preventDefault()}else if(e.key==='Escape'){q.value='';sel=0;draw()}else if(e.altKey&&/^[1-9]$/.test(e.key)){copy(+e.key-1);e.preventDefault()}});
+list.addEventListener('click',e=>{const r=e.target.closest('.clip');if(!r)return;sel=+r.dataset.i;draw();copy(sel)});
+seg.addEventListener('click',e=>{const b=e.target.closest('.t');if(!b)return;f=b.dataset.f;sel=0;seg.querySelectorAll('.t').forEach(x=>x.classList.toggle('on',x===b));draw()});
+const shots=[...document.querySelectorAll('.shot')];
+const fit=()=>shots.forEach(s=>{const w=+s.dataset.w,h=+s.dataset.h,k=Math.min(1,s.clientWidth/w);s.firstElementChild.style.transform=`scale(${k})`;s.style.height=(h*k)+'px'});
+const ro=new ResizeObserver(fit);shots.forEach(s=>ro.observe(s));fit();
+const cp=document.getElementById('cp'),cpl=cp.lastElementChild;
+let cpState='copy',ct;
+cp.addEventListener('click',async()=>{const t=document.getElementById('cmd').innerText.split('\n').filter(l=>!l.startsWith('#')).join('\n');try{await navigator.clipboard.writeText(t);cpState='copied'}catch(_){cpState='selcopy'}cpl.textContent=T(cpState);clearTimeout(ct);ct=setTimeout(()=>{cpState='copy';cpl.textContent=T('copy')},1800)});
+
+/* language: #vi / #en, then stored choice, then navigator.language */
+const btns=[...document.querySelectorAll('.lang button')];
+function apply(l){
+ lang=l;document.documentElement.lang=l;
+ document.querySelectorAll('[data-i18n]').forEach(e=>{e.innerHTML=T(e.dataset.i18n)});
+ document.querySelectorAll('[data-i18n-attr]').forEach(e=>e.dataset.i18nAttr.split(';').forEach(p=>{const [a,k]=p.split(':');e.setAttribute(a,T(k))}));
+ btns.forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.lang===l)));
+ drawSeg();draw();cpl.textContent=T(cpState);
+}
+function pick(){
+ const h=location.hash;
+ if(h==='#vi')return'vi';if(h==='#en')return'en';
+ try{const s=localStorage.getItem('dc-lang');if(s==='vi'||s==='en')return s}catch(_){}
+ return /^vi/i.test(navigator.language||'')?'vi':'en';
+}
+btns.forEach(b=>b.addEventListener('click',()=>{const l=b.dataset.lang;apply(l);try{localStorage.setItem('dc-lang',l)}catch(_){}try{history.replaceState(null,'','#'+l)}catch(_){}}));
+addEventListener('hashchange',()=>{if(location.hash==='#vi'||location.hash==='#en'){const l=location.hash.slice(1);apply(l);try{localStorage.setItem('dc-lang',l)}catch(_){}}});
+apply(pick());
+}
+</script>
+</body>
+</html>
