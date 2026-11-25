@@ -115,6 +115,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 711 Menu anchor + mode cards (owner report 2026-11-25; package: orchestrator) | task/711-popup-anchor-modecard | builder | sonnet | done (4 `Menu` anchors at window origin: Slint centred them, menus opened at the bottom/right edge; `ModeCard` icon wrapped in `alignment: start` layout so cards fill the row; `tests/layout_scan.rs`; owner rows untested) | 100,831 | 45,047 (reviewer sonnet: APPROVED, nits only) | 0 | 145,878 |
 | 712 Exe size after Phase 7 (F-39, owner request) | task/712-exe-size | builder | sonnet | done (per-merge size table; PNG window icon pulled in Slint image decoders: now raw RGBA, -100 KiB; KitGallery removed (no size effect); remaining growth +851 KiB is generated Slint code for the new UI + required icon data; budget still missed, D-087) | 127,685 | 32,180 (reviewer sonnet: APPROVED) | 0 | 159,865 |
 
+| 713 Menu click and hover (owner report) | task/713-menu-click | builder | sonnet | in progress | | | | |
 Phase 7 complete 2026-11-25 (709 APPROVED; budgets per D-086; every visual, keyboard, Narrator and DPI check is an untested owner row, see the "Phase 7 demo checklist" in `docs/testing/platform-checklist.md`).
 
 ## Totals by model
