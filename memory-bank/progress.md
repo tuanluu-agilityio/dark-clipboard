@@ -126,6 +126,7 @@ Phase 7 complete 2026-11-25 (709 APPROVED; budgets per D-086; every visual, keyb
 | Model | Tokens |
 |---|---|
 | opus | 12,518,058 |
-| sonnet | 9,572,514 |
+| sonnet | 9,885,101 |
 | haiku | 0 |
-| **Total** | **22,090,572** (subagents only; orchestrator not measured) |
+| **Total** | **22,403,159** (subagents only; orchestrator not measured) |
+| Phase 7 docs wrap-up (README, CHANGELOG, AI docs; owner request after the demo review) | docs/phase7-wrapup | scaffolder | sonnet | done | 108,636 | 58,073 (reviewer sonnet: APPROVED, 1 should-fix fixed) | 0 | 166,709 |
