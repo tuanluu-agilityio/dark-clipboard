@@ -118,6 +118,7 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 714 Favorite star hidden on the selected popup row (owner report) | task/714-row-favorite-badge | builder | sonnet | done (favorite and masked badges were hidden while row actions show; now drawn left of the actions; scan, budget and headless render tests) | 65,198 | 22,042 (reviewer sonnet: APPROVED) | 0 | 87,240 |
 
 The owner reviewed the Phase 7 demo on 2026-11-25 ("đã review", D-089); no release was made (version 0.1.2).
+| **Release 0.2.0** (Phase 7 + 711-714; owner approved, review waived, D-090) | tag `v0.2.0` | orchestrator | — | **released 2026-11-25** (D-091) | | | | |
 
 Phase 7 complete 2026-11-25 (709 APPROVED; budgets per D-086; every visual, keyboard, Narrator and DPI check is an untested owner row, see the "Phase 7 demo checklist" in `docs/testing/platform-checklist.md`).
 
