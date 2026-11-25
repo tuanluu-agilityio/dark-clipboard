@@ -437,6 +437,8 @@ All rows **untested** until the owner runs them (agents never click, type, take 
 
 ## Phase 7 demo checklist (Task 708, Windows)
 
+Owner reviewed the demo 2026-11-25.
+
 The consolidated owner pass for the UI redesign, most important checks first. Each row condenses the detailed rows of the task named in it (open that section for the full wording and all variants). All rows **untested** until the owner runs them (agents never click, type, take screenshots or write the real clipboard, GC-19). Use a scratch history: `dark-clipboard.exe --seed-demo-clips 200 --data-dir <temp>`, then run with the same `--data-dir`. Measurements by the agent (P1, P3, P5, P6) are in `docs/testing/ui-redesign-verification.md`.
 
 | Check | Expected | Condenses | Status |

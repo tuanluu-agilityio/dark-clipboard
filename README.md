@@ -2,11 +2,11 @@
 
 A local-first clipboard manager for Windows, macOS and Linux, written in Rust. It is part of the Darkshot family.
 
-> **Status: 0.1.2 alpha, Windows only.** Windows 11 x64 has a desktop app you can download (see [Download](#download-windows-x64)). macOS and Linux have no app yet and nothing is claimed for them. The app is **unsigned**, and most of its screens have **not been checked by hand** on a real desktop: see [What is tested](#what-is-tested) and the Known issues in the [CHANGELOG](CHANGELOG.md).
+> **Status: 0.1.2 alpha, Windows only.** Windows 11 x64 has a desktop app you can download (see [Download](#download-windows-x64)). macOS and Linux have no app yet and nothing is claimed for them. The latest release is 0.1.2. The **redesigned interface (Phase 7) is on `main` and has not been released**: no 0.2.0 exists yet, and the download below is the 0.1.2 build with the older screens. The app is **unsigned**, and most of its screens have **not been checked by hand** on a real desktop: see [What is tested](#what-is-tested) and the Known issues in the [CHANGELOG](CHANGELOG.md).
 
 ## Download (Windows x64)
 
-Releases are on GitHub: <https://github.com/tuanluu-agilityio/dark-clipboard/releases>. Release notes: [docs/user/release-notes-0.1.0.md](docs/user/release-notes-0.1.0.md).
+The latest release is **0.1.2**. The redesigned interface described under "What works" is on `main` only; it is not in a release yet (build it from source to see it). Releases are on GitHub: <https://github.com/tuanluu-agilityio/dark-clipboard/releases>. Release notes: [docs/user/release-notes-0.1.0.md](docs/user/release-notes-0.1.0.md).
 
 Assets of a release (see [docs/release.md](docs/release.md)):
 
@@ -41,19 +41,61 @@ An alpha: there is no installer and no signed binary. Download it (above) or bui
 
 ### What works (implemented)
 
-- Tray icon with menu (pause, private mode, history, settings, quit) and a global shortcut (default `Ctrl+Shift+V`).
-- Popup near the cursor (440 x 520): a search field and four icon buttons (preview, history, settings, close), a filter segment with a More filters menu, 48 px rows with copy, pin and more buttons, a right-click row menu, previews for text, images and file lists, pin, delete with undo, and a status line with the capture state and key hints. `Ctrl+K` focuses the search, `Ctrl+,` opens Settings, `Shift+F10` (or the Menu key) opens the row menu, `Ctrl+1` to `Ctrl+9` pick a filter tab and `Ctrl+Shift+F` opens More filters. The menus and buttons only copy; paste stays `Ctrl+Enter`.
+- Tray icon with menu (pause, private mode, history, settings, quit) and a global shortcut (default `Ctrl+Shift+V`). A new app icon (a clipboard on a dark tile) is used for the exe, the taskbar, the window title bars and the tray; the tray adds a small badge for paused or off, private and capture unavailable.
+- **Popup** near the cursor (440 x 520, always dark): a header with the search field and four icon buttons (preview, history, settings, close), a filter segment (All, Text, Link, Code, Image, Files, Pinned, Favorites) with a More filters menu (Today, Last 7 days, Rich text, Color, Collections, Apps), 48 px rows with a kind icon, source, age, the `Alt+1`..`Alt+9` number and copy, pin and more buttons on the hovered or selected row, a star on favorite rows, PINNED and RECENT headings, a right-click row menu, delete with undo, and a status line with the capture state and key hints. The preview is a side pane (the popup grows to 760 px; on a monitor narrower than that the pane draws over the list) with plain-text and Copy as buttons, the content (text, image, file list) and facts. A masked clip shows only a fixed "Hidden" line. The menus and buttons only copy; paste stays `Ctrl+Enter`.
+- `F1` or `Ctrl+/` opens a keyboard shortcuts sheet in the popup and in the history window; it lists that window's keys, and `Esc` closes it first.
 - Copy back with Enter; paste into the previous app with Ctrl+Enter (opt-in "Enter also pastes"). Paste is refused for elevated apps, the taskbar and windows it cannot identify.
-- History window (sidebar with Library, Types, Collections, Tags and Apps, a date menu, 56 px rows, a detail panel with a toolbar, tags, note and collections, and a status line) with multi-select, a bulk bar for several marked clips, a keyboard context menu, pin and delete (always asks first). It shrinks to 640 x 460: below 1000 px the sidebar becomes an icon rail, below 820 px the details become a drawer.
-- Settings window (shortcut, language, start at login, capture mode, retention, excluded apps, about and licences) and a first-run welcome. English and Vietnamese.
+- **History window** (opens at 1060 x 660, shrinks to 640 x 460): a sidebar with Library (All, Pinned, Favorites), Types, Collections, Tags and Apps; a toolbar with the filter name, the search field, a date menu (Any time, Today, Last 7 days, Last 30 days) and a select-several toggle; 56 px rows with two preview lines; a 340 px detail panel with a toolbar (copy, plain text, Copy as, Edit a copy, pin, favorite, delete), the preview, facts, and Tags, Note and Collections sections; a status line. Multi-select with a bulk bar (Pin, Favorite, Add to collection, Tag, Export, Delete, Clear), a keyboard context menu, pin and delete (always asks first). Below 1000 px the sidebar becomes an icon rail, below 820 px the details become a drawer over the list.
+- **Settings window** (860 x 640, minimum 680 x 480) with five sections in a nav: General, Capture & Privacy, History & Storage, Data & Transfer (backup, restore, import, data folder) and About. Settings sit in cards with a description under each label; capture mode is three cards (Recording, Private, Paused); an "Always protected" card lists the system, password-manager and Darkshot privacy markers, which cannot be turned off. Save and Revert appear in a bar only when something changed. A first-run welcome. English and Vietnamese.
 - Start at login through the current user's `Run` registry key (off unless you tick it).
 - Software renderer by default (small memory, no idle CPU).
+
+### Keyboard shortcuts
+
+Read from the real key maps (`apps/desktop/src/popup/keys.rs`, `src/history/keys.rs`, `src/ui/settings_keys.rs`); `F1` shows the same lists in the app. The history window's organizing keys are in the table under "Collections, tags, notes and favorites".
+
+| Popup | Action |
+|---|---|
+| Type, `Up` / `Down`, `PageUp` / `PageDown`, `Home` / `End` | Search and move |
+| `Enter` / `Shift+Enter` | Copy / copy as plain text |
+| `Ctrl+Enter` | Copy and paste into the previous app (opt-in) |
+| `Alt+1` to `Alt+9` | Copy the numbered row |
+| `Space`, `Right` / `Left` | Toggle, open / close the preview pane |
+| `Ctrl+T` | Copy as... (text transforms) |
+| `Ctrl+P` / `Ctrl+D` | Pin / favorite the selected row |
+| `Del`, `Ctrl+Z` | Delete (with undo), undo |
+| `Shift+F10` or `Menu` | Row menu |
+| `Ctrl+K` | Focus the search field |
+| `Ctrl+1` to `Ctrl+9` | Filter segment tab |
+| `Ctrl+Shift+F` | More filters |
+| `Ctrl+H` / `Ctrl+,` | Open the history window / Settings |
+| `F1` or `Ctrl+/` | Shortcuts sheet |
+| `Esc` | Close the preview, then the popup |
+
+| History window | Action |
+|---|---|
+| `Up` / `Down`, `PageUp` / `PageDown`, `Home` / `End` | Move |
+| `Shift+Down`, `Space`, `Ctrl+A` | Extend the marks, mark a row, select all |
+| `Enter` / `Shift+Enter` | Copy / copy as plain text |
+| `Ctrl+T` / `Ctrl+E` / `Ctrl+Shift+E` | Copy as... / edit a copy / export |
+| `Ctrl+P`, `Ctrl+D`, `Del` | Pin, favorite, delete (asks first) |
+| `Ctrl+F` or `Ctrl+K` | Focus the search field |
+| `Ctrl+B`, `F6` / `Shift+F6`, `Right` | Rail or sidebar, next / previous part, details drawer (narrow window) |
+| `Ctrl+,` | Settings |
+| `F1` or `Ctrl+/` | Shortcuts sheet |
+| `Esc` | Closes one layer at a time: menu, sidebar overlay, drawer, marks, window |
+
+| Settings window | Action |
+|---|---|
+| `Ctrl+S` | Save |
+| `Ctrl+1` to `Ctrl+5` | Switch section (`Up` / `Down` in the nav also move between sections) |
 
 ### What is tested
 
 - **Automated, passing in the quality gate:** the portable core, storage (SQLite with FTS5), capture policy, privacy markers, sensitive-data detection, the application API, settings handling, and the Windows adapter's non-interactive parts. Run `powershell -File scripts/check.ps1`.
 - **Tested by hand on one Windows 11 machine (Task 107):** capture from KeePassXC (not stored), Darkshot (not stored), Notepad, Chrome, Explorer file copies and Snipping Tool, and the ignored real-clipboard tests. Details and the apps that were not available (Word, Excel, Bitwarden, 1Password, RDP) are in the [platform checklist](docs/testing/platform-checklist.md).
 - **Measured by script, not by hand:** popup open time driven through `--toggle` (p95 about 22-27 ms with 10,000 clips) and memory and idle CPU, in [perf-windows.md](docs/testing/perf-windows.md). The real-shortcut timing is not measured.
+- **Phase 7 redesign:** the owner reviewed the demo on 2026-11-25. The checks run by agents are scripts and headless tests (key maps, layout and accessibility scans, budgets, simulated pointer clicks); the individual rows of the "Phase 7 demo checklist" in the [platform checklist](docs/testing/platform-checklist.md) are not marked tested. Measured against 0.1.2 with 10,000 clips: popup opening about 22 ms (was 17 ms) on a quiet machine, the release exe about 850 KiB larger (accepted).
 - **Untested by hand:** almost every Windows UI row, including the tray, the real shortcut, popup keys, paste into Notepad, VS Code, Edge or Word, elevated targets, the history and settings windows, the welcome, start at login, mixed-DPI monitors, Vietnamese input methods and screen readers. These are owner manual rows in the [platform checklist](docs/testing/platform-checklist.md) marked **untested**. Since D-048 agents never take screenshots, click or type on the owner's desktop and run the app only with a temporary data folder; the one screen capture an agent took earlier (Task 204) was deleted at once (D-048).
 - **macOS and Linux:** untested, and there is no app for them.
 

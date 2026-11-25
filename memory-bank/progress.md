@@ -1,6 +1,6 @@
 # Progress and token ledger
 
-Updated: 2026-11-24 (0.1.0 released)
+Updated: 2026-11-25 (Phase 7 demo reviewed by the owner)
 
 Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers subagents report when they finish. Orchestrator tokens cannot be measured per task.
 
@@ -117,6 +117,8 @@ Phase 3 complete 2026-11-23 (all desktop UI owner rows still untested by hand; s
 | 713 Menu click and hover (owner report) | task/713-menu-click | builder | sonnet | done (kit Menu closed its PopupWindow before calling out, so clicks never reached the host; hover used `moved` (button held only): now `changed has-hover`; submenu flag read before the callout; headless regression test `tests/menu_click.rs` seen failing 3 ways) | 62,611 | 26,305 (reviewer sonnet: APPROVED, 1 should-fix fixed) | 6,498 | 95,414 |
 | 714 Favorite star hidden on the selected popup row (owner report) | task/714-row-favorite-badge | builder | sonnet | done (favorite and masked badges were hidden while row actions show; now drawn left of the actions; scan, budget and headless render tests) | 65,198 | 22,042 (reviewer sonnet: APPROVED) | 0 | 87,240 |
 
+The owner reviewed the Phase 7 demo on 2026-11-25 ("đã review", D-089); no release was made (version 0.1.2).
+
 Phase 7 complete 2026-11-25 (709 APPROVED; budgets per D-086; every visual, keyboard, Narrator and DPI check is an untested owner row, see the "Phase 7 demo checklist" in `docs/testing/platform-checklist.md`).
 
 ## Totals by model
@@ -124,6 +126,7 @@ Phase 7 complete 2026-11-25 (709 APPROVED; budgets per D-086; every visual, keyb
 | Model | Tokens |
 |---|---|
 | opus | 12,518,058 |
-| sonnet | 9,572,514 |
+| sonnet | 9,885,101 |
 | haiku | 0 |
-| **Total** | **22,090,572** (subagents only; orchestrator not measured) |
+| **Total** | **22,403,159** (subagents only; orchestrator not measured) |
+| Phase 7 docs wrap-up (README, CHANGELOG, AI docs; owner request after the demo review) | docs/phase7-wrapup | scaffolder | sonnet | done | 108,636 | 58,073 (reviewer sonnet: APPROVED, 1 should-fix fixed) | 0 | 166,709 |

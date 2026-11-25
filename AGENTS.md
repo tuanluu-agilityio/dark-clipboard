@@ -18,6 +18,7 @@ Instructions for any AI coding agent (Claude Code, Codex, others) working in thi
 - Only the capture actor in `crates/darkclip-app/src/capture/` reads or writes the OS clipboard.
 - No network access, no telemetry.
 - Run `cargo fmt --all`, then `scripts/check.ps1` (Windows) or `scripts/check.sh` (macOS/Linux). Report done only when it prints `ALL CHECKS PASSED`.
+- UI interaction changes in `apps/desktop` need a headless pointer or keyboard test (`apps/desktop/tests/menu_click.rs` pattern, GC-19: agents cannot click). UI design reference: `docs/specs/ui-redesign/`.
 - Commit on your task branch with a short English message (`feat:`, `fix:`, `test:`, `docs:`, `chore:`). Do not create, merge or push branches unless you are the orchestrator.
 - Do not invent results. Report the exact commands you ran and their real output.
 
