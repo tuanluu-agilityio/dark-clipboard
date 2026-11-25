@@ -75,6 +75,9 @@ export component PopupRow inherits Rectangle {
     callback action(int);
 
     property <bool> show-actions: root.selected || touch.has-hover || copy-btn.hover || pin-btn.hover || more-btn.hover;
+    // Width kept for the favorite star and the masked eye-off beside the row actions: a 14 px
+    // icon and a 6 px gap each (Task 714).
+    property <length> badge-room: (root.data.favorite ? 20px : 0px) + (root.data.masked ? 20px : 0px);
     property <length> overline: root.data.section > 0 ? PopupRowMetrics.section-height : 0px;
 
     height: root.overline + PopupRowMetrics.height;
@@ -198,11 +201,13 @@ export component PopupRow inherits Rectangle {
                 }
             }
 
-            // Badges and the Alt+N number; hidden while the row actions show.
+            // Badges and the Alt+N number. While the row actions show, the favorite star and the
+            // masked eye-off stay (left of the actions); the pin badge (the pin action shows
+            // the state) and the number go.
             Rectangle {
-                width: root.show-actions ? 92px : 64px;
-                if !root.show-actions: HorizontalLayout {
-                    alignment: end;
+                width: root.show-actions ? 92px + badge-room : 64px;
+                HorizontalLayout {
+                    alignment: root.show-actions ? start : end;
                     spacing: 6px;
                     if root.data.favorite: VerticalLayout {
                         alignment: center;
@@ -212,7 +217,7 @@ export component PopupRow inherits Rectangle {
                             tint: Theme.warning;
                         }
                     }
-                    if root.data.pinned: VerticalLayout {
+                    if root.data.pinned && !root.show-actions: VerticalLayout {
                         alignment: center;
                         Icon {
                             name: IconName.pin;
@@ -228,7 +233,7 @@ export component PopupRow inherits Rectangle {
                             tint: Theme.warning;
                         }
                     }
-                    Text {
+                    if !root.show-actions: Text {
                         width: 10px;
                         text: root.data.number;
                         color: Theme.text-3;

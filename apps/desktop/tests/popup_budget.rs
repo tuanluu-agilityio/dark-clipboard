@@ -372,3 +372,50 @@ fn the_welcome_card_fits_the_window_minimum_in_both_languages() {
         assert!(height <= 520.0, "{lang:?} welcome needs {height} px of 520");
     }
 }
+
+// ---- Task 714: favorite and masked badges stay on the selected row ----
+
+#[test]
+fn the_favorite_and_masked_badges_show_with_the_row_actions() {
+    let slint = fs::read_to_string(manifest().join("ui/popup_row.slint")).unwrap_or_default();
+    let lines: Vec<&str> = slint.lines().map(str::trim).collect();
+    // No layout that holds the badges may be gated by `!root.show-actions`.
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.starts_with("if !root.show-actions") && l.ends_with("Layout {")),
+        "the badge layout must not be hidden while the row actions show"
+    );
+    // The favorite and masked badges are gated by their own flag only.
+    for flag in ["root.data.favorite", "root.data.masked"] {
+        let want = format!("if {flag}: VerticalLayout {{");
+        assert!(
+            lines.contains(&want.as_str()),
+            "the {flag} badge must be gated only by {flag}"
+        );
+    }
+    // The pin badge is still replaced by the pin action.
+    assert!(
+        lines.contains(&"if root.data.pinned && !root.show-actions: VerticalLayout {"),
+        "the pin badge stays hidden while the actions show"
+    );
+}
+
+#[test]
+fn the_selected_row_keeps_room_for_the_meta_line_with_both_badges() {
+    // Row width 440 - 2 (border) - 24 (padding) = 414 at most; the row's own padding is
+    // 12 + 8, the kind icon 16 and two 10 px gaps; the end block is 92 px of actions plus
+    // 20 px (14 icon + 6 gap) per badge, at most two.
+    let today = INNER_PX - 12.0 - 8.0 - 16.0 - 20.0 - 92.0;
+    let with_badges = today - 2.0 * (14.0 + 6.0);
+    assert!(
+        with_badges >= 200.0,
+        "the meta line keeps {with_badges} px on the selected row"
+    );
+    let slint = fs::read_to_string(manifest().join("ui/popup_row.slint")).unwrap_or_default();
+    assert!(
+        slint.contains("width: root.show-actions ? 92px + badge-room : 64px;"),
+        "the end block reserves 20 px per visible badge only"
+    );
+    assert!(slint.contains("(root.data.favorite ? 20px : 0px) + (root.data.masked ? 20px : 0px)"));
+}
