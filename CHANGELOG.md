@@ -24,6 +24,7 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ### Fixed
 
+- Task 714: a favorite clip's star and a masked clip's eye-off icon stay visible on the selected or hovered popup row (they used to vanish while the row's copy, pin and more buttons showed, so a clip you just made a favorite looked unchanged). They sit left of the row buttons.
 - Task 713: clicking an entry of the popup row menu, the popup More filters menu, the history row menu or the history date menu now runs it (the menu closed itself before telling the window, so the click was lost), and the highlight follows the mouse pointer.
 - Task 711: the row menus (popup "..." button and right click, history right click, Menu key and Shift+F10) and the history date menu opened at the right or bottom edge of the window instead of under the row or the pointer; they now open where they should.
 - Task 711: the three capture-mode cards in Settings (Recording, Private, Paused) were drawn narrow and content-sized, with cut-off titles; they now share the row equally.

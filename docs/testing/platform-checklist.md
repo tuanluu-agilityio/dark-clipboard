@@ -499,3 +499,4 @@ All rows **untested** (no hardware, Q-04).
 | History: click the date button | The date menu opens under the button | **untested** |
 | Settings, Capture and Privacy, English and Vietnamese at 100 % and 150 % | The three mode cards share the row equally; titles and lines are not cut off and do not overflow the card or the note below | **untested** |
 | Popup row menu, popup More filters, history row menu, history date menu: click each entry, and move the pointer over entries | Each click runs its action; the highlight follows the mouse | **untested** |
+| Popup: a favorite clip, then a masked clip, with the row selected, hovered and neither | The star (favorite) and the eye-off (masked) show in all three states, left of the copy, pin and more buttons when those show; no overlap with the meta text, English and Vietnamese | **untested** |
