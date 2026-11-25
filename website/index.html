@@ -395,7 +395,7 @@ svg.i:not(.ui svg.i){width:18px;height:18px}
 <symbol id="app" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4M2 8h20M6 4v4"/></symbol>
 <symbol id="sliders" viewBox="0 0 24 24"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></symbol>
 <symbol id="calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
-<symbol id="download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></symbol>
+<symbol id="dl" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></symbol>
 <symbol id="refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
 <symbol id="clipboard" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></symbol>
 </defs>
@@ -427,7 +427,7 @@ svg.i:not(.ui svg.i){width:18px;height:18px}
     <h1 data-i18n="h1">Everything you copied.<br>Nothing you wanted kept private.</h1>
     <p class="lede" data-i18n="lede">Dark Clipboard remembers text, links, code, images and files you copy, and finds them again as you type. It runs only on your PC, with no account, no cloud and no telemetry.</p>
     <div class="acts">
-      <a class="cta p" href="#download"><svg class="i"><use href="#download"/></svg><span data-i18n="cta_dl">Download for Windows</span></a>
+      <a class="cta p" href="#download"><svg class="i"><use href="#dl"/></svg><span data-i18n="cta_dl">Download for Windows</span></a>
       <a class="cta" href="https://github.com/tuanluu-agilityio/dark-clipboard"><svg class="i"><use href="#gh"/></svg><span data-i18n="cta_src">View the source</span></a>
     </div>
     <p class="fine" data-i18n="fine">Free software under GPLv3, written in Rust. macOS and Linux are planned, not available yet.</p>
@@ -577,7 +577,7 @@ ORDER BY created_at DESC;</pre></div>
     <div><svg class="i"><use href="#pin"/></svg><h3 data-i18n="t2h">Pin what you reuse</h3><p data-i18n="t2p">Pinned clips stay on top and never expire. Star favorites, sort them into collections, add tags and a note.</p></div>
     <div><svg class="i"><use href="#wand"/></svg><h3 data-i18n="t3h">Copy as…</h3><p data-i18n="t3p">Trim, change case or line endings, pretty-print or minify JSON, encode URLs or Base64, strip HTML. The original never changes.</p></div>
     <div><svg class="i"><use href="#paste"/></svg><h3 data-i18n="t4h">Paste back</h3><p data-i18n="t4p"><span class="k">Enter</span> copies. <span class="k">Ctrl+Enter</span> pastes into the app you came from, if you turn it on.</p></div>
-    <div><svg class="i"><use href="#download"/></svg><h3 data-i18n="t5h">Backup and export</h3><p data-i18n="t5p">Back up the whole history to a file, restore it, import and export collections. Masked clips, which may hold a secret, are left out.</p></div>
+    <div><svg class="i"><use href="#dl"/></svg><h3 data-i18n="t5h">Backup and export</h3><p data-i18n="t5p">Back up the whole history to a file, restore it, import and export collections. Masked clips, which may hold a secret, are left out.</p></div>
     <div><svg class="i"><use href="#globe"/></svg><h3 data-i18n="t6h">English and Vietnamese</h3><p data-i18n="t6p">The whole interface in both languages, with room for Vietnamese diacritics in every row.</p></div>
   </div>
 </div></section>
@@ -602,7 +602,7 @@ ORDER BY created_at DESC;</pre></div>
         <li><svg class="i"><use href="#shield"/></svg><span data-i18n="tk3"><b>Darkshot.</b> Screenshots Darkshot marks private are never stored.</span></li>
         <li><svg class="i"><use href="#shield"/></svg><span data-i18n="tk4"><b>Your own rules.</b> Exclude more apps, pause for a while, or switch to Private mode from the tray.</span></li>
       </ul>
-      <p class="cap" style="margin-top:22px" data-i18n="verified">Verified by hand: KeePassXC 2.8.0 and Darkshot 0.6.0 copies were not stored. KeePass 2, Bitwarden and 1Password are excluded by name but not yet verified.</p>
+      <p class="cap" style="margin-top:22px" data-i18n="verified">Verified by hand: Darkshot 0.6.0 private copies were not stored. KeePassXC 2.8.0 privacy markers were seen on its copies. KeePass 2, Bitwarden and 1Password are not yet verified.</p>
     </div>
     <div><div class="frame"><div class="shot" data-w="860" data-h="640"><div class="ui win settings" aria-hidden="true">
   <div class="titlebar"><svg class="i" style="width:14px;height:14px"><use href="#settings"/></svg>Dark Clipboard: Settings<span class="sp"></span></div>
@@ -699,7 +699,7 @@ ORDER BY created_at DESC;</pre></div>
       <li data-i18n="d4">The welcome explains what is never captured. <b>Nothing is captured until you press Start.</b></li>
     </ol>
     <div class="acts" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:28px">
-      <a class="cta p" href="https://github.com/tuanluu-agilityio/dark-clipboard/releases/tag/v0.2.0"><svg class="i"><use href="#download"/></svg><span data-i18n="rel_btn">Release 0.2.0 on GitHub</span></a>
+      <a class="cta p" href="https://github.com/tuanluu-agilityio/dark-clipboard/releases/tag/v0.2.0"><svg class="i"><use href="#dl"/></svg><span data-i18n="rel_btn">Release 0.2.0 on GitHub</span></a>
       <a class="cta" href="https://github.com/tuanluu-agilityio/dark-clipboard/blob/main/CHANGELOG.md" data-i18n="changelog">Changelog</a>
     </div>
   </div>
@@ -801,7 +801,7 @@ const L={
 "tk2": "<b>Password managers.<\/b> Their privacy markers are always respected. KeePassXC, KeePass 2, Bitwarden and 1Password are also on the built-in excluded list, which you can edit after a confirmation.",
 "tk3": "<b>Darkshot.<\/b> Screenshots Darkshot marks private are never stored.",
 "tk4": "<b>Your own rules.<\/b> Exclude more apps, pause for a while, or switch to Private mode from the tray.",
-"verified": "Verified by hand: KeePassXC 2.8.0 and Darkshot 0.6.0 copies were not stored. KeePass 2, Bitwarden and 1Password are excluded by name but not yet verified.",
+"verified": "Verified by hand: Darkshot 0.6.0 private copies were not stored. KeePassXC 2.8.0 privacy markers were seen on its copies. KeePass 2, Bitwarden and 1Password are not yet verified.",
 "cap_set": "Settings window, Capture &amp; Privacy. The screenshot shows the English interface; the app also has Vietnamese.",
 "k_h2": "Your hands stay on the keyboard.",
 "k_sub": "Every action has a key, and <span class=\"k\">F1<\/span> shows them all inside the app. A few you will use every day:",
@@ -924,7 +924,7 @@ const L={
 "tk2": "<b>Trình quản lý mật khẩu.<\/b> Dấu riêng tư của chúng luôn được tôn trọng. KeePassXC, KeePass 2, Bitwarden và 1Password còn nằm sẵn trong danh sách loại trừ, bạn có thể sửa sau khi xác nhận.",
 "tk3": "<b>Darkshot.<\/b> Ảnh chụp màn hình mà Darkshot đánh dấu riêng tư không bao giờ được lưu.",
 "tk4": "<b>Quy tắc của riêng bạn.<\/b> Loại trừ thêm ứng dụng, tạm dừng một lúc, hoặc chuyển sang Chế độ riêng tư từ khay hệ thống.",
-"verified": "Đã kiểm tra thủ công: bản sao từ KeePassXC 2.8.0 và Darkshot 0.6.0 không được lưu. KeePass 2, Bitwarden và 1Password bị loại trừ theo tên nhưng chưa được kiểm chứng.",
+"verified": "Đã kiểm tra thủ công: các bản sao riêng tư từ Darkshot 0.6.0 không được lưu. Đã thấy dấu riêng tư của KeePassXC 2.8.0 trên các bản sao của nó. KeePass 2, Bitwarden và 1Password chưa được kiểm chứng.",
 "cap_set": "Cửa sổ cài đặt, mục Ghi nhớ &amp; Riêng tư. Ảnh minh họa dùng giao diện tiếng Anh; ứng dụng cũng có giao diện tiếng Việt.",
 "k_h2": "Tay bạn không rời bàn phím.",
 "k_sub": "Mỗi thao tác đều có phím tắt, và <span class=\"k\">F1<\/span> hiện tất cả ngay trong ứng dụng. Vài phím bạn sẽ dùng hằng ngày:",
