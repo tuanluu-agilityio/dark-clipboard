@@ -90,8 +90,11 @@ export component MenuItem inherits Rectangle {
 
     TouchArea {
         mouse-cursor: root.disabled ? MouseCursor.default : MouseCursor.pointer;
-        moved => {
-            root.hovered();
+        // `moved` only fires while a button is held, so hover is read from `has-hover`.
+        changed has-hover => {
+            if (self.has-hover) {
+                root.hovered();
+            }
         }
         clicked => {
             if (!root.disabled) {
@@ -170,11 +173,13 @@ export component Menu inherits Rectangle {
                             root.hovered(i);
                         }
                         activated => {
-                            // A submenu entry keeps the menu open (the host swaps the entries).
+                            // Call out first: closing the popup destroys this repeated item, so
+                            // anything after `pop.close()` would never run (Task 713). A submenu
+                            // entry keeps the menu open (the host swaps the entries).
+                            root.activated(i);
                             if (!entry.submenu) {
                                 pop.close();
                             }
-                            root.activated(i);
                         }
                     }
                 }

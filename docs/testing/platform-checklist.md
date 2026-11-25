@@ -498,3 +498,4 @@ All rows **untested** (no hardware, Q-04).
 | History: right-click a row, then press the Menu key and Shift+F10 on a selected row | The row menu opens at the pointer / under the row | **untested** |
 | History: click the date button | The date menu opens under the button | **untested** |
 | Settings, Capture and Privacy, English and Vietnamese at 100 % and 150 % | The three mode cards share the row equally; titles and lines are not cut off and do not overflow the card or the note below | **untested** |
+| Popup row menu, popup More filters, history row menu, history date menu: click each entry, and move the pointer over entries | Each click runs its action; the highlight follows the mouse | **untested** |
