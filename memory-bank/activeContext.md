@@ -21,6 +21,7 @@ Updated: 2026-11-25
 Q-07 done by the owner 2026-11-22: ruleset "Protect main" (no deletion, no force-push, PR with merge only, required checks windows/macos/ubuntu/deny). Answered 2026-11-22 (D-034): Q-01 GPLv3 (applied in Task 201, D-045) · Q-02 Slint approved (ADR-0001 accepted) · Q-03 public repo exists · Q-05 left to the orchestrator: GNOME Wayland is **not** a must for 0.1.0.
 
 ## Follow-ups recorded (not yet scheduled to a task)
+- Lesson (Task 713, owner report): Phase 7 reviews read code and ran Rust key-map tests, but no test drove Slint pointer events, so a dead mouse path in the kit Menu shipped through 701-709. Headless pointer tests (`MinimalSoftwareWindow` + `dispatch_event`, `tests/menu_click.rs`) are now the pattern for kit interaction; consider them for other kit controls (Select, Switch, IconButton) in a later hardening task.
 - F-38 (Task 709 nits): the popup row menu offers "Copy plain text" for a masked clip while the preview pane hides the plain button (`popup/menu.rs:117` vs `common.rs:257`); copy only, no content shown, but inconsistent. Kit Menu reads `disabled-items[i]` with an empty array in the popup (Slint out-of-range default, unverified).
 - F-39: closed (D-087, D-088): exe +851 KiB over v0.1.2 accepted as a known issue; the owner keeps the GPU renderer fallback.
 - F-36 (Task 707 review): the A6 hit-target scan reads only literal `px` sizes; sizes computed from expressions are trusted (none found today). Tighten if a computed size appears.
