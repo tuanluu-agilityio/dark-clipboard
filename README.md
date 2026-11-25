@@ -2,21 +2,21 @@
 
 A local-first clipboard manager for Windows, macOS and Linux, written in Rust. It is part of the Darkshot family.
 
-> **Status: 0.1.2 alpha, Windows only.** Windows 11 x64 has a desktop app you can download (see [Download](#download-windows-x64)). macOS and Linux have no app yet and nothing is claimed for them. The latest release is 0.1.2. The **redesigned interface (Phase 7) is on `main` and has not been released**: no 0.2.0 exists yet, and the download below is the 0.1.2 build with the older screens. The app is **unsigned**, and most of its screens have **not been checked by hand** on a real desktop: see [What is tested](#what-is-tested) and the Known issues in the [CHANGELOG](CHANGELOG.md).
+> **Status: 0.2.0 alpha, Windows only.** Windows 11 x64 has a desktop app you can download (see [Download](#download-windows-x64)). macOS and Linux have no app yet and nothing is claimed for them. The latest release is 0.2.0, with the redesigned interface (Phase 7). The app is **unsigned**, and most of its screens have **not been checked by hand** on a real desktop: see [What is tested](#what-is-tested) and the Known issues in the [CHANGELOG](CHANGELOG.md).
 
 ## Download (Windows x64)
 
-The latest release is **0.1.2**. The redesigned interface described under "What works" is on `main` only; it is not in a release yet (build it from source to see it). Releases are on GitHub: <https://github.com/tuanluu-agilityio/dark-clipboard/releases>. Release notes: [docs/user/release-notes-0.1.0.md](docs/user/release-notes-0.1.0.md).
+The latest release is **0.2.0** (the redesigned interface described under "What works"). Releases are on GitHub: <https://github.com/tuanluu-agilityio/dark-clipboard/releases>. Release notes: [docs/user/release-notes-0.1.0.md](docs/user/release-notes-0.1.0.md).
 
 Assets of a release (see [docs/release.md](docs/release.md)):
 
-- `dark-clipboard-<version>-windows-x64.zip`: `dark-clipboard.exe`, `LICENSE`, `README.md`, `CHANGELOG.md` and `THIRD-PARTY-NOTICES.txt`. For 0.1.2 the name is `dark-clipboard-0.1.2-windows-x64.zip`.
+- `dark-clipboard-<version>-windows-x64.zip`: `dark-clipboard.exe`, `LICENSE`, `README.md`, `CHANGELOG.md` and `THIRD-PARTY-NOTICES.txt`. For 0.2.0 the name is `dark-clipboard-0.2.0-windows-x64.zip`.
 - `dark-clipboard.exe` on its own.
 - `SHA256SUMS.txt`: the SHA-256 of the zip and of the bare exe.
 
 **Verify the download.** Put `SHA256SUMS.txt` next to the file and, in PowerShell:
 
-    Get-FileHash .\dark-clipboard-0.1.2-windows-x64.zip -Algorithm SHA256
+    Get-FileHash .\dark-clipboard-0.2.0-windows-x64.zip -Algorithm SHA256
     Get-Content .\SHA256SUMS.txt
 
 The hash must equal the line for that file. This catches a damaged download or one swapped somewhere else; it is not a signature and does not prove who built it, because the build is unsigned.

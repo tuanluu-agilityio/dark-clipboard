@@ -4,7 +4,9 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ## [Unreleased]
 
-Phase 7: a redesign of every window (D-078). It is on `main` and not released; the version stays 0.1.2 until the owner approves a 0.2.0 release. No setting, default, save rule or privacy rule changed.
+## [0.2.0] - 2026-11-25
+
+Phase 7: a redesign of every window (D-078), plus the fixes found in the owner's demo review (Tasks 711-714). Windows x64 only, unsigned, alpha. No setting, default, save rule or privacy rule changed.
 
 ### Added
 
