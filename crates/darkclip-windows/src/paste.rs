@@ -237,8 +237,8 @@ fn wait_until(
 /// reused) and right before the keystroke.
 ///
 /// `Mode::Copy` / `Mode::SelectAllCopy` run the same checks but never move the focus: the
-/// target must already be the foreground window. `SelectAllCopy` checks the foreground and
-/// the keys again between Ctrl+A and Ctrl+C (a refusal there leaves only a harmless
+/// target must already be the foreground window. `SelectAllCopy` checks the window, the
+/// foreground and the keys again between Ctrl+A and Ctrl+C (a refusal there leaves only a harmless
 /// selection). The caller's own shortcut key is not waited for here (Task 605 does it).
 pub(crate) fn run(
     sys: &mut dyn WindowSys,
@@ -291,6 +291,8 @@ pub(crate) fn run(
         Mode::SelectAllCopy => {
             sys.send_ctrl(CtrlKey::A).map_err(Failure::Input)?;
             sys.sleep(SELECT_ALL_GAP);
+            // The handle may have been closed or reused during the gap.
+            check_window(sys, window, pid).map_err(Failure::Refused)?;
             still_ready(sys, window)?;
             sys.send_ctrl(CtrlKey::C).map_err(Failure::Input)
         }
@@ -448,6 +450,9 @@ mod tests {
         fg_after_a: Option<u64>,
         /// Shift, Alt, Win or Enter go down right after Ctrl+A was sent.
         keys_down_after_a: bool,
+        /// The target's facts right after Ctrl+A: `Some(None)` closes it, `Some(Some(f))`
+        /// replaces them (a reused handle).
+        facts_after_a: Option<Option<WindowFacts>>,
         sent: u32,
         send_result: Result<(), PlatformError>,
         slept: Duration,
@@ -475,6 +480,7 @@ mod tests {
                 log: Vec::new(),
                 fg_after_a: None,
                 keys_down_after_a: false,
+                facts_after_a: None,
                 sent: 0,
                 send_result: Ok(()),
                 slept: Duration::ZERO,
@@ -553,6 +559,15 @@ mod tests {
                 }
                 if self.keys_down_after_a {
                     self.keys_polls.set(u32::MAX);
+                }
+                match self.facts_after_a {
+                    Some(Some(f)) => {
+                        self.windows.insert(WIN, f);
+                    }
+                    Some(None) => {
+                        self.windows.remove(&WIN);
+                    }
+                    None => {}
                 }
             }
             self.send_result.clone()
@@ -978,6 +993,26 @@ mod tests {
         assert_eq!(
             run(&mut f, &target(), Mode::SelectAllCopy),
             refused(Refusal::KeysHeld)
+        );
+        assert_eq!(keys(&f), vec![CtrlKey::A]);
+    }
+
+    #[test]
+    fn select_all_copy_stops_after_a_if_window_changes() {
+        // Closed during the gap.
+        let mut f = copy_fake();
+        f.facts_after_a = Some(None);
+        assert_eq!(
+            run(&mut f, &target(), Mode::SelectAllCopy),
+            refused(Refusal::Gone)
+        );
+        assert_eq!(keys(&f), vec![CtrlKey::A]);
+        // Reused by another process during the gap (still in front).
+        let mut f = copy_fake();
+        f.facts_after_a = Some(Some(normal(77)));
+        assert_eq!(
+            run(&mut f, &target(), Mode::SelectAllCopy),
+            refused(Refusal::WrongProcess)
         );
         assert_eq!(keys(&f), vec![CtrlKey::A]);
     }
