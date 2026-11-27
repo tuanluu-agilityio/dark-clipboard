@@ -82,10 +82,11 @@ fn claim_window_is_one_second() {
     assert!(slot.covers(t + Duration::from_millis(900)));
     assert!(slot.covers(t + Duration::from_millis(999)));
     assert!(!slot.covers(t + Duration::from_millis(1_000)));
-    // In the actor, with the real window: the actor is held up 700 ms (longer than the old
-    // 600 ms window) when it dequeues the target's signal, and still claims it.
+    // In the actor, with the real window: the actor is held up 650 ms when it dequeues the
+    // target's signal (the smallest round delay past the old 600 ms window, so it proves the
+    // window is longer, with 350 ms of margin to the new deadline), and still claims it.
     let h = start(PrivacyPolicy::default());
-    *h.cap().hooks.stall_on_signal.lock().unwrap() = Some((1, Duration::from_millis(700)));
+    *h.cap().hooks.stall_on_signal.lock().unwrap() = Some((1, Duration::from_millis(650)));
     let rx = arm(&h, "zalo.exe");
     h.fake.copy(owned("zalo.exe", "slow app text"));
     assert_eq!(claim_reply(&rx), Ok("slow app text".to_string()));
