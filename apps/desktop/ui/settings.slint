@@ -327,7 +327,7 @@ export component SettingsWindow inherits Window {
     }
 
     // The control that opened the layer (0: none or not known, 1 picker, 2 orphans, 3 compact,
-    // 4 clear, 5 restore, 6 save, 100 + i the remove button of exclusion row i), and the one that
+    // 4 clear, 5 restore, 6 save, 7 the translate Enable switch, 100 + i the remove button of exclusion row i), and the one that
     // gets the focus back when the layer closes (each of them has a `want` property that
     // focuses it when `return-to` names it; Slint cannot name the element that had the focus).
     property <int> opener;
@@ -348,6 +348,8 @@ export component SettingsWindow inherits Window {
     // The section changed by the keys (Ctrl+digit, Up, Down): while a nav item has the focus the
     // ring follows the selection.
     changed section => {
+        // A key typed but not saved never stays behind another section (Task 606).
+        root.tr-key-input = "";
         if (root.nav-focus) {
             if (root.section == 0) {
                 nav0.focus();
@@ -1053,7 +1055,13 @@ export component SettingsWindow inherits Window {
                             TrEnableCard {
                                 available: root.tr-available;
                                 checked <=> root.tr-enabled;
+                                want-focus: root.return-to == 7;
                                 toggled(v) => {
+                                    // Turning it on may open the consent dialog: the focus comes
+                                    // back here when it closes.
+                                    if (v) {
+                                        root.opener = 7;
+                                    }
                                     root.tr-toggled(v);
                                 }
                             }

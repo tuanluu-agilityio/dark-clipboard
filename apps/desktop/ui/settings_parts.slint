@@ -471,13 +471,21 @@ export component TrEnableCard inherits Card {
     in-out property <bool> checked;
     // False off Windows: one line says so and the switch is disabled.
     in property <bool> available: true;
+    // The host hands the keyboard focus back to the switch (the consent dialog closed).
+    in property <bool> want-focus;
     callback toggled(bool);
+
+    changed want-focus => {
+        if (root.want-focus) {
+            sw.focus();
+        }
+    }
 
     SettingRow {
         first: true;
         label: TrText.enable;
         description: root.available ? TrText.enable-note : TrText.unavailable;
-        Switch {
+        sw := Switch {
             label: TrText.enable;
             description: TrText.enable-note;
             enabled: root.available;

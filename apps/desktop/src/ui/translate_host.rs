@@ -473,20 +473,24 @@ mod imp {
             );
             return false;
         }
-        let origin = crate::winsys::monitor_at_cursor().map(|m| {
-            let h = ov.win.get_content_height().ceil();
-            // Logical pixels, at most a few hundred: the cast cannot truncate.
-            #[allow(clippy::cast_possible_truncation)]
-            let h = h as i32;
-            let size = (scale(OVERLAY_WIDTH, m.dpi), scale(h.max(1), m.dpi));
-            popup_origin(m.cursor, size, m.work, m.dpi)
-        });
+        // Windows cannot tell where the cursor is: not shown (and no hide timer runs).
+        let Some(m) = crate::winsys::monitor_at_cursor() else {
+            ov.log.event(
+                "translate_overlay_window",
+                &[("status", Val::Name("no_monitor"))],
+            );
+            return false;
+        };
+        let h = ov.win.get_content_height().ceil();
+        // Logical pixels, at most a few hundred: the cast cannot truncate.
+        #[allow(clippy::cast_possible_truncation)]
+        let h = h as i32;
+        let size = (scale(OVERLAY_WIDTH, m.dpi), scale(h.max(1), m.dpi));
+        let (x, y) = popup_origin(m.cursor, size, m.work, m.dpi);
         if !ov.shown_once {
-            if let Some((x, y)) = origin {
-                ov.win
-                    .window()
-                    .set_position(slint::PhysicalPosition::new(x, y));
-            }
+            ov.win
+                .window()
+                .set_position(slint::PhysicalPosition::new(x, y));
             // The window was created with `active = false`: winit shows it with
             // SW_SHOWNOACTIVATE. Slint's show is never called again.
             if ov.win.show().is_err() {
@@ -496,10 +500,7 @@ mod imp {
             // winit rewrote the extended style while showing: set it again at once.
             let _ = crate::winsys::set_overlay_style(hwnd);
         }
-        let (x, y) = origin.unwrap_or((0, 0));
-        if origin.is_some() {
-            let _ = crate::winsys::show_no_activate_at(hwnd, x, y);
-        }
+        let _ = crate::winsys::show_no_activate_at(hwnd, x, y);
         ov.win.set_active(true);
         if !crate::winsys::has_overlay_ex_style(crate::winsys::ex_style(hwnd)) {
             ov.log.event(

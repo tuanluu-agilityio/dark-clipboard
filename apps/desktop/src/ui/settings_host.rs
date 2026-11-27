@@ -1715,7 +1715,10 @@ fn tr_toggled(on: bool) {
         SwitchStep::AskConsent => {
             // The switch stays off until "Turn on".
             h.win.set_tr_enabled(false);
-            let body = tr::consent_body(h.lang, h.win.get_tr_shortcut().as_str());
+            let stored = SNAP.with(|s| s.borrow().as_ref().map(|s| s.settings.ai.shortcut.clone()));
+            let shortcut =
+                tr::consent_shortcut(h.win.get_tr_shortcut().as_str(), stored.as_deref());
+            let body = tr::consent_body(h.lang, &shortcut);
             h.win.global::<TrText>().set_consent_body(body.into());
             h.win.set_tr_consent_open(true);
         }
@@ -1938,6 +1941,8 @@ fn focus_os_window(w: &SettingsWindow) {
 pub fn hide() {
     let Some(w) = with_host(|h| {
         h.close_overlays();
+        // A key typed but not saved never stays in the window.
+        h.win.set_tr_key_input(SharedString::new());
         h.win.clone_strong()
     }) else {
         return;

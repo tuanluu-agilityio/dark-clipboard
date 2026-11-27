@@ -62,6 +62,18 @@ pub fn consent_body(lang: Lang, shortcut: &str) -> String {
     .join("\n")
 }
 
+/// The shortcut the consent dialog names: the form's, else the stored one, else the default.
+pub fn consent_shortcut(form: &str, stored: Option<&str>) -> String {
+    let form = form.trim();
+    if !form.is_empty() {
+        return form.to_string();
+    }
+    match stored.map(str::trim) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => darkclip_app::settings::AiSettings::default().shortcut,
+    }
+}
+
 /// The key as shown once it is stored: the `sk-ant-` prefix (when the key has it) and the last
 /// four characters only. A key of eight characters or fewer shows no tail at all.
 pub fn key_mask(key: &str) -> String {
@@ -262,6 +274,17 @@ mod tests {
         assert_eq!(switch_step(true, 2), SwitchStep::On);
         assert_eq!(switch_step(false, 0), SwitchStep::Off);
         assert_eq!(switch_step(false, 1), SwitchStep::Off);
+    }
+
+    #[test]
+    fn the_consent_names_a_shortcut_even_when_the_field_is_empty() {
+        assert_eq!(
+            consent_shortcut(" Ctrl+Alt+Y ", Some("Ctrl+Alt+U")),
+            "Ctrl+Alt+Y"
+        );
+        assert_eq!(consent_shortcut("  ", Some("Ctrl+Alt+U")), "Ctrl+Alt+U");
+        assert_eq!(consent_shortcut("", Some(" ")), "Ctrl+Alt+T");
+        assert_eq!(consent_shortcut("", None), "Ctrl+Alt+T");
     }
 
     #[test]

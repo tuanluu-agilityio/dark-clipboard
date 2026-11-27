@@ -388,6 +388,8 @@ fn translate_section_clicks_consent_key_entry_and_ctrl_6() {
     slint::platform::update_timers_and_animations();
     assert_eq!(sw.get_section(), 0);
     let ctrl: SharedString = slint::platform::Key::Control.into();
+    // A key typed but not saved is cleared when the section changes.
+    sw.set_tr_key_input("typed-not-saved".into());
     for (digit, want) in [("5", 4), ("6", 5), ("1", 0)] {
         key_down(&swin, ctrl.clone());
         key_down(&swin, digit.into());
@@ -395,5 +397,6 @@ fn translate_section_clicks_consent_key_entry_and_ctrl_6() {
         key_up(&swin, ctrl.clone());
         slint::platform::update_timers_and_animations();
         assert_eq!(sw.get_section(), want, "Ctrl+{digit}");
+        assert_eq!(sw.get_tr_key_input(), "", "Ctrl+{digit}");
     }
 }
