@@ -133,7 +133,7 @@ The owner reviewed the Phase 7 demo on 2026-11-25 ("đã review", D-089); no rel
 | Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
 |---|---|---|---|---|---|---|---|---|
 | Design, spike, prototype, plan (orchestrator, brainstorming with the owner) | spike/translate-hotkey | orchestrator | opus | done (explore 99,252; builder check 77,593) | | | | 176,845 |
-| 600 Decisions D-093/D-094, GC-08 gate, F-41 | task/600-phase6-decisions | scaffolder | sonnet | in progress | | | | |
+| 600 Decisions D-093/D-094, GC-08 gate, F-41 | task/600-phase6-decisions | scaffolder | sonnet | done (commit on branch; review pending) | | | | |
 | G1 Owner gate: spike rows | — | owner | — | pending (blocks 603) | | | | |
 | 601 darkclip-ai crate | | builder | sonnet | pending | | | | |
 | 602 ai_net.rs + SecretStore | | specialist | opus | pending | | | | |

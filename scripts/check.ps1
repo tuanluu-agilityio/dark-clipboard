@@ -118,8 +118,9 @@ if ($bad) { exit 1 }
 Write-Host '== no renamed network dependency or Windows networking feature in any Cargo.toml (GC-08, D-057)'
 $tomls = @()
 foreach ($d in @('crates', 'apps', 'fuzz')) {
-    if (Test-Path -LiteralPath $d) { $tomls += @(Get-ChildItem -Path $d -Recurse -File -Filter 'Cargo.toml' | Where-Object { $_.FullName -notmatch '\target\' }) }
+    if (Test-Path -LiteralPath $d) { $tomls += @(Get-ChildItem -Path $d -Recurse -File -Filter 'Cargo.toml' | Where-Object { $_.FullName -notmatch '\\target\\' }) }
 }
+Write-Host "   ($($tomls.Count) manifests scanned)"
 foreach ($f in $tomls) {
     foreach ($h in @(Select-String -LiteralPath $f.FullName -Pattern 'package\s*=\s*"(ureq|reqwest|hyper|h2|attohttpc|isahc|minreq|curl|socket2|surf)"|Win32_Networking|WinHttp|WinINet')) {
         Write-Host "CHECK FAILED: network dependency or feature in $(Rel $f):$($h.LineNumber)"; $bad = $true
@@ -127,12 +128,12 @@ foreach ($f in $tomls) {
 }
 if ($bad) { exit 1 }
 
-Write-Host '== network APIs only in apps/desktop/src/update.rs (GC-08, D-057)'
+Write-Host '== network APIs only in update.rs and ai_net.rs (GC-08, D-057, D-094)'
 foreach ($f in $rs) {
-    if ((Rel $f) -eq 'apps/desktop/src/update.rs') { continue }
+    if (@('apps/desktop/src/update.rs', 'apps/desktop/src/ai_net.rs') -contains (Rel $f)) { continue }
     foreach ($h in @(Select-String -LiteralPath $f.FullName -Pattern '\b(ureq|reqwest|hyper|h2|attohttpc|isahc|minreq|curl|socket2|surf)::|\b(use|extern crate) (ureq|reqwest|hyper|h2|attohttpc|isahc|minreq|curl|socket2|surf)\b|\b(mio|tokio)::net\b|\bstd::net\b|\b(TcpStream|TcpListener|UdpSocket)\b|\bWinHttp|\bWinINet|\bWin32::Networking')) {
         if ($h.Line -match '^\s*//') { continue }
-        Write-Host "CHECK FAILED: network API outside update.rs in $(Rel $f):$($h.LineNumber)"; $bad = $true
+        Write-Host "CHECK FAILED: network API outside update.rs and ai_net.rs in $(Rel $f):$($h.LineNumber)"; $bad = $true
     }
 }
 if ($bad) { exit 1 }

@@ -37,6 +37,7 @@ Portable crates (core, platform, storage, app) have no OS, UI or async dependenc
 - **Flags that follow content** (`no_export`, sensitivity, masked): every path that creates a clip from another clip or from an import must decide each flag explicitly (F-26).
 - **Windows-only code** must lint on macOS/Linux, and **UI symbols** must be vector icons (see above).
 - **Release scripts:** PowerShell scripts end with `exit 0` (leaked `$LASTEXITCODE`, PR #32); offline tools need every locked crate fetched (PR #34).
+- **Network allowlist** (Task 600, D-094): the gate lets network APIs appear only in `apps/desktop/src/update.rs` and `apps/desktop/src/ai_net.rs`, named by exact path in both `check.ps1` and `check.sh` (never a pattern such as `apps/desktop/src/*.rs`); `crates/` stay network-free. Adding a third network file needs a new decision. Gate self-test: a temporary `use ureq::Agent;` in `ai_net.rs` passes, in any other file fails; a `package = "ureq"` manifest line fails (`check.ps1` prints how many manifests it scanned, so an empty scan is visible).
 
 ## Reused from Darkshot (practices only)
 Banned-crate check in the gate; single privacy choke point plus a static sink check; no logging in privacy modules; manual `Debug`; small task packages with an independent reviewer; memory-bank; token ledger; PR-only `main`.
