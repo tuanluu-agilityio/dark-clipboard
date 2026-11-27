@@ -136,7 +136,7 @@ The owner reviewed the Phase 7 demo on 2026-11-25 ("đã review", D-089); no rel
 | 600 Decisions D-093/D-094, GC-08 gate, F-41 | task/600-phase6-decisions | scaffolder | sonnet | done (D-093 consent, D-094 GC-08: exact-path allowlist `update.rs` + `ai_net.rs`, case-sensitive in both scripts; F-41 fixed, gate prints manifest count (8); T-21 added; self-tests recorded) | 73,362 | 69,985 (security-reviewer opus: APPROVED, 6 should-fix applied) | 15,224 | 158,571 |
 | G1 Owner gate: spike rows | — | owner | — | pending (blocks 603) | | | | |
 | 601 darkclip-ai crate | task/601-darkclip-ai | builder | sonnet | done (pure crate: request build, response parse, status/transport error mapping, content-free Debug; 12 tests; added to the GC-01 portable list and the GC-06 no-logging scan in both scripts; tests not written red-first, judged on content) | 66,294 | 50,577 (reviewer opus: APPROVED, 2 should-fix applied) | 4,787 | 121,658 |
-| 602 ai_net.rs + SecretStore | | specialist | opus | pending | | | | |
+| 602 ai_net.rs + SecretStore | task/602-ai-net-secret-store | specialist | opus | in progress | | | | |
 | 604 Ctrl+C / Ctrl+A injection | | specialist | opus | pending | | | | |
 | 603 Capture claim | | specialist | opus | pending | | | | |
 | I1 Integration review 602-604 | | reviewer | sonnet | pending | | | | |
