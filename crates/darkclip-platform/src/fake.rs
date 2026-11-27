@@ -8,11 +8,12 @@ use crate::caps::{Capabilities, ShortcutSupport, SourceSupport, Support};
 use crate::error::PlatformError;
 use crate::traits::{
     Autostart, ChangeSignal, ClipboardAccess, ClipboardMeta, ClipboardMonitor, PlatformBundle,
-    PlatformFormat, SourceResolver,
+    PlatformFormat, SecretStore, SourceResolver,
 };
 use darkclip_core::markers::PrivacyMarker;
 use darkclip_core::policy::ReadPlan;
-use darkclip_core::{ClipboardSource, Mime, RawRepresentation, Timestamp};
+use darkclip_core::{ClipboardSource, Mime, RawRepresentation, Redacted, Timestamp};
+use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -443,6 +444,45 @@ impl Autostart for FakeAutostart {
     }
 }
 
+/// In-memory secret store for tests (Task 602). Nothing is persisted or logged; `Debug` shows
+/// only how many secrets are held.
+#[derive(Default)]
+pub struct FakeSecretStore {
+    secrets: Mutex<HashMap<String, Redacted<String>>>,
+}
+
+impl std::fmt::Debug for FakeSecretStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let n = self
+            .secrets
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len();
+        f.debug_struct("FakeSecretStore")
+            .field("count", &n)
+            .finish()
+    }
+}
+
+impl SecretStore for FakeSecretStore {
+    fn get(&self, target: &str) -> Result<Option<Redacted<String>>, PlatformError> {
+        let g = self.secrets.lock().unwrap_or_else(PoisonError::into_inner);
+        Ok(g.get(target).cloned())
+    }
+
+    fn set(&self, target: &str, secret: &Redacted<String>) -> Result<(), PlatformError> {
+        let mut g = self.secrets.lock().unwrap_or_else(PoisonError::into_inner);
+        g.insert(target.to_string(), secret.clone());
+        Ok(())
+    }
+
+    fn delete(&self, target: &str) -> Result<(), PlatformError> {
+        let mut g = self.secrets.lock().unwrap_or_else(PoisonError::into_inner);
+        g.remove(target);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -776,5 +816,53 @@ mod tests {
         assert_eq!(v["source_app"], "frontmost");
         assert_eq!(v["concealed_markers"]["reason"], "no markers");
         assert_eq!(v["global_shortcut"], "portal");
+    }
+
+    /// A synthetic secret assembled at runtime (never a key-shaped literal).
+    fn synthetic_secret(tag: &str) -> Redacted<String> {
+        Redacted(["syn", tag, &std::process::id().to_string()].join("-"))
+    }
+
+    #[test]
+    fn fake_secret_store_round_trip() {
+        let store = FakeSecretStore::default();
+        let a = synthetic_secret("first");
+        let b = synthetic_secret("second");
+        store.set("t/1", &a).unwrap();
+        assert_eq!(store.get("t/1").unwrap(), Some(a));
+        store.set("t/1", &b).unwrap();
+        assert_eq!(store.get("t/1").unwrap(), Some(b));
+        assert_eq!(store.get("t/2").unwrap(), None);
+        store.delete("t/1").unwrap();
+        assert_eq!(store.get("t/1").unwrap(), None);
+    }
+
+    #[test]
+    fn fake_delete_absent_is_ok() {
+        let store = FakeSecretStore::default();
+        assert_eq!(store.delete(crate::ANTHROPIC_KEY_TARGET), Ok(()));
+        store.set("t", &synthetic_secret("x")).unwrap();
+        assert_eq!(store.delete("t"), Ok(()));
+        assert_eq!(store.delete("t"), Ok(()));
+    }
+
+    #[test]
+    fn fake_get_absent_is_none() {
+        let store = FakeSecretStore::default();
+        assert_eq!(store.get(crate::ANTHROPIC_KEY_TARGET).unwrap(), None);
+    }
+
+    #[test]
+    fn debug_hides_secret() {
+        let store = FakeSecretStore::default();
+        let secret = synthetic_secret("hidden");
+        store.set("t", &secret).unwrap();
+        let got = format!("{:?}", store.get("t"));
+        let whole = format!("{store:?}");
+        for part in secret.0.split('-') {
+            assert!(!got.contains(part), "get Debug leaks a part");
+            assert!(!whole.contains(part), "store Debug leaks a part");
+        }
+        assert_eq!(got, "Ok(Some(<redacted>))");
     }
 }

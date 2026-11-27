@@ -25,6 +25,9 @@ pub mod fuzz_entry;
 mod monitor;
 // Pure focus/paste decisions; compiled everywhere so the fake-seam tests run on every OS.
 mod paste;
+// Credential Manager secret store (Task 602).
+#[cfg(windows)]
+mod secret;
 #[cfg(windows)]
 mod source;
 mod text;
@@ -40,6 +43,8 @@ pub use autostart::{run_command, RUN_KEY, VALUE_NAME};
 pub use monitor::{SignalSourceFn, WinMonitor};
 #[cfg(windows)]
 pub use paste::WinPasteInjector;
+#[cfg(windows)]
+pub use secret::WinSecretStore;
 #[cfg(windows)]
 pub use source::WinSourceResolver;
 

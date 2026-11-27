@@ -6,6 +6,9 @@
 //! `ClipboardGuard::{open_for_write, empty, set_block}`; it never writes marker formats
 //! (D-012).
 //!
+//! `cred_write` / `cred_read` / `cred_delete` (Task 602) wrap Credential Manager for
+//! `WinSecretStore`; the block `CredReadW` returns is wiped and `CredFree`d on every path.
+//!
 //! Nothing here reads window titles (GC-06). Clipboard data is read only by
 //! `ClipboardGuard::dword_value` (a 4-byte marker DWORD, `snapshot_meta`) and by `data_size` /
 //! `copy_data`, which `access::read_plan` calls only for planned formats after
@@ -22,6 +25,10 @@ use windows::core::PWSTR;
 use windows::Win32::Foundation::{
     CloseHandle, GetLastError, GlobalFree, SetLastError, ERROR_SUCCESS, HANDLE, HGLOBAL, HINSTANCE,
     HWND, LPARAM, LRESULT, WPARAM,
+};
+use windows::Win32::Security::Credentials::{
+    CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
+    CRED_TYPE_GENERIC,
 };
 use windows::Win32::System::DataExchange::{
     AddClipboardFormatListener, CloseClipboard, EmptyClipboard, EnumClipboardFormats,
@@ -1067,6 +1074,109 @@ pub(crate) fn reg_delete_value(subkey: &str, name: &str) -> Result<(), PlatformE
         Ok(())
     } else {
         Err(reg_error(r))
+    }
+}
+
+/// The Win32 code of a Credential Manager failure (the HRESULT when it is not a Win32 code).
+fn cred_error(e: &windows::core::Error) -> PlatformError {
+    use windows::Win32::Foundation::WIN32_ERROR;
+    PlatformError::Backend {
+        code: WIN32_ERROR::from_error(e).map_or_else(|| i64::from(e.code().0), |w| i64::from(w.0)),
+    }
+}
+
+fn cred_not_found(e: &windows::core::Error) -> bool {
+    use windows::Win32::Foundation::{ERROR_NOT_FOUND, WIN32_ERROR};
+    WIN32_ERROR::from_error(e) == Some(ERROR_NOT_FOUND)
+}
+
+/// A UTF-16 string with its terminating NUL, in a buffer we own (`CREDENTIALW` takes `PWSTR`).
+fn wide_z(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// Owns the single block `CredReadW` returns; wipes the secret blob, then `CredFree`s it once.
+struct CredBlock(*mut CREDENTIALW);
+
+impl Drop for CredBlock {
+    fn drop(&mut self) {
+        if self.0.is_null() {
+            return;
+        }
+        // SAFETY: `self.0` is the block `CredReadW` returned; it stays valid until `CredFree`
+        // below, and nothing else refers to it now.
+        let (blob, size) = unsafe { ((*self.0).CredentialBlob, (*self.0).CredentialBlobSize) };
+        if !blob.is_null() {
+            let len = usize::try_from(size).unwrap_or(0);
+            // SAFETY: `blob` points to `size` bytes inside the block we own (the blob is
+            // read/write per the `CREDENTIAL` docs); no other reference to them exists.
+            unsafe { std::ptr::write_bytes(blob, 0, len) };
+        }
+        // SAFETY: the block came from `CredReadW` and is freed exactly once, here.
+        unsafe { CredFree(self.0.cast_const().cast::<c_void>()) };
+    }
+}
+
+/// `CredWriteW` of a generic, local-machine credential (Task 602). Creates or replaces it.
+pub(crate) fn cred_write(target: &str, user: &str, blob: &[u8]) -> Result<(), PlatformError> {
+    let mut target_w = wide_z(target);
+    let mut user_w = wide_z(user);
+    let size = u32::try_from(blob.len()).map_err(|_| PlatformError::Backend { code: -1 })?;
+    let cred = CREDENTIALW {
+        Type: CRED_TYPE_GENERIC,
+        TargetName: PWSTR(target_w.as_mut_ptr()),
+        CredentialBlobSize: size,
+        // `CredWriteW` takes a const `CREDENTIALW` and only reads the blob.
+        CredentialBlob: blob.as_ptr().cast_mut(),
+        Persist: CRED_PERSIST_LOCAL_MACHINE,
+        UserName: PWSTR(user_w.as_mut_ptr()),
+        ..Default::default()
+    };
+    // SAFETY: `cred` and every buffer it points to (`target_w`, `user_w`, `blob`) outlive the
+    // call; both strings are NUL-terminated; flags 0 (no `CRED_PRESERVE_CREDENTIAL_BLOB`).
+    unsafe { CredWriteW(&cred, 0) }.map_err(|e| cred_error(&e))
+}
+
+/// `CredReadW` of a generic credential: the blob bytes, `Ok(None)` when there is none. The
+/// OS block is wiped and freed on every path (`CredBlock`).
+pub(crate) fn cred_read(target: &str) -> Result<Option<Zeroizing<Vec<u8>>>, PlatformError> {
+    let target_w = HSTRING::from(target);
+    let mut out: *mut CREDENTIALW = std::ptr::null_mut();
+    // SAFETY: `target_w` is NUL-terminated and outlives the call; `out` is a valid out pointer;
+    // flags are reserved (0).
+    let r = unsafe { CredReadW(&target_w, CRED_TYPE_GENERIC, None, &mut out) };
+    let block = CredBlock(out);
+    if let Err(e) = r {
+        return if cred_not_found(&e) {
+            Ok(None)
+        } else {
+            Err(cred_error(&e))
+        };
+    }
+    if block.0.is_null() {
+        return Err(PlatformError::Backend { code: -1 });
+    }
+    // SAFETY: `CredReadW` succeeded, so `block.0` points to a valid `CREDENTIALW` that lives
+    // until `block` drops.
+    let (blob, size) = unsafe { ((*block.0).CredentialBlob, (*block.0).CredentialBlobSize) };
+    let len = usize::try_from(size).unwrap_or(0);
+    if blob.is_null() || len == 0 {
+        return Ok(Some(Zeroizing::new(Vec::new())));
+    }
+    // SAFETY: `blob` points to `size` readable bytes inside the block, alive until `block`
+    // drops (after this copy).
+    let bytes = unsafe { std::slice::from_raw_parts(blob, len) };
+    Ok(Some(Zeroizing::new(bytes.to_vec())))
+}
+
+/// `CredDeleteW` of a generic credential; a missing one counts as done.
+pub(crate) fn cred_delete(target: &str) -> Result<(), PlatformError> {
+    let target_w = HSTRING::from(target);
+    // SAFETY: `target_w` is NUL-terminated and outlives the call; flags are reserved (0).
+    match unsafe { CredDeleteW(&target_w, CRED_TYPE_GENERIC, None) } {
+        Ok(()) => Ok(()),
+        Err(e) if cred_not_found(&e) => Ok(()),
+        Err(e) => Err(cred_error(&e)),
     }
 }
 
