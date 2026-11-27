@@ -3,6 +3,7 @@
 //! excluded-app skip (rule 3).
 
 use super::actor::Actor;
+use darkclip_core::policy::SkipReason;
 use darkclip_core::{ClipboardSource, Timestamp};
 use darkclip_platform::{ChangeSignal, ClipboardMeta};
 #[cfg(test)]
@@ -27,6 +28,12 @@ pub(super) struct Pending {
     pub(super) signal_at: Timestamp,
     /// Signal time of this change's latest signal.
     pub(super) last_signal_at: Timestamp,
+    /// When the actor dequeued this change's first signal (Task 603: a claim covers only
+    /// changes first seen while it is armed).
+    pub(super) seen_at: Instant,
+    /// Task 603: the gate reason this change was let through for, only for a claim decision.
+    /// If it is not claimed it is dropped with this reason, whatever the gate says later.
+    pub(super) held: Option<SkipReason>,
     /// F-14 rule 1: every source of the changes this burst superseded before they were
     /// inspected. Checked against the excluded apps when this change has no source of its own.
     pub(super) superseded: Vec<ClipboardSource>,
@@ -64,13 +71,13 @@ pub(super) struct ExcludedRecent {
 /// Largest seq distance between a superseded change and the ownerless flush that may inherit
 /// its source (F-14 rule 2), and between an excluded skip and a later ownerless change
 /// checked against it (rule 3).
-const MAX_HEIR_SEQ_GAP: u64 = 8;
+pub(super) const MAX_HEIR_SEQ_GAP: u64 = 8;
 
 /// Windows OLE placeholders; their presence in the final snapshot is the flush signature.
 const OLE_SIGNATURE_FORMATS: [&str; 2] = ["DataObject", "Ole Private Data"];
 
 /// The snapshot still offers an OLE placeholder (reported with no MIME).
-fn has_ole_signature(meta: &ClipboardMeta) -> bool {
+pub(super) fn has_ole_signature(meta: &ClipboardMeta) -> bool {
     meta.formats.iter().any(|f| {
         f.mime.is_none()
             && OLE_SIGNATURE_FORMATS
@@ -109,12 +116,33 @@ impl Actor {
                 }
             }
         }
-        // Paused, private, disabled or our own write: no clipboard access at all.
-        if let Some(reason) = self.gate(s.seq) {
-            self.drop_gated(s.seq, reason);
-            return;
+        #[cfg(test)]
+        {
+            let mut lost = self
+                .hooks
+                .drop_signal
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some(i) = lost.iter().position(|q| *q == s.seq) {
+                lost.remove(i);
+                return;
+            }
         }
         let now = Instant::now();
+        // Paused, private, disabled or our own write: no clipboard access at all. A live
+        // claim (Task 603) lets a Paused or Disabled change through to its decision only when
+        // it can be the target's (`claim_admits`); never in Private mode.
+        let mut admitted = None;
+        if let Some(reason) = self.gate(s.seq) {
+            if !self.claim_admits(reason, now, &s) {
+                if self.claim.is_some() {
+                    self.claim_gated();
+                }
+                self.drop_gated(s.seq, reason);
+                return;
+            }
+            admitted = Some(reason);
+        }
         if let Some(p) = &self.pending {
             if p.seq == s.seq {
                 let due = self.due_at(now, p.first_at);
@@ -140,6 +168,15 @@ impl Actor {
         // sources. The burst start is kept so the cap still bounds the wait.
         let prev = self.pending.take();
         let first_at = prev.as_ref().map_or(now, |p| p.first_at);
+        // Task 603: an ownerless change replacing one the claim let through may be its flush:
+        // it is held as well, so it is never stored unless claimed.
+        let held = admitted.or_else(|| {
+            if s.source.is_none() {
+                prev.as_ref().and_then(|p| p.held)
+            } else {
+                None
+            }
+        });
         // F-14: a replaced pending change was never processed, so it always joins the chain,
         // whatever the actor's own timing (rule 1: its sources are checked for exclusion,
         // which only adds skips; rule 2: it may name an ownerless flush's source, bounded by
@@ -159,6 +196,8 @@ impl Actor {
             burst_signal_at,
             signal_at: s.at,
             last_signal_at: s.at,
+            seen_at: now,
+            held,
             superseded,
             heir,
         });

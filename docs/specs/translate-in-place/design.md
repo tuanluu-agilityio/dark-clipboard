@@ -134,6 +134,8 @@ Anti-goals (a failure even if it works)
 
 ### 5.3 Capture skip contract
 
+> **Changed by Task 603 (2026-11-27):** read "pid" below as `app_id`: the claim matches the change's source `app_id` (the executable identity the platform resolves at signal time; `ClipboardSource` has no pid) against `PasteTarget.app_id`. An ownerless flush is claimed only through the unchanged F-14 rule 2 heir. Two own writes in a row are suppressed by the snapshot-truth rule (the snapshot's seq is the later own write), proved by a test, instead of a set of 4 seqs.
+
 - `ExpectForeignCopy { pid, deadline, reply }` arms a single slot in the actor. The slot holds
   the expected pid, a deadline (now + 600 ms, covering the Ctrl+A retry) and the reply sender.
 - The **first** clipboard change after arming whose resolved source pid matches, before the

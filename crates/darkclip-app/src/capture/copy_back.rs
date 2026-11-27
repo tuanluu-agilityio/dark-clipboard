@@ -43,8 +43,8 @@ impl Actor {
     }
 
     /// "Copy as..." (Task 404): writes `text` as plain text, as our own write. Nothing is
-    /// stored and no use count changes.
-    pub(super) fn copy_text(&mut self, text: String) -> Result<(), ApiError> {
+    /// stored and no use count changes. Returns the seq of the write (Task 603).
+    pub(super) fn copy_text(&mut self, text: String) -> Result<u64, ApiError> {
         if text.is_empty() {
             return Err(ApiError::InvalidArgument("nothing to copy"));
         }
@@ -58,8 +58,13 @@ impl Actor {
         }])
     }
 
-    /// Writes `reps` (wiped afterwards) and records the write as ours.
-    fn write_own(&mut self, mut reps: Vec<RawRepresentation>) -> Result<(), ApiError> {
+    /// Writes `reps` (wiped afterwards), records the write as ours and returns its seq.
+    ///
+    /// Two own writes in a row (the translation, then the restore; Task 603) need no set of
+    /// seqs: a late signal of the earlier write passes the gate, but `process` takes the
+    /// snapshot's seq as the truth, which is the later own write, and drops it
+    /// (`two_own_writes_in_a_row_are_never_stored`).
+    fn write_own(&mut self, mut reps: Vec<RawRepresentation>) -> Result<u64, ApiError> {
         let written = self.with_retries(|a| a.write(&reps));
         wipe_reps(&mut reps);
         if written.is_err() {
@@ -72,6 +77,6 @@ impl Actor {
         self.last_self_write_seq = Some(seq);
         // Rule 3: nothing after our own write is a flush of the excluded change.
         self.excluded_recent = None;
-        Ok(())
+        Ok(seq)
     }
 }

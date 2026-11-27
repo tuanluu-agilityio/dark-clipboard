@@ -6,7 +6,7 @@ Every task package links here. A reviewer treats a violation as **blocking**.
 
 - GC-01 `darkclip-core`, `darkclip-platform`, `darkclip-storage`, `darkclip-app` must not depend on `windows`, `windows-sys`, `objc2*`, `core-foundation*`, `x11rb`, `wayland-*`, `gtk*`, `slint`, `tauri*`, `tokio`. `check.ps1` enforces this with `cargo tree`.
 - GC-02 `darkclip-core` performs no I/O: no filesystem, no network, no clock (time comes through the `Clock` trait), no environment variables. OS entropy for the random bits of UUID v7 ids (`uuid` → `getrandom`) is allowed; ids are therefore not deterministic (D-017).
-- GC-03 Only the capture actor, `darkclip-app/src/capture/` (any file in that directory), may call `ClipboardAccess::read` or `ClipboardAccess::write`, and only after a `Decision::Read` from `darkclip_core::policy::decide_pre_read` (for reads). `check.ps1` enforces this. (Changed by D-044, 2026-11-23: `capture.rs` was split into the `capture/` directory by Task 200.)
+- GC-03 Only the capture actor, `darkclip-app/src/capture/` (any file in that directory), may call `ClipboardAccess::read` or `ClipboardAccess::write`, and only after a `Decision::Read` from `darkclip_core::policy::decide_pre_read` (for reads). `check.ps1` enforces this. (Changed by D-044, 2026-11-23: `capture.rs` was split into the `capture/` directory by Task 200.) (Changed by Task 603 / D-093, 2026-11-27: the capture actor may also read after a `Decision::Read` from `darkclip_core::policy::decide_translate_read`, text/plain only, for a change claimed by translate in place; that text is handed to the flow and never stored.)
 - GC-04 Adapters contain no policy decisions (they report markers; they never skip).
 - GC-05 No async runtime in P0/P1. Threads and `std::sync::mpsc` only.
 

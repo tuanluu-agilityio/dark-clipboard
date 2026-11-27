@@ -106,6 +106,19 @@ pub fn decide_pre_read(input: &PreReadInput<'_>) -> Decision {
     }
 }
 
+/// `decide_pre_read` without the settings that only stop *storing*: capture disabled, a
+/// running pause, and the enabled kinds. Private still skips. Every other step is the same,
+/// in the same order, and the plan reads text/plain only.
+///
+/// For the source text of translate in place (Task 605), which is handed to the requester
+/// and never stored (Task 603).
+pub fn decide_translate_read(input: &PreReadInput<'_>) -> Decision {
+    match decide_translate(input) {
+        Ok(plan) => Decision::Read(plan),
+        Err(reason) => Decision::Skip(reason),
+    }
+}
+
 fn decide(input: &PreReadInput<'_>) -> Result<ReadPlan, SkipReason> {
     // 1. Settings. A pause whose deadline has passed is normal mode.
     if !input.capture_enabled {
@@ -116,6 +129,53 @@ fn decide(input: &PreReadInput<'_>) -> Result<ReadPlan, SkipReason> {
         CaptureMode::Paused { until } if input.now < until => return Err(SkipReason::Paused),
         CaptureMode::Paused { .. } | CaptureMode::Normal => {}
     }
+    privacy_steps(input)?;
+    // 6. Readable formats, then enabled kinds.
+    let readable = readable(input);
+    if readable.is_empty() {
+        return Err(SkipReason::NothingReadable);
+    }
+    let enabled: Vec<&AvailableFormat> = readable
+        .into_iter()
+        .filter(|f| mime_enabled(f.mime, input.enabled_kinds))
+        .collect();
+    if enabled.is_empty() {
+        return Err(SkipReason::KindDisabled);
+    }
+    // 7. Size caps: oversize images are dropped; text is truncated at read time.
+    let formats: Vec<AvailableFormat> = enabled
+        .into_iter()
+        .filter(|f| !(f.mime == Mime::ImagePng && image_too_large(f, input.caps)))
+        .cloned()
+        .collect();
+    if formats.is_empty() {
+        return Err(SkipReason::TooLarge);
+    }
+    Ok(plan(formats, input.caps))
+}
+
+fn decide_translate(input: &PreReadInput<'_>) -> Result<ReadPlan, SkipReason> {
+    // 1. Settings: only Private. Disabled and a running pause stop storing, and nothing is
+    //    stored here.
+    if *input.mode == CaptureMode::Private {
+        return Err(SkipReason::Private);
+    }
+    privacy_steps(input)?;
+    // 6. Readable formats: text/plain only; the enabled kinds are a storing setting.
+    let formats: Vec<AvailableFormat> = readable(input)
+        .into_iter()
+        .filter(|f| f.mime == Mime::TextPlain)
+        .cloned()
+        .collect();
+    if formats.is_empty() {
+        return Err(SkipReason::NothingReadable);
+    }
+    // 7. Text is truncated at read time (no image is planned).
+    Ok(plan(formats, input.caps))
+}
+
+/// Steps 2–5, shared by both decisions in the same order.
+fn privacy_steps(input: &PreReadInput<'_>) -> Result<(), SkipReason> {
     // 2. Our own write coming back.
     if input.last_self_write_seq == Some(input.seq) {
         return Err(SkipReason::SelfWrite);
@@ -141,36 +201,24 @@ fn decide(input: &PreReadInput<'_>) -> Result<ReadPlan, SkipReason> {
             return Err(SkipReason::ExcludedApp);
         }
     }
-    // 6. Readable formats, then enabled kinds.
-    let readable: Vec<&AvailableFormat> = input
+    Ok(())
+}
+
+/// Offered formats that are not OLE placeholders.
+fn readable<'a>(input: &PreReadInput<'a>) -> Vec<&'a AvailableFormat> {
+    input
         .available
         .iter()
         .filter(|f| !is_placeholder(&f.platform_format))
-        .collect();
-    if readable.is_empty() {
-        return Err(SkipReason::NothingReadable);
-    }
-    let enabled: Vec<&AvailableFormat> = readable
-        .into_iter()
-        .filter(|f| mime_enabled(f.mime, input.enabled_kinds))
-        .collect();
-    if enabled.is_empty() {
-        return Err(SkipReason::KindDisabled);
-    }
-    // 7. Size caps: oversize images are dropped; text is truncated at read time.
-    let formats: Vec<AvailableFormat> = enabled
-        .into_iter()
-        .filter(|f| !(f.mime == Mime::ImagePng && image_too_large(f, input.caps)))
-        .cloned()
-        .collect();
-    if formats.is_empty() {
-        return Err(SkipReason::TooLarge);
-    }
-    Ok(ReadPlan {
+        .collect()
+}
+
+fn plan(formats: Vec<AvailableFormat>, caps: SizeCaps) -> ReadPlan {
+    ReadPlan {
         formats,
-        truncate_text_at: input.caps.text_max_bytes,
-        image_max_bytes: input.caps.image_max_bytes,
-    })
+        truncate_text_at: caps.text_max_bytes,
+        image_max_bytes: caps.image_max_bytes,
+    }
 }
 
 fn is_placeholder(platform_format: &str) -> bool {
@@ -320,7 +368,15 @@ mod tests {
         }
 
         fn decide(&self) -> Decision {
-            decide_pre_read(&PreReadInput {
+            decide_pre_read(&self.input())
+        }
+
+        fn decide_translate(&self) -> Decision {
+            decide_translate_read(&self.input())
+        }
+
+        fn input(&self) -> PreReadInput<'_> {
+            PreReadInput {
                 seq: self.seq,
                 last_self_write_seq: self.last_self_write_seq,
                 mode: &self.mode,
@@ -332,7 +388,7 @@ mod tests {
                 available: &self.available,
                 enabled_kinds: &self.enabled_kinds,
                 caps: self.caps,
-            })
+            }
         }
     }
 
@@ -725,5 +781,132 @@ mod tests {
         c.available = vec![fmt(Mime::ImagePng, "PNG", Some(u64::MAX))];
         c.enabled_kinds = vec![ClipType::Text];
         assert_eq!(c.decide(), Decision::Skip(SkipReason::KindDisabled));
+    }
+
+    // Task 603: the translate source read.
+
+    #[test]
+    fn translate_read_ignores_disabled_paused_and_kinds() {
+        let mut c = Case::new();
+        c.capture_enabled = false;
+        assert_eq!(c.decide(), Decision::Skip(SkipReason::Disabled));
+        assert_eq!(assert_reads(&c.decide_translate()).formats, vec![text()]);
+        let mut c = Case::new();
+        c.mode = CaptureMode::Paused {
+            until: Timestamp(NOW.0 + 60_000),
+        };
+        assert_eq!(c.decide(), Decision::Skip(SkipReason::Paused));
+        assert_eq!(assert_reads(&c.decide_translate()).formats, vec![text()]);
+        let mut c = Case::new();
+        c.enabled_kinds = Vec::new();
+        assert_eq!(c.decide(), Decision::Skip(SkipReason::KindDisabled));
+        assert_eq!(assert_reads(&c.decide_translate()).formats, vec![text()]);
+        // All three at once.
+        c.capture_enabled = false;
+        c.mode = CaptureMode::Paused {
+            until: Timestamp(NOW.0 + 60_000),
+        };
+        let d = c.decide_translate();
+        let plan = assert_reads(&d);
+        assert_eq!(plan.truncate_text_at, 1024 * 1024);
+        assert_eq!(plan.image_max_bytes, 20 * 1024 * 1024);
+    }
+
+    #[test]
+    fn translate_read_still_skips_private_markers_transient_excluded_selfwrite() {
+        type SetUp = fn(&mut Case);
+        let cases: Vec<(&str, SetUp, SkipReason)> = vec![
+            (
+                "private",
+                |c: &mut Case| c.mode = CaptureMode::Private,
+                SkipReason::Private,
+            ),
+            (
+                "self write",
+                |c: &mut Case| c.last_self_write_seq = Some(c.seq),
+                SkipReason::SelfWrite,
+            ),
+            (
+                "darkshot",
+                |c: &mut Case| c.markers = vec![PrivacyMarker::DarkshotExcluded],
+                SkipReason::DarkshotExcluded,
+            ),
+            (
+                "os concealed",
+                |c: &mut Case| {
+                    c.markers = vec![PrivacyMarker::OsConcealed { name: "x" }];
+                },
+                SkipReason::OsConcealed,
+            ),
+            (
+                "password manager hint",
+                |c: &mut Case| c.markers = vec![PrivacyMarker::PasswordManagerHint],
+                SkipReason::OsConcealed,
+            ),
+            (
+                "transient",
+                |c: &mut Case| c.markers = vec![PrivacyMarker::Transient],
+                SkipReason::Transient,
+            ),
+            (
+                "auto generated",
+                |c: &mut Case| c.markers = vec![PrivacyMarker::AutoGenerated],
+                SkipReason::Transient,
+            ),
+            (
+                "excluded app",
+                |c: &mut Case| {
+                    c.source = Some(src("KeePassXC.exe", Platform::Windows));
+                    c.excluded = vec![excl("keepassxc.exe", Platform::Windows)];
+                },
+                SkipReason::ExcludedApp,
+            ),
+        ];
+        for (what, set, reason) in cases {
+            let mut c = Case::new();
+            set(&mut c);
+            assert_eq!(c.decide(), Decision::Skip(reason), "{what}");
+            assert_eq!(c.decide_translate(), Decision::Skip(reason), "{what}");
+            // Disabled, paused or no enabled kinds never hide the privacy skip.
+            c.enabled_kinds = Vec::new();
+            if reason != SkipReason::Private {
+                c.mode = CaptureMode::Paused {
+                    until: Timestamp(NOW.0 + 60_000),
+                };
+            }
+            c.capture_enabled = false;
+            assert_eq!(c.decide_translate(), Decision::Skip(reason), "{what}");
+        }
+    }
+
+    #[test]
+    fn translate_read_plans_text_only() {
+        let png = fmt(Mime::ImagePng, "PNG", Some(1000));
+        let html = fmt(Mime::TextHtml, "HTML Format", Some(100));
+        let mut c = Case::new();
+        c.available = vec![png.clone(), html.clone(), text()];
+        let d = c.decide_translate();
+        assert_eq!(assert_reads(&d).formats, vec![text()]);
+        c.available = vec![png.clone()];
+        assert_eq!(
+            c.decide_translate(),
+            Decision::Skip(SkipReason::NothingReadable)
+        );
+        c.available = vec![png, html];
+        assert_eq!(
+            c.decide_translate(),
+            Decision::Skip(SkipReason::NothingReadable)
+        );
+        // An OLE placeholder mapped to text is still not readable text.
+        c.available = vec![fmt(Mime::TextPlain, "DataObject", None)];
+        assert_eq!(
+            c.decide_translate(),
+            Decision::Skip(SkipReason::NothingReadable)
+        );
+        // Text over the cap is planned (truncated at read time, which the actor refuses).
+        let big = fmt(Mime::TextPlain, "CF_UNICODETEXT", Some(5 * 1024 * 1024));
+        c.available = vec![big.clone()];
+        let d = c.decide_translate();
+        assert_eq!(assert_reads(&d).formats, vec![big]);
     }
 }
