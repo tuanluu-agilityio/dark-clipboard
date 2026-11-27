@@ -1089,6 +1089,7 @@ dependencies = [
 name = "darkclip-app"
 version = "0.2.0"
 dependencies = [
+ "darkclip-ai",
  "darkclip-core",
  "darkclip-fuzzgen",
  "darkclip-platform",

@@ -8,6 +8,13 @@
 //!   tooltip.
 //! - Popup placement (Task 204): per-monitor DPI v2 awareness, the monitor under the cursor
 //!   (work area and DPI), and the foreground window recorded at show time (handle only).
+//! - Translate in place (Task 605): whether a window is a console or terminal (a bool only,
+//!   see `is_console_window`) and whether keys are still down (`GetAsyncKeyState`).
+//!
+//! > **Changed by D-095 (2026-11-27, Task 605):** "no class name" (SR-11) has one exception:
+//! > `is_console_window` reads the window class of the translate target with `GetClassNameW`
+//! > and compares it with a fixed list. It returns only a bool; the class string is never
+//! > stored, returned or logged. Window titles are still never read.
 
 #![allow(unsafe_code)]
 
@@ -202,6 +209,60 @@ pub fn foreground_window_of_other_process() -> Option<(u64, u32)> {
     let own = unsafe { GetCurrentProcessId() };
     let value = u64::try_from(hwnd.0 as usize).ok()?;
     (pid != 0 && pid != own).then_some((value, pid))
+}
+
+/// Window classes of consoles and terminals (D-095): Ctrl+C there interrupts the running
+/// program, so translate in place refuses them. Matched case-insensitively, whole name only.
+const CONSOLE_CLASSES: [&str; 7] = [
+    "ConsoleWindowClass",
+    "CASCADIA_HOSTING_WINDOW_CLASS",
+    "mintty",
+    "PuTTY",
+    "VirtualConsoleClass",
+    "org.wezfurlong.wezterm",
+    "Alacritty",
+];
+
+/// True when `class` is one of [`CONSOLE_CLASSES`] (pure; the matcher of `is_console_window`).
+pub fn class_is_console(class: &str) -> bool {
+    CONSOLE_CLASSES
+        .iter()
+        .any(|c| c.eq_ignore_ascii_case(class))
+}
+
+/// True when `window` (a handle value) is a console or terminal window, by its class name
+/// (D-095, SR-11 exception). Only the bool leaves this function: the class string is compared
+/// here and dropped. False when the class cannot be read.
+pub fn is_console_window(window: u64) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+    let Ok(raw) = usize::try_from(window) else {
+        return false;
+    };
+    if raw == 0 {
+        return false;
+    }
+    let hwnd = HWND(raw as *mut core::ffi::c_void);
+    // A class name is at most 256 characters, plus the terminating NUL.
+    let mut buf = [0u16; 257];
+    // SAFETY: `buf` is a valid, writable buffer whose length the wrapper passes as the
+    // maximum; a stale handle only makes the call fail (0). Nothing is owned or released.
+    let n = unsafe { GetClassNameW(hwnd, &mut buf) };
+    let Ok(n) = usize::try_from(n) else {
+        return false;
+    };
+    match buf.get(..n) {
+        Some(name) if n > 0 => class_is_console(&String::from_utf16_lossy(name)),
+        _ => false,
+    }
+}
+
+/// True while any of the virtual keys `vks` is down (`GetAsyncKeyState`, high bit set).
+pub fn any_key_down(vks: &[u16]) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+    vks.iter()
+        // SAFETY: plain value argument; only reads the key state (the high bit means down).
+        .any(|vk| unsafe { GetAsyncKeyState(i32::from(*vk)) } < 0)
 }
 
 /// The image (file) names of the running programs, for "pick running app" (Task 207). Process
@@ -648,5 +709,62 @@ pub fn is_administrators_member() -> bool {
         let ok = CheckTokenMembership(None, sid, &mut member).is_ok();
         let _ = LocalFree(Some(HLOCAL(sid.0)));
         ok && member.as_bool()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn class_is_console_matches_the_fixed_list_only() {
+        for c in CONSOLE_CLASSES {
+            assert!(class_is_console(c), "{c}");
+            assert!(class_is_console(&c.to_uppercase()), "{c}");
+        }
+        for c in [
+            "",
+            "Notepad",
+            "Chrome_WidgetWin_1",
+            "ConsoleWindowClassX",
+            "Console",
+            "mintty2",
+        ] {
+            assert!(!class_is_console(c), "{c}");
+        }
+    }
+
+    #[test]
+    fn is_console_window_is_false_for_no_window_and_our_own_window() {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, HWND_MESSAGE, WINDOW_EX_STYLE, WINDOW_STYLE,
+        };
+        assert!(!is_console_window(0));
+        // Our own message-only window (system class "Static"): not a console. No other
+        // window is looked at (GC-19).
+        // SAFETY: a `w!` literal class name; no title, menu, instance or create data; the
+        // window is destroyed below.
+        let own = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("Static"),
+                None,
+                WINDOW_STYLE(0),
+                0,
+                0,
+                0,
+                0,
+                Some(HWND_MESSAGE),
+                None,
+                None,
+                None,
+            )
+        }
+        .unwrap();
+        let v = u64::try_from(own.0 as usize).unwrap();
+        let console = is_console_window(v);
+        // SAFETY: `own` was created above on this thread and is destroyed once.
+        let _ = unsafe { DestroyWindow(own) };
+        assert!(!console);
     }
 }

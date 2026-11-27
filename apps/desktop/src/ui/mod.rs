@@ -193,17 +193,44 @@ pub enum ShortcutMode {
 }
 
 thread_local! {
-    /// The last shortcut status that was logged (main thread only).
+    /// The last shortcut statuses that were logged (main thread only).
     static LAST_SHORTCUT: Cell<Option<ShortcutStatus>> = const { Cell::new(None) };
+    static LAST_TRANSLATE_SHORTCUT: Cell<Option<ShortcutStatus>> = const { Cell::new(None) };
 }
 
-/// The shortcut status for a mode; `apply` registers the configured shortcut when enabled.
-fn shortcut_status(mode: ShortcutMode, wanted: &str) -> ShortcutStatus {
+/// The shortcut statuses for a mode; `apply` registers the configured shortcuts when enabled.
+/// `translate` is `None` while translate in place is not active (Task 605): not registered.
+fn shortcut_statuses(
+    mode: ShortcutMode,
+    popup: &str,
+    translate: Option<&str>,
+) -> shortcut_host::Statuses {
+    let failed = ShortcutStatus::Failed(Failure::Other);
     match mode {
-        ShortcutMode::Disabled => ShortcutStatus::Off,
-        ShortcutMode::InitFailed => ShortcutStatus::Failed(Failure::Other),
-        ShortcutMode::Enabled => shortcut_host::apply(wanted),
+        ShortcutMode::Disabled => shortcut_host::Statuses {
+            popup: ShortcutStatus::Off,
+            translate: ShortcutStatus::Off,
+        },
+        ShortcutMode::InitFailed => shortcut_host::Statuses {
+            popup: failed,
+            translate: if translate.is_some() {
+                failed
+            } else {
+                ShortcutStatus::Off
+            },
+        },
+        ShortcutMode::Enabled => shortcut_host::apply(popup, translate),
     }
+}
+
+/// The translate shortcut to register: only while the feature is active (enabled, consented
+/// and a key stored; Task 605) and where it is available. The key store is read only while the
+/// feature is consented.
+fn translate_wanted(ai: &darkclip_app::settings::AiSettings) -> Option<String> {
+    let active = crate::translate::host::available()
+        && ai.consented()
+        && crate::translate::host::key_present();
+    active.then(|| ai.shortcut.clone())
 }
 
 /// Asks the event loop to end (callable from any thread).
@@ -250,6 +277,7 @@ fn push_status(
         now,
     );
     let wanted = settings.shortcuts.toggle_popup;
+    let translate = translate_wanted(&settings.ai);
     let enter_pastes = settings.ui.enter_pastes;
     let center = settings.ui.popup_position == darkclip_app::settings::PopupPosition::Center;
     let close_on_focus_loss = settings.ui.close_on_focus_loss;
@@ -257,10 +285,17 @@ fn push_status(
     let (ui, log) = (ui.clone(), Arc::clone(log));
     // The registration lives on the main thread; it changes only when the setting changed.
     let _ = slint::invoke_from_event_loop(move || {
-        let sc = shortcut_status(mode, &wanted);
+        let st = shortcut_statuses(mode, &wanted, translate.as_deref());
+        let sc = st.popup;
         // Logged only when it changes (every refresh passes through here).
         if LAST_SHORTCUT.replace(Some(sc)) != Some(sc) {
             log.event("shortcut", &[("status", Val::Name(sc.log_name()))]);
+        }
+        if LAST_TRANSLATE_SHORTCUT.replace(Some(st.translate)) != Some(st.translate) {
+            log.event(
+                "translate_shortcut",
+                &[("status", Val::Name(st.translate.log_name()))],
+            );
         }
         tray_host::update(TrayUpdate {
             state,
@@ -327,6 +362,8 @@ fn start_app(args: &StartArgs, log: &Log) -> Option<(App, LoadOutcome, mpsc::Rec
         // The paste injector belongs to the UI side (Task 205): focus return and Ctrl+V run
         // on paste threads, never on the actor or this worker.
         if let Some(injector) = take_injector(&mut bundle) {
+            // The same injector (and lock) serves translate in place (Task 605).
+            crate::translate::host::set_injector(Arc::clone(&injector));
             let _ = slint::invoke_from_event_loop(move || {
                 popup_host::set_injector(injector);
             });
@@ -594,7 +631,14 @@ pub fn run(
                 apply_command(&w, Command::Toggle, asked, Trigger::Hotkey);
             });
         });
-        if shortcut_host::init(on_press) {
+        // Translate in place (Task 605): the press starts the flow on its own thread (ignored
+        // while one runs); Esc cancels it while it runs.
+        let handlers = shortcut_host::Handlers {
+            popup: on_press,
+            translate: Arc::new(crate::translate::host::on_press),
+            cancel: Arc::new(crate::translate::host::on_cancel),
+        };
+        if shortcut_host::init(handlers) {
             ShortcutMode::Enabled
         } else {
             ShortcutMode::InitFailed
@@ -606,6 +650,19 @@ pub fn run(
         log.event("start_failed", &[("stage", Val::Name("worker"))]);
         return false;
     };
+    // Translate in place (Task 605): app calls go to the worker; Esc is registered on this
+    // thread while a flow runs; the overlay is a log line until Task 606.
+    let app_poster = worker.poster();
+    crate::translate::host::install(crate::translate::host::HostDeps {
+        run_on_app: Arc::new(move |job| app_poster.post_quiet(job)),
+        log: Arc::clone(&log),
+        overlay: Arc::new(crate::translate::host::LogOverlay(Arc::clone(&log))),
+        cancel_key: Arc::new(|on| {
+            let _ = slint::invoke_from_event_loop(move || {
+                let _ = shortcut_host::set_cancel(on);
+            });
+        }),
+    });
     // The popup: list, search and keyboard (Task 204).
     popup_host::install(&window, worker.poster(), args_lang, Arc::clone(&log));
     // The history window is created when it is first opened (tray "History..." or Ctrl+H).
@@ -665,6 +722,8 @@ pub fn run(
     welcome_host::shutdown();
     // Remove the icon first, so it does not linger while the app shuts down.
     tray_host::destroy();
+    // A running translation stops at its next wait; Esc and both shortcuts are unregistered.
+    crate::translate::host::shutdown();
     shortcut_host::release();
     let failed = worker.failed();
     log.event("stop_requested", &[]);

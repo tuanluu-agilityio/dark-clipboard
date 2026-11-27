@@ -261,13 +261,24 @@ fn same_platform_family(a: Platform, b: Platform) -> bool {
 
 /// `app_id` match per platform; case-insensitive on Windows (exe names), exact elsewhere.
 fn app_matches(e: &ExcludedApp, source: &ClipboardSource) -> bool {
-    if !same_platform_family(e.platform, source.platform) {
+    id_matches(e, &source.app_id, source.platform)
+}
+
+fn id_matches(e: &ExcludedApp, app_id: &str, platform: Platform) -> bool {
+    if !same_platform_family(e.platform, platform) {
         return false;
     }
-    match source.platform {
-        Platform::Windows => e.app_id.to_lowercase() == source.app_id.to_lowercase(),
-        Platform::Macos | Platform::LinuxX11 | Platform::LinuxWayland => e.app_id == source.app_id,
+    match platform {
+        Platform::Windows => e.app_id.to_lowercase() == app_id.to_lowercase(),
+        Platform::Macos | Platform::LinuxX11 | Platform::LinuxWayland => e.app_id == app_id,
     }
+}
+
+/// True when `app_id` (on `platform`) is in `excluded`, with exactly the matching capture uses
+/// for step 5 (Task 605): translate in place refuses the same apps capture skips, so the two
+/// can never disagree.
+pub fn app_is_excluded(app_id: &str, platform: Platform, excluded: &[ExcludedApp]) -> bool {
+    excluded.iter().any(|e| id_matches(e, app_id, platform))
 }
 
 #[cfg(test)]
@@ -608,6 +619,53 @@ mod tests {
         c.source = Some(src("org.keepassxc.KeePassXC", Platform::LinuxX11));
         c.excluded = vec![excl("org.keepassxc.KeePassXC", Platform::LinuxWayland)];
         assert_eq!(c.decide(), Decision::Skip(SkipReason::ExcludedApp));
+    }
+
+    #[test]
+    fn app_is_excluded_matches_like_capture() {
+        let builtins = crate::model::PrivacyPolicy::default().excluded_apps;
+        let darkshot = builtins
+            .iter()
+            .find(|e| e.platform == Platform::Windows)
+            .unwrap()
+            .app_id
+            .clone();
+        assert!(app_is_excluded(&darkshot, Platform::Windows, &builtins));
+        assert!(app_is_excluded(
+            &darkshot.to_uppercase(),
+            Platform::Windows,
+            &builtins
+        ));
+        assert!(!app_is_excluded(
+            "notepad.exe",
+            Platform::Windows,
+            &builtins
+        ));
+        // Same rules as the capture step: other platform, Linux family, exact case elsewhere.
+        let list = vec![excl("keepassxc.exe", Platform::Windows)];
+        assert!(!app_is_excluded("keepassxc.exe", Platform::Macos, &list));
+        let list = vec![excl("org.keepassxc.KeePassXC", Platform::LinuxWayland)];
+        assert!(app_is_excluded(
+            "org.keepassxc.KeePassXC",
+            Platform::LinuxX11,
+            &list
+        ));
+        assert!(!app_is_excluded(
+            "org.keepassxc.keepassxc",
+            Platform::LinuxX11,
+            &list
+        ));
+        // Agrees with the capture decision for every case above.
+        for (id, p, list) in [
+            (darkshot.as_str(), Platform::Windows, builtins.clone()),
+            ("notepad.exe", Platform::Windows, builtins.clone()),
+        ] {
+            let mut c = Case::new();
+            c.source = Some(src(id, p));
+            c.excluded = list.clone();
+            let skipped = c.decide() == Decision::Skip(SkipReason::ExcludedApp);
+            assert_eq!(skipped, app_is_excluded(id, p, &list));
+        }
     }
 
     #[test]

@@ -17,6 +17,13 @@ mod wipe;
 
 pub(crate) use wipe::{wipe, wipe_bytes, wipe_slice};
 
+/// Best-effort zeroing of a text buffer before it is freed (volatile writes over its whole
+/// allocation); leaves `s` empty. For callers outside core that hold clip or translation text
+/// (Task 605).
+pub fn wipe_string(s: &mut String) {
+    wipe(s);
+}
+
 use crate::i18n::{t, Lang, Msg};
 use crate::model::SensitiveCategory;
 

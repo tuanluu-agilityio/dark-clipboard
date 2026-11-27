@@ -325,6 +325,14 @@ impl Actor {
             ActorCommand::RestoreCandidate { reply } => {
                 let _ = reply.send(self.restore_candidate());
             }
+            ActorCommand::ClipboardSeq { deadline, reply } => {
+                let r = if late(deadline) {
+                    Err(ApiError::Internal)
+                } else {
+                    self.access.sequence().map_err(|_| ApiError::Internal)
+                };
+                let _ = reply.send(r);
+            }
             ActorCommand::SaveText {
                 text,
                 deadline,

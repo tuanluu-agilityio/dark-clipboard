@@ -26,6 +26,7 @@ use darkclip_storage::{ClipSummary, OpenMode, SearchQuery, Storage};
 
 mod transfer;
 mod transform_ui;
+mod translate;
 pub use crate::capture::SaveOutcome;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -2702,4 +2703,5 @@ file:///C:/c.txt
 
     mod transfer_tests;
     mod transform_ui_tests;
+    mod translate_tests;
 }

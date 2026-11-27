@@ -117,6 +117,50 @@ pub struct UpdateSettings {
     pub last_check_ms: Option<i64>,
 }
 
+/// Translate in place (Task 605, D-093). Off by default. The feature is active only when it is
+/// enabled, the consent dialog was accepted (`consent_version >= 1`) and an API key is stored
+/// (the key lives in the OS credential store, never here).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AiSettings {
+    pub enabled: bool,
+    /// The second global shortcut.
+    pub shortcut: String,
+    pub direction: darkclip_ai::Direction,
+    /// Any value not in `darkclip_ai::MODELS` falls back to the default at use.
+    pub model: String,
+    /// 0: never accepted; Task 606's dialog sets 1.
+    pub consent_version: u32,
+}
+
+impl Default for AiSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            shortcut: "Ctrl+Alt+T".into(),
+            direction: darkclip_ai::Direction::Auto,
+            model: darkclip_ai::DEFAULT_MODEL.into(),
+            consent_version: 0,
+        }
+    }
+}
+
+impl AiSettings {
+    /// Turned on and consented; the stored key is the third condition (checked by the caller).
+    pub fn consented(&self) -> bool {
+        self.enabled && self.consent_version >= 1
+    }
+
+    /// The model to use: the saved one if it is offered, otherwise the default.
+    pub fn model_or_default(&self) -> &str {
+        if darkclip_ai::MODELS.contains(&self.model.as_str()) {
+            &self.model
+        } else {
+            darkclip_ai::DEFAULT_MODEL
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     pub settings_version: u32,
@@ -138,6 +182,9 @@ pub struct Settings {
     /// The opt-in update check (Task 412, D-057); missing in older files, which means off.
     #[serde(default)]
     pub updates: UpdateSettings,
+    /// Translate in place (Task 605); missing in older files, which means off.
+    #[serde(default)]
+    pub ai: AiSettings,
 }
 
 impl Default for Settings {
@@ -151,6 +198,7 @@ impl Default for Settings {
             startup: StartupSettings::default(),
             onboarding_done: true,
             updates: UpdateSettings::default(),
+            ai: AiSettings::default(),
         }
     }
 }
@@ -752,5 +800,67 @@ mod tests {
         let (back, o) = Settings::load(&path);
         assert_eq!(o, LoadOutcome::Loaded);
         assert_eq!(back.updates, s.updates);
+    }
+    #[test]
+    fn settings_old_file_loads_ai_defaults() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("settings.json");
+        let mut v = serde_json::to_value(Settings::default()).unwrap();
+        v.as_object_mut().unwrap().remove("ai");
+        std::fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        let (s, o) = Settings::load(&path);
+        assert_eq!(o, LoadOutcome::Loaded);
+        assert_eq!(s.settings_version, SETTINGS_VERSION);
+        assert!(!s.ai.enabled);
+        assert_eq!(s.ai.shortcut, "Ctrl+Alt+T");
+        assert_eq!(s.ai.direction, darkclip_ai::Direction::Auto);
+        assert_eq!(s.ai.model, darkclip_ai::DEFAULT_MODEL);
+        assert_eq!(s.ai.consent_version, 0);
+        assert!(!s.ai.consented());
+        // A partial section keeps the defaults for the missing fields.
+        v["ai"] = serde_json::json!({ "enabled": true });
+        std::fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        let (s, o) = Settings::load(&path);
+        assert_eq!(o, LoadOutcome::Loaded);
+        assert!(s.ai.enabled);
+        assert_eq!(s.ai.shortcut, "Ctrl+Alt+T");
+        assert_eq!(s.ai.consent_version, 0);
+    }
+
+    #[test]
+    fn ai_settings_round_trip_and_unknown_model_falls_back() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("settings.json");
+        let s = Settings {
+            ai: AiSettings {
+                enabled: true,
+                shortcut: "Ctrl+Alt+Y".into(),
+                direction: darkclip_ai::Direction::ToVietnamese,
+                model: "claude-haiku-5-5".into(),
+                consent_version: 1,
+            },
+            ..Settings::default()
+        };
+        s.save(&path).unwrap();
+        let (back, o) = Settings::load(&path);
+        assert_eq!(o, LoadOutcome::Loaded);
+        assert_eq!(back.ai, s.ai);
+        assert!(back.ai.consented());
+        assert_eq!(back.ai.model_or_default(), "claude-haiku-5-5");
+        let mut odd = s.ai.clone();
+        odd.model = "some-other-model".into();
+        assert_eq!(odd.model_or_default(), darkclip_ai::DEFAULT_MODEL);
+    }
+
+    #[test]
+    fn ai_is_consented_only_when_enabled_and_accepted() {
+        let mut a = AiSettings::default();
+        assert!(!a.consented());
+        a.enabled = true;
+        assert!(!a.consented());
+        a.consent_version = 1;
+        assert!(a.consented());
+        a.enabled = false;
+        assert!(!a.consented());
     }
 }

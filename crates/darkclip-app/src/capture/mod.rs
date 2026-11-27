@@ -103,6 +103,12 @@ pub enum ActorCommand {
     RestoreCandidate {
         reply: Sender<Option<ClipId>>,
     },
+    /// The clipboard's current sequence number (Task 605): metadata only, no content is read.
+    /// The translate flow polls it to see whether its Ctrl+C produced a change.
+    ClipboardSeq {
+        deadline: Instant,
+        reply: Sender<Result<u64, ApiError>>,
+    },
     /// "Save as new clip": the edited text goes through capture's classify, kind check,
     /// sensitive handling and size limit (Task 404). Not gated by the capture mode: the user
     /// asked for it.
