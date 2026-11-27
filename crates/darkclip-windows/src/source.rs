@@ -22,6 +22,14 @@ pub(crate) fn file_name_from_path(path: &[u16]) -> Option<String> {
     }
 }
 
+/// The image file name of process `pid`, in the same form as `ClipboardSource.app_id`
+/// (`file_name_from_path` over `QueryFullProcessImageNameW`). `None` when it cannot be read.
+/// For the translate-in-place claim (Task 603b): the target window's pid gives the `app_id`
+/// the claim matches. Nothing is logged; the full path is dropped here.
+pub fn process_app_id(pid: u32) -> Option<String> {
+    file_name_from_path(&win::process_image_path(pid)?)
+}
+
 /// Resolves the source from `GetClipboardOwner` (confidence `Owner`).
 pub struct WinSourceResolver;
 
@@ -44,6 +52,18 @@ mod tests {
 
     fn w(s: &str) -> Vec<u16> {
         s.encode_utf16().collect()
+    }
+
+    #[test]
+    fn process_app_id_of_own_process() {
+        let exe = std::env::current_exe().unwrap();
+        let expected = exe.file_name().unwrap().to_str().unwrap().to_string();
+        let got = process_app_id(std::process::id()).unwrap();
+        // Same form as `WinSourceResolver`: the bare image file name (Windows compares
+        // exe names without case).
+        assert!(got.eq_ignore_ascii_case(&expected), "{got} vs {expected}");
+        assert!(!got.contains('\\') && !got.contains('/'));
+        assert_eq!(process_app_id(0), None);
     }
 
     #[test]

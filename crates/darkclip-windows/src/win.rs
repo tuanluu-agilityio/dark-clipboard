@@ -316,6 +316,16 @@ pub(crate) fn clipboard_owner_image_path() -> Option<Vec<u16>> {
     if thread == 0 || pid == 0 {
         return None;
     }
+    process_image_path(pid)
+}
+
+/// Full image path (UTF-16, no NUL) of process `pid`, or `None` when it cannot be opened or
+/// queried (protected processes, a pid that is gone). The handle is closed on every path.
+/// Callers keep the file name only (`source.rs`); the path never leaves the crate.
+pub(crate) fn process_image_path(pid: u32) -> Option<Vec<u16>> {
+    if pid == 0 {
+        return None;
+    }
     // SAFETY: plain call; the right requested is the least that allows the image name query.
     let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
     let process = ProcessHandle(process);

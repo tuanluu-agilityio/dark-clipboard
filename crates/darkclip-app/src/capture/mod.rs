@@ -34,7 +34,7 @@ mod wipe;
 use crate::config::CaptureConfig;
 use crate::events::{ApiError, AppEvent, SkipCounters};
 use actor::Actor;
-pub use claim::{ClaimError, CLAIM_WINDOW_MS};
+pub use claim::{ClaimError, ClaimedText, CLAIM_REPLY_SLACK_MS, CLAIM_WINDOW_MS};
 use darkclip_core::{
     CaptureMode, ClipId, Clock, CollectionId, Lang, PrivacyPolicy, RetentionPolicy,
 };
@@ -72,12 +72,31 @@ pub enum ActorCommand {
         reply: Sender<Result<u64, ApiError>>,
     },
     /// Translate in place (Task 603): arms the claim slot for `app_id` for `CLAIM_WINDOW_MS`.
-    /// The next change from that app (or its F-14 ownerless flush) is replied as text and
-    /// never stored. Every privacy skip still wins; a second request while one is armed
-    /// replies `Busy`; no change in time replies `Expired`.
+    /// The next change from that app (or its F-14 ownerless flush) is replied as text with
+    /// the seq it was read at (Task 603b) and never stored. Every privacy skip still wins; a
+    /// second request while one is armed replies `Busy`; no change in time replies
+    /// `Expired`. The caller waits at most `CLAIM_WINDOW_MS + CLAIM_REPLY_SLACK_MS`.
     ExpectForeignCopy {
         app_id: String,
-        reply: Sender<Result<darkclip_core::Redacted<String>, ClaimError>>,
+        reply: Sender<Result<ClaimedText, ClaimError>>,
+    },
+    /// Compare-and-write (Task 603b): writes `text` as our own write only if the clipboard's
+    /// current seq is still `expect_seq` (the claimed change); replies the own write seq, or
+    /// `Ok(None)` when the clipboard moved (nothing written). The text is wiped on every path.
+    CopyTextIf {
+        expect_seq: u64,
+        text: darkclip_core::Redacted<String>,
+        deadline: Instant,
+        reply: Sender<Result<Option<u64>, ApiError>>,
+    },
+    /// Compare-and-write restore (Task 603b): copies clip `id` back (all its formats) only if
+    /// the current seq is still `expect_seq` (our translation write); `Ok(false)` when it
+    /// moved. A restore is not a use: the use count is not touched.
+    RestoreIf {
+        expect_seq: u64,
+        id: ClipId,
+        deadline: Instant,
+        reply: Sender<Result<bool, ApiError>>,
     },
     /// The stored clip the clipboard holds now, if any: `Some` only when the OS seq equals the
     /// last processed seq and that change was stored (inserted or deduplicated).

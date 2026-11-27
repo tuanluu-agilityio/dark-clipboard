@@ -294,6 +294,34 @@ impl Actor {
                 let _ = reply.send(r);
             }
             ActorCommand::ExpectForeignCopy { app_id, reply } => self.arm_claim(app_id, reply),
+            ActorCommand::CopyTextIf {
+                expect_seq,
+                text,
+                deadline,
+                reply,
+            } => {
+                let mut text = text.0;
+                let r = if late(deadline) {
+                    super::wipe::wipe_string(&mut text);
+                    Err(ApiError::Internal)
+                } else {
+                    self.copy_text_if(expect_seq, text)
+                };
+                let _ = reply.send(r);
+            }
+            ActorCommand::RestoreIf {
+                expect_seq,
+                id,
+                deadline,
+                reply,
+            } => {
+                let r = if late(deadline) {
+                    Err(ApiError::Internal)
+                } else {
+                    self.restore_if(expect_seq, &id)
+                };
+                let _ = reply.send(r);
+            }
             ActorCommand::RestoreCandidate { reply } => {
                 let _ = reply.send(self.restore_candidate());
             }

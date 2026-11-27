@@ -291,12 +291,13 @@ impl Actor {
             };
             self.claims(source.as_ref(), seen_at)
         };
-        // Task 603: the late ownerless flush of a claimed copy is never stored.
-        if !claimed && ownerless && self.recent_claim_flush(seq, p.signal_at, &meta) {
-            match held {
-                Some(reason) => self.drop_gated(seq, reason),
-                None => self.last_processed_seq = Some(seq),
-            }
+        // Task 603 / 603b: the late ownerless flush of a claimed copy, and the same app's
+        // follow-up copy (select-all retry), are never stored; counted as `TranslateSource`.
+        if !claimed
+            && ((ownerless && self.recent_claim_flush(seq, p.signal_at, &meta))
+                || self.recent_claim_follow_up(source.as_ref(), seq, p.signal_at))
+        {
+            self.drop_gated(seq, held.unwrap_or(SkipReason::TranslateSource));
             return;
         }
         if !claimed {

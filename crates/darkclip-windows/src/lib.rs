@@ -46,7 +46,7 @@ pub use paste::WinPasteInjector;
 #[cfg(windows)]
 pub use secret::WinSecretStore;
 #[cfg(windows)]
-pub use source::WinSourceResolver;
+pub use source::{process_app_id, WinSourceResolver};
 
 #[cfg(windows)]
 use darkclip_platform::{

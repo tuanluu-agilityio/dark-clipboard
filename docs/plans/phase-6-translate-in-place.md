@@ -173,6 +173,8 @@ pub struct FakeSecretStore;  // in-memory, in the fake platform
 
 ### 603: capture claim
 
+> **Changed by Task 603b (2026-11-27, integration review I1):** `CLAIM_WINDOW_MS` is 1000 (was 600) and the flow waits for the claim reply at most `CLAIM_WINDOW_MS + CLAIM_REPLY_SLACK_MS` (800). The reply is `Result<ClaimedText, ClaimError>`, where `ClaimedText { text: Redacted<String>, seq: u64 }` carries the seq the text was read at (`Debug` prints the seq only). New compare-and-write commands: `CopyTextIf { expect_seq, text, deadline, reply: Sender<Result<Option<u64>, ApiError>> }` writes only while the clipboard still holds `expect_seq` (`Ok(None)` when it moved), and `RestoreIf { expect_seq, id, deadline, reply: Sender<Result<bool, ApiError>> }` copies the clip back only while the clipboard still holds our translation write, without `mark_used`. After a claim, the same app's follow-up copy (1..=8 seqs, within 1500 ms by signal time, no own write between; the select-all retry) and the late OLE flush are skipped as the new `SkipReason::TranslateSource` (counted, with a `Skipped` event). `darkclip_windows::process_app_id(pid)` gives the target's `app_id` in the form `ClipboardSource.app_id` uses. `CopyText` ("Copy as...") is unchanged.
+
 > **Changed by Task 603 (2026-11-27):** the claim matches the target by `app_id`, not pid: `ClipboardSource` carries the executable identity (`app_id`) resolved at signal time and no pid, and `PasteTarget.app_id` carries the same identity, so `ExpectForeignCopy` takes `app_id: String` instead of `pid: u32`. Two own writes in a row are suppressed by the existing snapshot-truth rule (proved by `two_own_writes_in_a_row_are_never_stored`), not by a set of 4 seqs.
 
 ```rust
@@ -221,14 +223,15 @@ pub(crate) trait FlowSys {
     fn target(&mut self) -> Option<PasteTarget>;          // foreground, checked like paste
     fn blocked(&mut self, t: &PasteTarget) -> Option<Block>; // excluded app, Private, no key, off
     fn clipboard_seq(&mut self) -> u64;
-    fn claim(&mut self, pid: u32) -> Receiver<Result<Redacted<String>, ClaimError>>;
+    fn keys_up(&mut self, wait: u64) -> bool;                // hotkey keys released before arming (I1 M1)
+    fn claim(&mut self, app_id: &str) -> Receiver<Result<ClaimedText, ClaimError>>;
     fn send_copy(&mut self, t: &PasteTarget, select_all: bool) -> Result<(), PlatformError>;
     fn is_sensitive(&mut self, text: &str) -> bool;
     fn translate(&mut self, text: Redacted<String>) -> Receiver<Result<TransformResult, AiError>>;
-    fn write_own(&mut self, text: Redacted<String>) -> Result<u64, ()>; // returns own seq
+    fn write_own_if(&mut self, expect_seq: u64, text: Redacted<String>) -> Result<Option<u64>, ()>; // own seq, None if moved
     fn paste(&mut self, t: &PasteTarget) -> Result<(), PlatformError>;
     fn restore_candidate(&mut self) -> Option<ClipId>;
-    fn copy_back(&mut self, id: ClipId);
+    fn restore_if(&mut self, expect_seq: u64, id: ClipId) -> Result<bool, ()>; // false if moved
     fn overlay(&mut self, s: OverlayState);
     fn sleep(&mut self, ms: u64);
     fn cancelled(&mut self) -> bool;                        // Esc
@@ -243,6 +246,12 @@ pub(crate) fn run(sys: &mut impl FlowSys, cfg: &FlowConfig) -> Outcome;
 
 The order of `run` is the spec §5.1. The restore candidate is taken **before** the copy and
 used only if `clipboard_seq()` still equals the seq `write_own` returned (Review Focus 1).
+
+> **Changed by Task 603b (2026-11-27):** the sketch above uses the 603b contracts. The flow
+> waits for `keys_up` before arming, arms with the `app_id` from
+> `darkclip_windows::process_app_id(target pid)`, writes the translation with `write_own_if`
+> (expect = the claimed seq) and restores with `restore_if` (expect = the own write seq), so
+> both seq checks run inside the actor and a newer user copy is never overwritten.
 
 ### 606: UI
 
