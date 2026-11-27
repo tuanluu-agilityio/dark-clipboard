@@ -1,6 +1,6 @@
 # Translate in place: design
 
-Status: draft; owner answers recorded 2026-11-27 (§9); prototype review pending. P2 feature (optional AI). Spike:
+Status: **approved by the owner 2026-11-27** (design and prototype, "Duyệt tất cả"; D-093, D-094). Plan: `docs/plans/phase-6-translate-in-place.md`. P2 feature (optional AI). Spike:
 `spikes/translate-hotkey/` (branch `spike/translate-hotkey`, throwaway).
 
 ## 1. Intent
@@ -167,7 +167,7 @@ Feature on; not Private; the foreground app not excluded; `decide_translate_read
 (markers, transient, auto-generated, excluded app); **no `NoCloud` marker**
 (`CanUploadToCloudClipboard=0`: content the source app says must not leave the device is never
 sent, which matches privacy-design's "never synced"); sensitive detection is clean; text not
-empty and under the cap.
+empty and at most 8000 chars (longer text is never sent and never truncated).
 
 ### 6.3 Consent (owner approved 2026-11-27, §9 Q1)
 
@@ -235,5 +235,5 @@ Implementation goes to `specialist` on opus and review to `security-reviewer` on
 - Q2 Network: **approved**. One more allowlisted file, `apps/desktop/src/ai_net.rs`, may reach
   only `api.anthropic.com` (amends GC-08 / D-057).
 - Q3 Order: **before Paste Stack (0.2)**. This feature opens P2.
-- Before the plan: the owner reviews a UI prototype (`prototype.html` in this folder: overlay
+- The owner reviewed and approved the UI prototype (`prototype.html` in this folder: overlay
   states, Settings → Translate, consent dialog), as well as the functional spike.
