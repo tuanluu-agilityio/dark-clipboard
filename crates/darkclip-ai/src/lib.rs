@@ -450,6 +450,18 @@ mod tests {
     }
 
     #[test]
+    fn transport_error_debug_hides_body() {
+        let e = TransportError::Status {
+            code: 400,
+            body: b"SECRET-ECHO".to_vec(),
+        };
+        let d = format!("{e:?}");
+        assert!(!d.contains("SECRET-ECHO"));
+        assert!(!d.contains("83, 69, 67"));
+        assert!(d.contains("400"));
+    }
+
+    #[test]
     fn direction_serde() {
         let s = |d| serde_json::to_string(&d).unwrap();
         assert_eq!(s(Direction::Auto), "\"auto\"");
