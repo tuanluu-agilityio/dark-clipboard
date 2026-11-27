@@ -88,8 +88,9 @@ pub trait ClipboardAccess: Send {
     fn discard_prepared(&mut self) {}
 }
 
-/// Focus return and auto-paste (Task 205). Called off the UI thread; may wait briefly (bounded)
-/// for the target to take the focus.
+/// Focus return and auto-paste (Task 205), and copy from the focused window (Task 604). Called
+/// off the UI thread; may wait briefly (bounded) for the target to take the focus or for keys
+/// to come up.
 ///
 /// Errors: `PermissionDenied` when the target runs with higher privileges than the app (UIPI;
 /// the clip stays copied), `Unsupported` when the target cannot be identified safely or did not
@@ -103,6 +104,16 @@ pub trait PasteInjector: Send {
     fn focus(&mut self, target: &PasteTarget) -> Result<(), PlatformError> {
         let _ = target;
         Err(PlatformError::Unsupported("focus return"))
+    }
+
+    /// Sends the copy shortcut (optionally after select-all) to `target`, which must already be
+    /// the foreground window. Never moves the focus. Same checks as `paste`.
+    ///
+    /// It does not wait for the caller's own shortcut key (for example the `T` of the translate
+    /// shortcut) to come up; the caller waits for that before calling (Task 605).
+    fn copy(&mut self, target: &PasteTarget, select_all: bool) -> Result<(), PlatformError> {
+        let _ = (target, select_all);
+        Err(PlatformError::Unsupported("copy"))
     }
 }
 
@@ -145,4 +156,29 @@ pub trait SecretStore: Send + Sync {
     fn set(&self, target: &str, secret: &Redacted<String>) -> Result<(), PlatformError>;
     /// Removes the secret under `target`; `Ok(())` when there is none.
     fn delete(&self, target: &str) -> Result<(), PlatformError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An injector that implements only `paste`.
+    struct PasteOnly;
+
+    impl PasteInjector for PasteOnly {
+        fn paste(&mut self, _: &PasteTarget) -> Result<(), PlatformError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn default_copy_is_unsupported() {
+        let mut inj = PasteOnly;
+        for select_all in [false, true] {
+            assert_eq!(
+                inj.copy(&PasteTarget::default(), select_all),
+                Err(PlatformError::Unsupported("copy"))
+            );
+        }
+    }
 }

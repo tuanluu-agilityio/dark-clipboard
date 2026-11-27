@@ -656,8 +656,8 @@ impl RawWindow {
 // ---------------------------------------------------------------------------------------------
 // Focus return and auto-paste (Task 205). Only `paste.rs` calls these; the decisions live there.
 // No window title is read (SR-11): the class name is compared with fixed shell class names and
-// dropped. The only input ever synthesized is Ctrl+V, by `send_ctrl_v`, after `paste::run`
-// passed every check.
+// dropped. The only input ever synthesized is Ctrl+A, Ctrl+C or Ctrl+V (Task 604), by
+// `send_ctrl`, after `paste::run` passed every check.
 // ---------------------------------------------------------------------------------------------
 
 /// Window classes of the taskbars and the desktop (shell windows that must never get a paste).
@@ -891,15 +891,23 @@ fn key_event(
     }
 }
 
-/// Sends Ctrl down, V down, V up, Ctrl up as one `SendInput` batch (not interleaved with user
-/// input). If Windows inserted only part of it, key-ups are sent so no key stays down.
-/// Never called by tests that agents run (GC-19).
-pub(crate) fn send_ctrl_v() -> Result<(), PlatformError> {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, VK_CONTROL, VK_V};
+/// Sends Ctrl down, `key` down, `key` up, Ctrl up as one `SendInput` batch (not interleaved
+/// with user input). If Windows inserted only part of it, key-ups are sent so no key stays
+/// down. `key` is one of a closed set (A, C, V). Never called by tests that agents run (GC-19).
+pub(crate) fn send_ctrl(key: crate::paste::CtrlKey) -> Result<(), PlatformError> {
+    use crate::paste::CtrlKey;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, VK_A, VK_C, VK_CONTROL, VK_V,
+    };
+    let vk = match key {
+        CtrlKey::A => VK_A,
+        CtrlKey::C => VK_C,
+        CtrlKey::V => VK_V,
+    };
     let inputs = [
         key_event(VK_CONTROL, false),
-        key_event(VK_V, false),
-        key_event(VK_V, true),
+        key_event(vk, false),
+        key_event(vk, true),
         key_event(VK_CONTROL, true),
     ];
     let size = i32::try_from(std::mem::size_of::<INPUT>())
@@ -912,7 +920,7 @@ pub(crate) fn send_ctrl_v() -> Result<(), PlatformError> {
     }
     // SAFETY: no arguments; reads this thread's last error before any other call.
     let code = unsafe { GetLastError() }.0;
-    let release = [key_event(VK_V, true), key_event(VK_CONTROL, true)];
+    let release = [key_event(vk, true), key_event(VK_CONTROL, true)];
     // SAFETY: as above, two key-up events (harmless if the keys are already up).
     let _ = unsafe { SendInput(&release, size) };
     Err(PlatformError::Backend {

@@ -15,6 +15,10 @@
 //!   (bounded wait) and still be up right before the keystroke, so the paste cannot turn into
 //!   another shortcut and a held Enter cannot repeat into the target. A focus return without
 //!   paste waits (bounded) for Alt and Enter, then moves the focus anyway.
+//! - Copy (Task 604, translate in place): the same checks as a paste, but the target must
+//!   already be the foreground window; the focus is never moved. Ctrl+C, or Ctrl+A then
+//!   Ctrl+C with the foreground and keys checked again between them.
+//! - Only Ctrl+A, Ctrl+C and Ctrl+V can ever be sent (`CtrlKey`).
 //!
 //! Nothing here reads a window title or clipboard content, and nothing is logged (GC-06).
 
@@ -30,6 +34,19 @@ pub(crate) const FOREGROUND_WAIT: Duration = Duration::from_millis(300);
 pub(crate) const KEYS_WAIT: Duration = Duration::from_millis(1_000);
 /// Polling step for both waits.
 pub(crate) const POLL: Duration = Duration::from_millis(10);
+/// Pause between Ctrl+A and Ctrl+C, so the target applies the selection before the copy.
+pub(crate) const SELECT_ALL_GAP: Duration = Duration::from_millis(30);
+
+/// The only keys ever sent, each with Ctrl held. A closed set: no arbitrary key can be sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CtrlKey {
+    /// Select all.
+    A,
+    /// Copy.
+    C,
+    /// Paste.
+    V,
+}
 
 /// What the seam reports about a window. No title, no content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,8 +93,8 @@ pub(crate) trait WindowSys {
     fn focus_keys_held(&self) -> bool;
     fn set_foreground(&mut self, window: u64) -> bool;
     fn foreground(&self) -> Option<u64>;
-    /// Sends Ctrl down, V down, V up, Ctrl up.
-    fn send_ctrl_v(&mut self) -> Result<(), PlatformError>;
+    /// Sends Ctrl down, `key` down, `key` up, Ctrl up.
+    fn send_ctrl(&mut self, key: CtrlKey) -> Result<(), PlatformError>;
     fn sleep(&mut self, d: Duration);
 }
 
@@ -138,6 +155,10 @@ pub(crate) enum Mode {
     Focus,
     /// Ctrl+Enter: return the focus and send Ctrl+V.
     Paste,
+    /// Translate in place (Task 604): Ctrl+C to the window already in front; no focus move.
+    Copy,
+    /// As `Copy`, after Ctrl+A.
+    SelectAllCopy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,6 +235,11 @@ fn wait_until(
 /// Returns the focus to the target and, in `Mode::Paste`, sends Ctrl+V. Every check runs
 /// before any input; the window is checked again after it took the focus (a handle can be
 /// reused) and right before the keystroke.
+///
+/// `Mode::Copy` / `Mode::SelectAllCopy` run the same checks but never move the focus: the
+/// target must already be the foreground window. `SelectAllCopy` checks the window, the
+/// foreground and the keys again between Ctrl+A and Ctrl+C (a refusal there leaves only a harmless
+/// selection). The caller's own shortcut key is not waited for here (Task 605 does it).
 pub(crate) fn run(
     sys: &mut dyn WindowSys,
     target: &PasteTarget,
@@ -226,7 +252,7 @@ pub(crate) fn run(
             // Bounded; on timeout the focus moves anyway (no input is sent in this mode).
             let _ = wait_until(sys, KEYS_WAIT, |s| !s.focus_keys_held());
         }
-        Mode::Paste => {
+        Mode::Paste | Mode::Copy | Mode::SelectAllCopy => {
             if let Verdict::CopyOnly(r) = check_target(sys, target) {
                 return Err(Failure::Refused(r));
             }
@@ -236,10 +262,20 @@ pub(crate) fn run(
             }
         }
     }
-    if sys.foreground() != Some(window) {
-        let _ = sys.set_foreground(window);
-        if !wait_until(sys, FOREGROUND_WAIT, |s| s.foreground() == Some(window)) {
-            return Err(Failure::Refused(Refusal::NotForeground));
+    match mode {
+        Mode::Focus | Mode::Paste => {
+            if sys.foreground() != Some(window) {
+                let _ = sys.set_foreground(window);
+                if !wait_until(sys, FOREGROUND_WAIT, |s| s.foreground() == Some(window)) {
+                    return Err(Failure::Refused(Refusal::NotForeground));
+                }
+            }
+        }
+        // The copy never steals the focus.
+        Mode::Copy | Mode::SelectAllCopy => {
+            if sys.foreground() != Some(window) {
+                return Err(Failure::Refused(Refusal::NotForeground));
+            }
         }
     }
     if mode == Mode::Focus {
@@ -248,13 +284,32 @@ pub(crate) fn run(
     // The same window, the same process, no key pressed meanwhile, still in front: only now
     // is input sent.
     check_window(sys, window, pid).map_err(Failure::Refused)?;
+    still_ready(sys, window)?;
+    match mode {
+        Mode::Paste => sys.send_ctrl(CtrlKey::V).map_err(Failure::Input),
+        Mode::Copy => sys.send_ctrl(CtrlKey::C).map_err(Failure::Input),
+        Mode::SelectAllCopy => {
+            sys.send_ctrl(CtrlKey::A).map_err(Failure::Input)?;
+            sys.sleep(SELECT_ALL_GAP);
+            // The handle may have been closed or reused during the gap.
+            check_window(sys, window, pid).map_err(Failure::Refused)?;
+            still_ready(sys, window)?;
+            sys.send_ctrl(CtrlKey::C).map_err(Failure::Input)
+        }
+        // Returned above.
+        Mode::Focus => Ok(()),
+    }
+}
+
+/// No blocking key is down and `window` is still the foreground window.
+fn still_ready(sys: &dyn WindowSys, window: u64) -> Result<(), Failure> {
     if sys.keys_held() {
         return Err(Failure::Refused(Refusal::KeysHeld));
     }
     if sys.foreground() != Some(window) {
         return Err(Failure::Refused(Refusal::NotForeground));
     }
-    sys.send_ctrl_v().map_err(Failure::Input)
+    Ok(())
 }
 
 /// The Windows `PasteInjector`: the driver above over the real Win32 calls.
@@ -269,6 +324,18 @@ impl darkclip_platform::PasteInjector for WinPasteInjector {
 
     fn focus(&mut self, target: &PasteTarget) -> Result<(), PlatformError> {
         run(&mut WinWindows, target, Mode::Focus).map_err(Failure::into_error)
+    }
+
+    /// Ctrl+C (or Ctrl+A, then Ctrl+C) to `target`, which must already be in front; never
+    /// moves the focus. Does not wait for the caller's own shortcut key (e.g. the `T` of the
+    /// translate shortcut) to come up: Task 605 waits for it before calling.
+    fn copy(&mut self, target: &PasteTarget, select_all: bool) -> Result<(), PlatformError> {
+        let mode = if select_all {
+            Mode::SelectAllCopy
+        } else {
+            Mode::Copy
+        };
+        run(&mut WinWindows, target, mode).map_err(Failure::into_error)
     }
 }
 
@@ -310,8 +377,8 @@ impl WindowSys for WinWindows {
         crate::win::foreground()
     }
 
-    fn send_ctrl_v(&mut self) -> Result<(), PlatformError> {
-        crate::win::send_ctrl_v()
+    fn send_ctrl(&mut self, key: CtrlKey) -> Result<(), PlatformError> {
+        crate::win::send_ctrl(key)
     }
 
     fn sleep(&mut self, d: Duration) {
@@ -343,6 +410,22 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Step {
+        Key(CtrlKey),
+        Sleep(Duration),
+    }
+
+    fn keys(f: &Fake) -> Vec<CtrlKey> {
+        f.log
+            .iter()
+            .filter_map(|s| match s {
+                Step::Key(k) => Some(*k),
+                Step::Sleep(_) => None,
+            })
+            .collect()
+    }
+
     /// A fake desktop. `set_foreground` takes effect after `fg_after_polls` foreground reads
     /// (or never with `None`); keys are held for the first `keys_polls` reads.
     struct Fake {
@@ -361,6 +444,15 @@ mod tests {
         /// Applied when the target takes the focus (simulates a reused handle).
         on_focus: Option<WindowFacts>,
         events: Vec<&'static str>,
+        /// Keys sent and sleeps, in order (copy-mode tests).
+        log: Vec<Step>,
+        /// The foreground window right after Ctrl+A was sent (the focus moved meanwhile).
+        fg_after_a: Option<u64>,
+        /// Shift, Alt, Win or Enter go down right after Ctrl+A was sent.
+        keys_down_after_a: bool,
+        /// The target's facts right after Ctrl+A: `Some(None)` closes it, `Some(Some(f))`
+        /// replaces them (a reused handle).
+        facts_after_a: Option<Option<WindowFacts>>,
         sent: u32,
         send_result: Result<(), PlatformError>,
         slept: Duration,
@@ -385,6 +477,10 @@ mod tests {
                 keys_down_on_focus: false,
                 on_focus: None,
                 events: Vec::new(),
+                log: Vec::new(),
+                fg_after_a: None,
+                keys_down_after_a: false,
+                facts_after_a: None,
                 sent: 0,
                 send_result: Ok(()),
                 slept: Duration::ZERO,
@@ -453,13 +549,32 @@ mod tests {
             }
             self.fg
         }
-        fn send_ctrl_v(&mut self) -> Result<(), PlatformError> {
+        fn send_ctrl(&mut self, key: CtrlKey) -> Result<(), PlatformError> {
             self.events.push("send");
+            self.log.push(Step::Key(key));
             self.sent += 1;
+            if key == CtrlKey::A {
+                if let Some(w) = self.fg_after_a {
+                    self.fg = Some(w);
+                }
+                if self.keys_down_after_a {
+                    self.keys_polls.set(u32::MAX);
+                }
+                match self.facts_after_a {
+                    Some(Some(f)) => {
+                        self.windows.insert(WIN, f);
+                    }
+                    Some(None) => {
+                        self.windows.remove(&WIN);
+                    }
+                    None => {}
+                }
+            }
             self.send_result.clone()
         }
         fn sleep(&mut self, d: Duration) {
             self.slept += d;
+            self.log.push(Step::Sleep(d));
         }
     }
 
@@ -813,6 +928,219 @@ mod tests {
             pid: Some(pid),
         };
         assert_eq!(WinPasteInjector.paste(&t), Ok(()));
+    }
+
+    // --- Copy modes (Task 604): the target must already be in front; the focus never moves.
+
+    fn copy_fake() -> Fake {
+        let mut f = Fake::new();
+        f.fg = Some(WIN);
+        f
+    }
+
+    #[test]
+    fn copy_sends_ctrl_c_only_when_foreground() {
+        let mut f = copy_fake();
+        assert_eq!(run(&mut f, &target(), Mode::Copy), Ok(()));
+        assert_eq!(keys(&f), vec![CtrlKey::C]);
+        assert_eq!(f.events, vec!["send"], "no set_foreground");
+    }
+
+    #[test]
+    fn copy_refuses_when_not_foreground_and_never_moves_focus() {
+        for mode in [Mode::Copy, Mode::SelectAllCopy] {
+            let mut f = Fake::new(); // our popup is in front
+            assert_eq!(
+                run(&mut f, &target(), mode),
+                refused(Refusal::NotForeground)
+            );
+            assert!(keys(&f).is_empty());
+            assert!(f.events.is_empty(), "no set_foreground, no input");
+        }
+    }
+
+    #[test]
+    fn select_all_copy_sends_a_then_c_with_gap() {
+        let mut f = copy_fake();
+        assert_eq!(run(&mut f, &target(), Mode::SelectAllCopy), Ok(()));
+        assert_eq!(
+            f.log,
+            vec![
+                Step::Key(CtrlKey::A),
+                Step::Sleep(SELECT_ALL_GAP),
+                Step::Key(CtrlKey::C)
+            ]
+        );
+        assert_eq!(f.events, vec!["send", "send"], "no set_foreground");
+    }
+
+    #[test]
+    fn select_all_copy_stops_after_a_if_focus_moves() {
+        let mut f = copy_fake();
+        f.fg_after_a = Some(0x7777);
+        assert_eq!(
+            run(&mut f, &target(), Mode::SelectAllCopy),
+            refused(Refusal::NotForeground)
+        );
+        assert_eq!(keys(&f), vec![CtrlKey::A]);
+        assert!(!f.events.contains(&"set_foreground"));
+    }
+
+    #[test]
+    fn select_all_copy_stops_after_a_if_keys_go_down() {
+        let mut f = copy_fake();
+        f.keys_down_after_a = true;
+        assert_eq!(
+            run(&mut f, &target(), Mode::SelectAllCopy),
+            refused(Refusal::KeysHeld)
+        );
+        assert_eq!(keys(&f), vec![CtrlKey::A]);
+    }
+
+    #[test]
+    fn select_all_copy_stops_after_a_if_window_changes() {
+        // Closed during the gap.
+        let mut f = copy_fake();
+        f.facts_after_a = Some(None);
+        assert_eq!(
+            run(&mut f, &target(), Mode::SelectAllCopy),
+            refused(Refusal::Gone)
+        );
+        assert_eq!(keys(&f), vec![CtrlKey::A]);
+        // Reused by another process during the gap (still in front).
+        let mut f = copy_fake();
+        f.facts_after_a = Some(Some(normal(77)));
+        assert_eq!(
+            run(&mut f, &target(), Mode::SelectAllCopy),
+            refused(Refusal::WrongProcess)
+        );
+        assert_eq!(keys(&f), vec![CtrlKey::A]);
+    }
+
+    #[test]
+    fn copy_refuses_elevated_and_unknown_integrity() {
+        for mode in [Mode::Copy, Mode::SelectAllCopy] {
+            let mut f = copy_fake();
+            f.integrity.insert(PID, HIGH);
+            assert_eq!(run(&mut f, &target(), mode), refused(Refusal::Elevated));
+            assert!(f.events.is_empty());
+            let mut f = copy_fake();
+            f.integrity.clear();
+            assert_eq!(run(&mut f, &target(), mode), refused(Refusal::Elevated));
+            assert!(f.events.is_empty());
+            let mut f = copy_fake();
+            f.own_integrity = None;
+            assert_eq!(run(&mut f, &target(), mode), refused(Refusal::Elevated));
+            assert!(f.events.is_empty());
+        }
+    }
+
+    #[test]
+    fn copy_waits_for_held_keys_then_refuses() {
+        for mode in [Mode::Copy, Mode::SelectAllCopy] {
+            let mut f = copy_fake();
+            f.keys_polls.set(u32::MAX);
+            assert_eq!(run(&mut f, &target(), mode), refused(Refusal::KeysHeld));
+            assert!(f.events.is_empty());
+            assert!(f.slept <= KEYS_WAIT);
+            assert!(f.slept >= KEYS_WAIT - POLL);
+        }
+        // Keys released within the wait: the copy goes ahead.
+        let mut f = copy_fake();
+        f.keys_polls.set(5);
+        assert_eq!(run(&mut f, &target(), Mode::Copy), Ok(()));
+        assert_eq!(f.slept, POLL * 5);
+        assert_eq!(keys(&f), vec![CtrlKey::C]);
+    }
+
+    #[test]
+    fn copy_refuses_own_window_and_reused_handle() {
+        for mode in [Mode::Copy, Mode::SelectAllCopy] {
+            // Our own window, in front, with our pid recorded.
+            let mut f = copy_fake();
+            f.windows.insert(WIN, normal(OWN_PID));
+            f.integrity.insert(OWN_PID, MEDIUM);
+            let t = PasteTarget {
+                pid: Some(OWN_PID),
+                ..target()
+            };
+            assert_eq!(run(&mut f, &t, mode), refused(Refusal::WrongProcess));
+            assert!(f.events.is_empty());
+            // The handle now belongs to another process than the recorded one.
+            let mut f = copy_fake();
+            f.windows.insert(WIN, normal(77));
+            f.integrity.insert(77, MEDIUM);
+            assert_eq!(run(&mut f, &target(), mode), refused(Refusal::WrongProcess));
+            assert!(f.events.is_empty());
+        }
+    }
+
+    #[test]
+    fn copy_refuses_abnormal_windows_and_missing_targets() {
+        let mut f = copy_fake();
+        let mut facts = normal(PID);
+        facts.tool_window = true;
+        f.windows.insert(WIN, facts);
+        assert_eq!(
+            run(&mut f, &target(), Mode::Copy),
+            refused(Refusal::NotNormalWindow)
+        );
+        let mut f = copy_fake();
+        assert_eq!(
+            run(&mut f, &PasteTarget::default(), Mode::SelectAllCopy),
+            refused(Refusal::NoTarget)
+        );
+        assert!(f.events.is_empty());
+    }
+
+    #[test]
+    fn copy_input_failure_is_reported_and_stops_before_c() {
+        let mut f = copy_fake();
+        f.send_result = Err(PlatformError::Backend { code: 5 });
+        assert_eq!(
+            run(&mut f, &target(), Mode::SelectAllCopy),
+            Err(Failure::Input(PlatformError::Backend { code: 5 }))
+        );
+        assert_eq!(keys(&f), vec![CtrlKey::A]);
+    }
+
+    #[test]
+    fn paste_still_sends_v() {
+        let mut f = Fake::new();
+        assert_eq!(paste(&mut f), Ok(()));
+        assert_eq!(keys(&f), vec![CtrlKey::V]);
+        let mut f = Fake::new();
+        f.fg = Some(WIN);
+        assert_eq!(paste(&mut f), Ok(()));
+        assert_eq!(keys(&f), vec![CtrlKey::V]);
+        let mut f = Fake::new();
+        assert_eq!(run(&mut f, &target(), Mode::Focus), Ok(()));
+        assert!(keys(&f).is_empty());
+    }
+
+    // Real Win32, but no input, no focus change, no other window read (GC-19).
+    #[cfg(windows)]
+    #[test]
+    fn the_injector_copy_refuses_before_any_input() {
+        use darkclip_platform::PasteInjector;
+        let mut inj = WinPasteInjector;
+        for select_all in [false, true] {
+            assert!(matches!(
+                inj.copy(&PasteTarget::default(), select_all),
+                Err(PlatformError::Unsupported(_))
+            ));
+            // Our own window: refused by the process check, before any input.
+            let w = crate::win::MessageWindow::create(None).unwrap();
+            let t = PasteTarget {
+                app_id: None,
+                window: Some(w.raw().value()),
+                pid: Some(std::process::id()),
+            };
+            assert_eq!(
+                inj.copy(&t, select_all),
+                Err(PlatformError::Unsupported(Refusal::WrongProcess.name()))
+            );
+        }
     }
 
     #[test]
