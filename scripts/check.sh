@@ -14,7 +14,7 @@ if [ "$has_ws" = 1 ]; then
   step "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
   step "cargo test" cargo test --workspace
   echo "== portable crates must not depend on OS/UI/async crates (GC-01)"
-  for c in darkclip-core darkclip-platform darkclip-storage darkclip-app; do
+  for c in darkclip-core darkclip-ai darkclip-platform darkclip-storage darkclip-app; do
     [ -f "crates/$c/Cargo.toml" ] || continue
     tree="$(cargo tree -p "$c" -e normal --prefix none)" || fail "cargo tree -p $c"
     banned="$(printf '%s\n' "$tree" | grep -E '^(windows|windows-sys|objc2[A-Za-z0-9_-]*|core-foundation[A-Za-z0-9_-]*|x11rb|wayland-[A-Za-z0-9_-]+|gtk[A-Za-z0-9_-]*|slint[A-Za-z0-9_-]*|tauri[A-Za-z0-9_-]*|tokio) v' | sort -u)"

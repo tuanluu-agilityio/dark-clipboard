@@ -39,6 +39,7 @@ Updated: 2026-11-22
 | Lucide icons `lucide-static` **1.79.0** (43 SVG files, vendored unmodified in `apps/desktop/ui/icons/`, ISC + MIT for Feather-derived icons; not a crate, embedded with `@image-url`; licence in `about.hbs`, Task 700) | apps/desktop | UI icons (D-078, D-079) |
 | `unicode-normalization` 0.1.26 | core (Task 401) | NFC for tag names |
 | `darkclip-storage` (workspace) | apps/desktop | demo seeding and the search cursor type (Task 204) |
+| `darkclip-ai` (workspace, Task 601) | apps/desktop (Task 602+) | translate provider seam; deps darkclip-core, serde, serde_json only; network-free |
 | `zip` **~9.0.5** (default features off; `deflate-flate2-zlib-rs` only; adds `typed-path`, reuses `flate2`/`zlib-rs`/`crc32fast` already in the tree) | storage (Task 405); app dev-dependency (test fixtures) | `.dcbackup` / `.dcexport` archives. Pinned below 9.1: zip 9.1+ depends on `windows-sys` on Windows, which GC-01 bans in the portable crates |
 | `rusqlite` feature `backup` | storage (Task 405) | online backup API for the restore swap |
 | `boon` 0.6 (dev only) | storage tests (Task 405) | validates `export.json` against `export.schema.json` (JSON Schema 2020-12; no network) |

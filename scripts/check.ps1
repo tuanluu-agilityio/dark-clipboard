@@ -21,7 +21,7 @@ if ($hasWorkspace) {
     Step 'cargo test' { cargo test --workspace }
 
     Write-Host '== portable crates must not depend on OS/UI/async crates (GC-01)'
-    $portable = @('darkclip-core', 'darkclip-platform', 'darkclip-storage', 'darkclip-app')
+    $portable = @('darkclip-core', 'darkclip-ai', 'darkclip-platform', 'darkclip-storage', 'darkclip-app')
     $bannedPattern = '^(windows|windows-sys|objc2[\w-]*|core-foundation[\w-]*|x11rb|wayland-[\w-]+|gtk[\w-]*|slint[\w-]*|tauri[\w-]*|tokio) v'
     foreach ($crate in $portable) {
         $manifest = "crates/$crate/Cargo.toml"

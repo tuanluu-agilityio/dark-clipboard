@@ -1076,6 +1076,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "darkclip-ai"
+version = "0.2.0"
+dependencies = [
+ "darkclip-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "darkclip-app"
 version = "0.2.0"
 dependencies = [
