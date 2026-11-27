@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Translate in place: prototype</title>
+<style>
+/* Design tokens: docs/specs/ui-redesign/02-design-system.md */
+:root{
+  --canvas:#111318; --surface:#1B2028; --raised:#232935; --selected:#262C45;
+  --border:#2D3440; --border-strong:#4A5263;
+  --text:#F3F5F9; --text-2:#A1AAB8; --text-3:#8F98A8;
+  --accent:#7887FF; --on-accent:#111318; --focus:#9AA6FF;
+  --success:#5FD4AA; --warning:#F2C14E; --danger:#FF7A85;
+  --mono:Consolas, "Cascadia Mono", monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:#0A0B0E;color:var(--text);font:13px/1.4 "Segoe UI","Segoe UI Variable",system-ui,sans-serif}
+.page{max-width:1500px;margin:0 auto;padding:28px 32px 80px}
+.page>header h1{font-size:20px;margin:0 0 4px}
+.page>header p{color:var(--text-2);margin:0 0 6px;max-width:900px}
+nav.toc{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 28px}
+nav.toc a{color:var(--text-2);text-decoration:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:12px}
+nav.toc a:hover{color:var(--text);border-color:var(--border-strong)}
+section.shot{margin:0 0 48px}
+section.shot>h2{font-size:15px;margin:0 0 4px}
+section.shot>p.cap{color:var(--text-2);margin:0 0 14px;max-width:980px;font-size:12.5px}
+.row{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}
+.label{font-size:11px;color:var(--text-3);margin:0 0 6px;letter-spacing:.4px;text-transform:uppercase;font-weight:600}
+svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+svg.i18{width:18px;height:18px}
+svg.fill{fill:currentColor}
+
+/* ---------- shared components ---------- */
+.win{background:var(--canvas);border:1px solid var(--border);border-radius:10px;overflow:hidden;position:relative;display:flex;flex-direction:column}
+.titlebar{height:32px;display:flex;align-items:center;padding:0 10px;color:var(--text-3);font-size:12px;border-bottom:1px solid var(--border);gap:8px}
+.titlebar .sp{flex:1}
+.ib{width:28px;height:28px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;color:var(--text-2);flex:none;position:relative}
+.ib:hover,.ib.hover{background:var(--raised);color:var(--text)}
+.ib.on{color:var(--accent);background:var(--selected)}
+.ib.danger:hover{color:var(--danger)}
+.ib.focus{outline:2px solid var(--focus);outline-offset:1px}
+.search{height:32px;flex:1;display:flex;align-items:center;gap:8px;padding:0 10px;background:var(--surface);border:1px solid var(--border-strong);border-radius:6px;color:var(--text-3)}
+.search.focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.search .q{color:var(--text);flex:1}
+.search .q .caret{display:inline-block;width:1px;height:14px;background:var(--text);vertical-align:-2px;margin-left:1px}
+.kc{display:inline-flex;align-items:center;gap:2px;height:18px;padding:0 5px;border-radius:4px;background:var(--raised);color:var(--text-2);font-size:11px;border:1px solid var(--border)}
+.kc svg.i{width:12px;height:12px}
+.seg{display:flex;gap:2px;padding:2px;background:var(--surface);border-radius:8px;border:1px solid var(--border)}
+.seg .t{height:26px;min-width:28px;padding:0 7px;border-radius:6px;display:flex;align-items:center;gap:5px;color:var(--text-2);font-size:12px}
+.seg .t.on{background:var(--selected);color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
+.seg .t.on svg{color:var(--accent)}
+.seg .div{width:1px;background:var(--border);margin:4px 2px}
+.overline{font-size:11px;font-weight:600;letter-spacing:.4px;color:var(--text-3);text-transform:uppercase;display:flex;align-items:center;gap:6px;padding:8px 12px 4px}
+.overline .n{font-weight:400;letter-spacing:0}
+.clip{display:flex;align-items:center;gap:10px;height:48px;padding:0 8px 0 10px;margin:0 6px;border-radius:6px;position:relative}
+.clip:hover{background:var(--raised)}
+.clip.sel{background:var(--selected)}
+.clip.sel::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:2px;background:var(--accent)}
+.clip .kind{width:28px;height:28px;border-radius:6px;background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--text-2);flex:none}
+.clip.sel .kind{background:var(--canvas);color:var(--accent)}
+.clip .cb{flex:1;min-width:0}
+.clip .pv{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+.clip .pv.mono{font-family:var(--mono);font-size:12.5px}
+.clip .pv mark{background:transparent;color:var(--accent);font-weight:600}
+.clip .meta{font-size:11px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;gap:6px;align-items:center}
+.clip .meta svg.i{width:12px;height:12px}
+.clip .side{display:flex;align-items:center;gap:4px;color:var(--text-3);font-size:11px}
+.clip .side .b{color:var(--text-2)}
+.clip .side .b.star{color:var(--warning)}
+.clip .side .b.lock{color:var(--danger)}
+.clip .acts{display:flex;gap:2px}
+.clip .num{min-width:16px;text-align:center}
+.clip.masked .pv{color:var(--text-3);font-style:italic}
+.status{height:30px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:0 10px;font-size:11px;color:var(--text-3)}
+.status .dot{width:7px;height:7px;border-radius:50%;background:var(--success)}
+.status .sp{flex:1}
+.status .h{display:flex;align-items:center;gap:5px}
+.toast{position:absolute;left:12px;right:12px;bottom:40px;height:36px;border-radius:8px;background:var(--raised);border:1px solid var(--border-strong);display:flex;align-items:center;gap:8px;padding:0 6px 0 12px;font-size:12px}
+.toast .sp{flex:1}
+.toast .u{color:var(--accent);font-weight:600;display:flex;gap:6px;align-items:center;padding:0 8px;height:26px;border-radius:6px}
+.tip{position:absolute;background:var(--raised);border:1px solid var(--border-strong);color:var(--text);font-size:12px;padding:4px 8px;border-radius:6px;white-space:nowrap;display:flex;gap:8px;align-items:center;z-index:5}
+.btn{height:32px;padding:0 14px;border-radius:6px;display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:13px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--text-2)}
+.btn.danger{color:var(--danger)}
+.chip{height:24px;padding:0 8px;border-radius:12px;display:inline-flex;align-items:center;gap:5px;background:var(--surface);border:1px solid var(--border);font-size:12px;color:var(--text-2)}
+.chip svg.i{width:12px;height:12px}
+
+/* ---------- popup ---------- */
+.popup{width:440px;height:520px;box-shadow:none}
+.popup .head{display:flex;align-items:center;gap:4px;padding:10px 10px 8px}
+.popup .filters{padding:0 10px 4px;display:flex;align-items:center;gap:6px}
+.popup .list{flex:1;overflow:hidden;padding-bottom:6px}
+.popup.wide{width:760px}
+.popup .split{flex:1;display:flex;min-height:0}
+.popup .split .left{width:440px;display:flex;flex-direction:column;border-right:1px solid var(--border)}
+.preview{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--canvas)}
+.preview .ph{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--border)}
+.preview .ph .t{flex:1;font-weight:600}
+.preview .pc{flex:1;padding:12px;overflow:hidden}
+.preview pre{margin:0;font-family:var(--mono);font-size:12px;line-height:1.5;color:var(--text);white-space:pre-wrap}
+.preview .facts{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;padding:10px 12px;border-top:1px solid var(--border);font-size:12px}
+.preview .facts dt{color:var(--text-3)} .preview .facts dd{margin:0;color:var(--text-2)}
+.img-ph{height:170px;border-radius:8px;border:1px solid var(--border);background:
+  linear-gradient(135deg,#2b3350 0%,#3a2f55 45%,#1f3b45 100%);display:flex;align-items:flex-end;padding:8px;color:var(--text-2);font-size:11px}
+
+/* ---------- history ---------- */
+.history{width:1060px;height:660px}
+.history .body{flex:1;display:flex;min-height:0}
+.side-nav{width:216px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:8px 8px}
+.side-nav .brand{display:flex;align-items:center;gap:8px;padding:4px 6px 10px;font-weight:600}
+.side-nav .brand .logo{width:22px;height:22px;border-radius:6px;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center}
+.nav{display:flex;align-items:center;gap:10px;height:30px;padding:0 8px;border-radius:6px;color:var(--text-2);position:relative}
+.nav .n{margin-left:auto;font-size:11px;color:var(--text-3)}
+.nav:hover{background:var(--raised);color:var(--text)}
+.nav.on{background:var(--selected);color:var(--text)}
+.nav.on svg{color:var(--accent)}
+.nav.on::before{content:"";position:absolute;left:-8px;top:7px;bottom:7px;width:3px;border-radius:2px;background:var(--accent)}
+.nav .sw{width:9px;height:9px;border-radius:3px;flex:none}
+.side-nav .grp{font-size:11px;font-weight:600;letter-spacing:.4px;color:var(--text-3);text-transform:uppercase;padding:14px 8px 4px;display:flex;align-items:center}
+.side-nav .grp .ib{width:22px;height:22px;margin-left:auto}
+.side-nav .sp{flex:1}
+.mid{flex:1;display:flex;flex-direction:column;min-width:0}
+.toolbar{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--border)}
+.toolbar .tt{font-weight:600;font-size:15px;margin-right:8px}
+.dd{height:32px;display:flex;align-items:center;gap:6px;padding:0 10px;border:1px solid var(--border);border-radius:6px;color:var(--text-2);font-size:12px}
+.mid .list{flex:1;overflow:hidden;padding:4px 0}
+.mid .clip{height:56px}
+.mid .clip .pv2{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-2);font-size:12px}
+.chk{width:16px;height:16px;border-radius:4px;border:1.5px solid var(--border-strong);flex:none;display:flex;align-items:center;justify-content:center}
+.chk.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.chk.on svg{width:12px;height:12px;stroke-width:3}
+.detail{width:340px;border-left:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+.detail .dh{display:flex;align-items:center;gap:2px;padding:10px 10px;border-bottom:1px solid var(--border)}
+.detail .dh .sp{flex:1}
+.detail .dc{padding:12px;overflow:hidden;flex:1;display:flex;flex-direction:column;gap:14px}
+.detail .box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;max-height:170px;overflow:hidden}
+.detail h4{margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:.4px;color:var(--text-3);text-transform:uppercase;display:flex;align-items:center;gap:6px}
+.detail .tags{display:flex;gap:6px;flex-wrap:wrap}
+.detail .note{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text-2);font-size:12.5px}
+.facts2{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12px}
+.facts2 dt{color:var(--text-3)} .facts2 dd{margin:0;color:var(--text-2)}
+.bulk{display:flex;align-items:center;gap:4px;margin:8px 12px 4px;padding:4px 6px 4px 12px;height:40px;background:var(--selected);border:1px solid var(--accent);border-radius:8px}
+.bulk .t{font-weight:600;margin-right:auto}
+.menu{position:absolute;width:236px;background:var(--raised);border:1px solid var(--border-strong);border-radius:10px;padding:4px;z-index:6}
+.menu .mi{display:flex;align-items:center;gap:10px;height:30px;padding:0 8px;border-radius:6px;color:var(--text)}
+.menu .mi svg{color:var(--text-2)}
+.menu .mi.hl{background:var(--selected);outline:2px solid var(--focus);outline-offset:-2px}
+.menu .mi .k{margin-left:auto;font-size:11px;color:var(--text-3)}
+.menu .mi.d{color:var(--danger)} .menu .mi.d svg{color:var(--danger)}
+.menu hr{border:0;border-top:1px solid var(--border);margin:4px 2px}
+.narrow{width:720px;height:560px}
+.rail{width:52px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:4px}
+.rail .ib{width:36px;height:36px}
+.rail .ib.on{box-shadow:inset 3px 0 0 var(--accent)}
+.rail hr{width:24px;border:0;border-top:1px solid var(--border);margin:6px 0}
+
+/* ---------- settings ---------- */
+.settings{width:860px;height:640px}
+.settings .body{flex:1;display:flex;min-height:0}
+.settings .side-nav{width:220px}
+.settings .content{flex:1;overflow:hidden;padding:20px 24px;display:flex;flex-direction:column;gap:16px}
+.settings h3{margin:0;font-size:18px}
+.settings .sub{color:var(--text-2);margin:2px 0 0;font-size:12.5px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px}
+.card .ct{padding:10px 14px 4px;font-size:11px;font-weight:600;letter-spacing:.4px;color:var(--text-3);text-transform:uppercase;display:flex;align-items:center;gap:6px}
+.srow{display:flex;align-items:center;gap:12px;padding:10px 14px;min-height:44px}
+.srow+.srow{border-top:1px solid var(--border)}
+.srow .lb{flex:1;min-width:0}
+.srow .lb .l{color:var(--text)}
+.srow .lb .d{color:var(--text-3);font-size:12px}
+.srow .lk{color:var(--success)}
+.sw2{width:34px;height:20px;border-radius:10px;background:var(--border-strong);position:relative;flex:none}
+.sw2::after{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--text-2)}
+.sw2.on{background:var(--accent)} .sw2.on::after{left:17px;background:var(--on-accent)}
+.mode{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:6px 14px 14px}
+.mode .m{border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:4px;background:var(--canvas)}
+.mode .m .h{display:flex;align-items:center;gap:8px;font-weight:600}
+.mode .m .d{color:var(--text-3);font-size:12px}
+.mode .m.on{border-color:var(--accent);background:var(--selected)}
+.mode .m.on .h svg{color:var(--success)}
+.app{display:flex;align-items:center;gap:10px;padding:8px 14px}
+.app+.app{border-top:1px solid var(--border)}
+.app .ico{width:24px;height:24px;border-radius:6px;background:var(--raised);display:flex;align-items:center;justify-content:center;color:var(--text-2)}
+.app .nm{flex:1} .app .by{font-size:11px;color:var(--text-3);display:flex;gap:4px;align-items:center}
+.savebar{display:flex;align-items:center;gap:8px;padding:10px 24px;border-top:1px solid var(--border);background:var(--surface)}
+.savebar .dot{width:7px;height:7px;border-radius:50%;background:var(--warning)}
+.savebar .t{flex:1;color:var(--text-2);font-size:12px;display:flex;gap:8px;align-items:center}
+.select{height:30px;display:flex;align-items:center;gap:6px;padding:0 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--canvas);font-size:12px;min-width:150px;justify-content:space-between}
+
+/* ---------- components sheet ---------- */
+.sheet{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.tile{background:var(--canvas);border:1px solid var(--border);border-radius:10px;padding:14px}
+.tile h5{margin:0 0 10px;font-size:12px;color:var(--text-2);font-weight:600}
+.sw-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.swatch{height:44px;border-radius:6px;border:1px solid var(--border);display:flex;align-items:flex-end;padding:4px;font-size:10px;color:var(--text-2)}
+.icons{display:grid;grid-template-columns:repeat(8,1fr);gap:10px;color:var(--text-2)}
+.icons div{display:flex;justify-content:center}
+.note-box{border-left:3px solid var(--accent);padding:6px 12px;color:var(--text-2);font-size:12.5px;background:var(--surface);border-radius:0 6px 6px 0;max-width:980px;margin:0 0 14px}
+</style>
+</head><body>
+<svg width="0" height="0" style="position:absolute">
+<defs>
+<symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+<symbol id="settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+<symbol id="pin" viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></symbol>
+<symbol id="star" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></symbol>
+<symbol id="lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+<symbol id="eyeoff" viewBox="0 0 24 24"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.53 13.53 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><path d="m2 2 20 20"/></symbol>
+<symbol id="trash" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+<symbol id="copy" viewBox="0 0 24 24"><rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+<symbol id="type" viewBox="0 0 24 24"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></symbol>
+<symbol id="wand" viewBox="0 0 24 24"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3M5 6v4M19 14v4M10 2v2M7 8H3M21 16h-4M11 3H9"/></symbol>
+<symbol id="pencil" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></symbol>
+<symbol id="note" viewBox="0 0 24 24"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z"/><path d="M15 3v6h6"/></symbol>
+<symbol id="tag" viewBox="0 0 24 24"><path d="M12.59 2.59A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.7 8.7a2.43 2.43 0 0 0 3.42 0l6.58-6.58a2.43 2.43 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5"/></symbol>
+<symbol id="folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+<symbol id="layers" viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65M22 12.65l-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
+<symbol id="text" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4M10 9H8M16 13H8M16 17H8"/></symbol>
+<symbol id="link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+<symbol id="code" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></symbol>
+<symbol id="image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/></symbol>
+<symbol id="file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></symbol>
+<symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+<symbol id="history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5M12 7v5l4 2"/></symbol>
+<symbol id="more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
+<symbol id="check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+<symbol id="undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+<symbol id="keyboard" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></symbol>
+<symbol id="pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></symbol>
+<symbol id="shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+<symbol id="db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0"/></symbol>
+<symbol id="transfer" viewBox="0 0 24 24"><path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/></symbol>
+<symbol id="info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+<symbol id="panel" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></symbol>
+<symbol id="listchecks" viewBox="0 0 24 24"><path d="m3 17 2 2 4-4M3 7l2 2 4-4M13 6h8M13 12h8M13 18h8"/></symbol>
+<symbol id="chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+<symbol id="chevd" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+<symbol id="enter" viewBox="0 0 24 24"><path d="m9 10-5 5 5 5"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></symbol>
+<symbol id="paste" viewBox="0 0 24 24"><path d="M15 2H9a1 1 0 0 0-1 1v2c0 .6.4 1 1 1h6c.6 0 1-.4 1-1V3c0-.6-.4-1-1-1Z"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2M16 4h2a2 2 0 0 1 2 2v2M11 14h10M17 10l4 4-4 4"/></symbol>
+<symbol id="app" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4M2 8h20M6 4v4"/></symbol>
+<symbol id="sliders" viewBox="0 0 24 24"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></symbol>
+<symbol id="calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+<symbol id="download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/></symbol>
+<symbol id="refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+<symbol id="clipboard" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></symbol>
+</defs>
+</svg>
+<style>
+/* ---------- translate prototype additions ---------- */
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 18px}
+.bar .btn.sel{border-color:var(--accent);color:var(--accent)}
+.stage{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.chat{width:560px;height:420px}
+.chat .msgs{flex:1;padding:16px;display:flex;flex-direction:column;gap:10px;overflow:auto}
+.bubble{max-width:75%;padding:8px 12px;border-radius:12px;background:var(--surface);border:1px solid var(--border)}
+.bubble.me{align-self:flex-end;background:var(--selected);border-color:#3a4370}
+.bubble .who{font-size:11px;color:var(--text-3);margin-bottom:2px}
+.composer{border-top:1px solid var(--border);padding:10px;display:flex;gap:8px;align-items:flex-end;position:relative}
+.composer textarea{flex:1;resize:none;height:64px;background:var(--surface);color:var(--text);border:1px solid var(--border-strong);border-radius:8px;padding:8px 10px;font:13px/1.45 "Segoe UI",system-ui,sans-serif;outline:none}
+.composer textarea:focus{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.hint{color:var(--text-3);font-size:12px;margin-top:8px;max-width:560px}
+/* overlay: small, no-activate, near the cursor */
+.ov{position:absolute;z-index:20;min-width:240px;max-width:340px;background:var(--raised);border:1px solid var(--border-strong);border-radius:8px;padding:8px 10px;display:none;gap:8px;align-items:flex-start;font-size:12.5px}
+.ov.show{display:flex}
+.ov .ic{flex:none;width:16px;height:16px;margin-top:1px}
+.ov .tx{flex:1}
+.ov .tx .s{color:var(--text-3);font-size:11.5px;margin-top:2px}
+.ov.err{border-color:var(--danger)} .ov.err .ic{color:var(--danger)}
+.ov.warn{border-color:var(--warning)} .ov.warn .ic{color:var(--warning)}
+.ov.ok .ic{color:var(--success)}
+.spin{width:14px;height:14px;border-radius:50%;border:2px solid var(--border-strong);border-top-color:var(--accent);animation:sp .8s linear infinite;flex:none;margin-top:2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none;border-top-color:var(--accent)}}
+.states{display:flex;flex-direction:column;gap:6px;width:250px}
+.states .btn{justify-content:flex-start}
+.settings .content{overflow:auto}
+.keyfield{display:flex;gap:6px;align-items:center}
+.keyfield input{height:30px;width:230px;background:var(--canvas);color:var(--text);border:1px solid var(--border-strong);border-radius:6px;padding:0 10px;font:12px var(--mono)}
+.st-ok{color:var(--success);font-size:12px;display:flex;gap:4px;align-items:center}
+.st-no{color:var(--text-3);font-size:12px}
+.sw2{cursor:pointer}
+.disabled-card{opacity:.45;pointer-events:none}
+.modal-bg{position:absolute;inset:0;background:#0a0b0ecc;display:none;align-items:center;justify-content:center;z-index:30}
+.modal-bg.show{display:flex}
+.modal{width:480px;background:var(--canvas);border:1px solid var(--border-strong);border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:12px}
+.modal h4{margin:0;font-size:15px}
+.modal ul{margin:0;padding-left:18px;color:var(--text-2);display:flex;flex-direction:column;gap:6px}
+.modal ul b{color:var(--text);font-weight:600}
+.modal .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+select.sel2{height:30px;background:var(--canvas);color:var(--text);border:1px solid var(--border-strong);border-radius:6px;padding:0 8px;font:12px "Segoe UI",system-ui;min-width:190px}
+.kcap{display:inline-flex;gap:4px}
+.btn{cursor:pointer;user-select:none}
+.mockflag{display:inline-block;font-size:11px;color:var(--warning);border:1px solid var(--warning);border-radius:4px;padding:0 5px;margin-left:6px}
+</style>
+
+<svg width="0" height="0" style="position:absolute">
+<symbol id="langs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></symbol>
+<symbol id="key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/></symbol>
+<symbol id="alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></symbol>
+</svg>
+
+<div class="page">
+<header>
+  <h1 data-t="title"></h1>
+  <p data-t="intro"></p>
+  <div class="bar">
+    <span class="btn" id="lang-vi">Tiếng Việt</span><span class="btn" id="lang-en">English</span>
+  </div>
+</header>
+
+<!-- ============ 1. FLOW ============ -->
+<section class="shot">
+<h2 data-t="s1"></h2>
+<p class="cap" data-t="s1cap"></p>
+<div class="stage">
+  <div>
+    <div class="win chat" id="chatwin">
+      <div class="titlebar"><svg class="i" style="width:14px;height:14px"><use href="#app"/></svg><span data-t="chatTitle"></span><span class="sp"></span></div>
+      <div class="msgs">
+        <div class="bubble"><div class="who">Alex</div>Hi! Could you send me the status of the release before the meeting?</div>
+      </div>
+      <div class="composer" id="composer">
+        <textarea id="ta" spellcheck="false"></textarea>
+        <span class="btn primary" data-t="send"></span>
+        <div class="ov" id="ov"></div>
+      </div>
+    </div>
+    <p class="hint" data-t="hint"></p>
+  </div>
+  <div class="states">
+    <div class="label" data-t="statesLbl"></div>
+    <span class="btn" data-state="ok"></span>
+    <span class="btn" data-state="slow"></span>
+    <span class="btn" data-state="off"></span>
+    <span class="btn" data-state="excluded"></span>
+    <span class="btn" data-state="secret"></span>
+    <span class="btn" data-state="focus"></span>
+    <span class="btn" data-state="private"></span>
+    <span class="btn" data-state="net"></span>
+    <span class="btn" data-state="reset"></span>
+  </div>
+</div>
+</section>
+
+<!-- ============ 2. SETTINGS ============ -->
+<section class="shot">
+<h2 data-t="s2"></h2>
+<p class="cap" data-t="s2cap"></p>
+<div class="win settings" style="height:700px" id="setwin">
+  <div class="titlebar"><svg class="i" style="width:14px;height:14px"><use href="#settings"/></svg><span data-t="setTitle"></span><span class="sp"></span></div>
+  <div class="body">
+    <div class="side-nav">
+      <div class="nav"><svg class="i"><use href="#sliders"/></svg><span data-t="navGeneral"></span></div>
+      <div class="nav"><svg class="i"><use href="#shield"/></svg><span data-t="navPrivacy"></span></div>
+      <div class="nav"><svg class="i"><use href="#db"/></svg><span data-t="navHistory"></span></div>
+      <div class="nav"><svg class="i"><use href="#transfer"/></svg><span data-t="navData"></span></div>
+      <div class="nav on"><svg class="i"><use href="#langs"/></svg><span data-t="navTranslate"></span></div>
+      <div class="nav"><svg class="i"><use href="#info"/></svg><span data-t="navAbout"></span></div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;min-width:0">
+    <div class="content">
+      <div><h3 data-t="navTranslate"></h3><p class="sub" data-t="setSub"></p></div>
+      <div class="card">
+        <div class="srow"><div class="lb"><div class="l" data-t="enable"></div><div class="d" data-t="enableD"></div></div><span class="sw2" id="sw"></span></div>
+      </div>
+      <div class="card" id="cfg">
+        <div class="ct" data-t="howCt"></div>
+        <div class="srow"><div class="lb"><div class="l" data-t="shortcut"></div><div class="d" data-t="shortcutD"></div></div><span class="kcap"><span class="kc">Ctrl</span><span class="kc">Alt</span><span class="kc">T</span></span></div>
+        <div class="srow"><div class="lb"><div class="l" data-t="dir"></div><div class="d" data-t="dirD"></div></div>
+          <select class="sel2" id="dir"><option value="auto" data-t="dirAuto"></option><option value="en" data-t="dirEn"></option><option value="vi" data-t="dirVi"></option></select></div>
+        <div class="srow"><div class="lb"><div class="l" data-t="model"></div><div class="d" data-t="modelD"></div></div>
+          <select class="sel2"><option data-t="mOpus"></option><option data-t="mHaiku"></option></select></div>
+      </div>
+      <div class="card" id="keycard">
+        <div class="ct"><svg class="i" style="width:12px;height:12px"><use href="#key"/></svg><span data-t="keyCt"></span></div>
+        <div class="srow"><div class="lb"><div class="l" data-t="key"></div><div class="d" id="keyStatus"></div></div>
+          <span class="keyfield" id="keyEdit"><input id="keyIn" type="password" placeholder="sk-ant-…"><span class="btn" id="keySave" data-t="keySave"></span></span>
+          <span class="keyfield" id="keyHave" style="display:none"><span class="btn" id="keyReplace" data-t="keyReplace"></span><span class="btn ghost" id="keyRemove" data-t="keyRemove"></span></span>
+        </div>
+        <div class="srow"><div class="lb"><div class="l" data-t="test"></div><div class="d" id="testOut" data-t="testD"></div></div><span class="btn" id="testBtn" data-t="testBtn"></span></div>
+      </div>
+      <div class="card">
+        <div class="ct"><svg class="i" style="width:12px;height:12px;color:var(--success)"><use href="#shield"/></svg><span data-t="neverCt"></span></div>
+        <div class="srow"><div class="lb"><div class="l" data-t="n1"></div><div class="d" data-t="n1d"></div></div><svg class="i lk"><use href="#lock"/></svg></div>
+        <div class="srow"><div class="lb"><div class="l" data-t="n2"></div><div class="d" data-t="n2d"></div></div><svg class="i lk"><use href="#lock"/></svg></div>
+        <div class="srow"><div class="lb"><div class="l" data-t="n3"></div><div class="d" data-t="n3d"></div></div><svg class="i lk"><use href="#lock"/></svg></div>
+        <div class="srow"><div class="lb"><div class="l" data-t="n4"></div><div class="d" data-t="n4d"></div></div><svg class="i lk"><use href="#lock"/></svg></div>
+      </div>
+    </div>
+    </div>
+  </div>
+  <!-- consent dialog -->
+  <div class="modal-bg" id="consent">
+    <div class="modal" role="dialog" aria-modal="true">
+      <h4 data-t="cTitle"></h4>
+      <ul>
+        <li data-t="c1"></li><li data-t="c2"></li><li data-t="c3"></li><li data-t="c4"></li><li data-t="c5"></li>
+      </ul>
+      <div class="acts"><span class="btn ghost" id="cNo" data-t="cancel"></span><span class="btn primary" id="cYes" data-t="cEnable"></span></div>
+    </div>
+  </div>
+</div>
+</section>
+</div>
+
+<script>
+const T = {
+vi:{
+ title:"Dịch tại chỗ: prototype để review",
+ intro:"Mô phỏng tính năng trong Dark Clipboard (không gọi API thật; bản dịch là câu mẫu). Phần 1 là luồng dùng hằng ngày, phần 2 là trang Settings và hộp thoại đồng ý khi bật. Thiết kế: docs/specs/translate-in-place/design.md.",
+ s1:"1 · Luồng hằng ngày: gõ, bấm Ctrl+Alt+T, chữ được thay",
+ s1cap:"Bấm vào ô chat, gõ hoặc giữ câu mẫu, rồi bấm Ctrl+Alt+T (hoặc nút \"Dịch thành công\" bên phải). Khung nhỏ hiện cạnh con trỏ, không lấy focus khỏi ô chat. Esc huỷ khi đang chờ. Ctrl+Z trả lại câu tiếng Việt. Các nút bên phải cho xem từng trạng thái lỗi.",
+ chatTitle:"Ứng dụng chat (bất kỳ)", send:"Gửi",
+ hint:"Bản thật: chỉ chữ đang bôi đen được dịch; không bôi đen thì cả ô. Câu gốc và bản dịch không vào lịch sử Dark Clipboard; clipboard cũ được trả lại.",
+ statesLbl:"Xem trạng thái",
+ st_ok:"Dịch thành công", st_slow:"Đang chờ (mạng chậm)", st_off:"Tính năng đang tắt", st_excluded:"App bị loại trừ", st_secret:"Chữ giống mật khẩu/key", st_focus:"Đã chuyển cửa sổ khi chờ", st_private:"Đang ở chế độ Private", st_net:"Lỗi mạng / key sai", st_reset:"Đặt lại câu mẫu",
+ ovSending:n=>`Đang gửi ${n} ký tự tới Anthropic…`, ovEsc:"Esc để huỷ",
+ ovDone:"Đã dịch sang tiếng Anh", ovDoneS:"Ctrl+Z để trả lại câu gốc",
+ ovCancel:"Đã huỷ, không thay gì",
+ ovOff:"Dịch tại chỗ đang tắt", ovOffS:"Bật trong Settings → Dịch",
+ ovExcl:"Không dịch trong KeePassXC", ovExclS:"App này nằm trong danh sách không lưu. Không có gì được gửi.",
+ ovSecret:"Trông giống mật khẩu hoặc key: không gửi", ovSecretS:"Không có gì rời khỏi máy",
+ ovFocus:"Bạn đã chuyển cửa sổ: bản dịch nằm trong clipboard", ovFocusS:"Dán bằng Ctrl+V nơi bạn muốn",
+ ovPriv:"Đang ở chế độ Private: không dịch", ovPrivS:"Chuyển về Ghi để dùng",
+ ovNet:"Không dịch được: key không hợp lệ (401)", ovNetS:"Câu gốc giữ nguyên. Kiểm tra key trong Settings → Dịch",
+ sample:"Chào anh, bản release đang chờ review cuối. Em sẽ gửi changelog trước 3 giờ chiều nay nhé.",
+ translated:"Hi, the release is waiting for its final review. I'll send the changelog before 3 PM today.",
+ mockOther:"[bản dịch mẫu: prototype không gọi API]",
+ s2:"2 · Settings → Dịch (mục mới)",
+ s2cap:"Tắt sẵn. Bật công tắc sẽ mở hộp thoại đồng ý một lần (theo quyết định của bạn). Key nhập một lần, lưu trong Windows Credential Manager, không bao giờ hiện lại. Thẻ cuối liệt kê những gì không bao giờ được gửi, có khoá, không tắt được.",
+ setTitle:"Dark Clipboard: Settings",
+ navGeneral:"Chung", navPrivacy:"Ghi & Riêng tư", navHistory:"Lịch sử & Lưu trữ", navData:"Dữ liệu & Chuyển", navTranslate:"Dịch", navAbout:"Giới thiệu",
+ setSub:"Dịch chữ bạn vừa gõ ngay trong ô, bằng key Anthropic của bạn.",
+ enable:"Dịch tại chỗ", enableD:"Mỗi lần bấm phím tắt, chữ đang chọn (hoặc cả ô) được gửi tới Anthropic",
+ howCt:"Cách dùng", shortcut:"Phím tắt", shortcutD:"Bấm để đổi. Ctrl+C không bị ảnh hưởng",
+ dir:"Chiều dịch", dirD:"Tự động: tiếng Việt → Anh, còn lại → Việt",
+ dirAuto:"Tự động", dirEn:"Luôn sang tiếng Anh", dirVi:"Luôn sang tiếng Việt",
+ model:"Model", modelD:"Opus dịch tự nhiên hơn; Haiku nhanh và rẻ hơn nhiều",
+ mOpus:"Claude Opus 5.5 (chất lượng)", mHaiku:"Claude Haiku 5.5 (nhanh, rẻ)",
+ keyCt:"API key", key:"Key Anthropic",
+ keyNone:"Chưa có key", keyHave:"Đã lưu trong Windows Credential Manager (sk-ant-…7Qx)",
+ keySave:"Lưu", keyReplace:"Thay key…", keyRemove:"Xoá key",
+ test:"Thử", testD:"Dịch một câu mẫu cố định để kiểm tra key và tốc độ", testBtn:"Thử dịch",
+ testOk:"OK: \"Xin chào\" → \"Hello\" trong 1,2 s (Opus 5.5)", testNoKey:"Cần lưu key trước",
+ neverCt:"Không bao giờ được gửi",
+ n1:"Chữ trong app bị loại trừ", n1d:"Trình quản lý mật khẩu, Darkshot và danh sách \"Không lưu từ các app này\"",
+ n2:"Nội dung có đánh dấu riêng tư", n2d:"Đánh dấu của Windows và trình quản lý mật khẩu, kể cả \"không đồng bộ lên cloud\"",
+ n3:"Chữ trông giống mật khẩu, key, số thẻ", n3d:"Phát hiện ngay trên máy, trước khi gửi",
+ n4:"Bất cứ thứ gì khi bạn không bấm phím", n4d:"Không chạy nền; lịch sử clip không bao giờ được gửi",
+ cTitle:"Bật dịch tại chỗ?",
+ c1:"Mỗi lần bạn bấm <b>Ctrl+Alt+T</b>, chữ đang chọn được gửi tới <b>Anthropic</b> (api.anthropic.com) để dịch, bằng key của bạn.",
+ c2:"Nếu không chọn gì, <b>cả ô đang gõ</b> được gửi (tối đa 8000 ký tự).",
+ c3:"Chỉ gửi chữ đó. Không gửi lịch sử clip, tên app, tiêu đề cửa sổ hay thông tin máy.",
+ c4:"Key được lưu trong <b>Windows Credential Manager</b>, không nằm trong file cài đặt hay log.",
+ c5:"Anthropic xử lý chữ theo chính sách dữ liệu của họ. Bạn có thể tắt bất cứ lúc nào.",
+ cancel:"Huỷ", cEnable:"Bật"
+},
+en:{
+ title:"Translate in place: prototype for review",
+ intro:"A simulation of the feature inside Dark Clipboard (no real API call; the translation is a canned sentence). Part 1 is the daily flow, part 2 the Settings page and the enable-time consent dialog. Design: docs/specs/translate-in-place/design.md.",
+ s1:"1 · Daily flow: type, press Ctrl+Alt+T, the text is replaced",
+ s1cap:"Click the chat box, type or keep the sample, then press Ctrl+Alt+T (or the \"Translate succeeds\" button on the right). A small overlay appears near the cursor and does not take focus from the chat box. Esc cancels while waiting. Ctrl+Z brings the Vietnamese back. The buttons on the right show each error state.",
+ chatTitle:"Chat app (any)", send:"Send",
+ hint:"Real feature: only the selected text is translated; with no selection, the whole field. Neither the source nor the translation is stored in Dark Clipboard history; the previous clipboard comes back.",
+ statesLbl:"Show state",
+ st_ok:"Translate succeeds", st_slow:"Waiting (slow network)", st_off:"Feature off", st_excluded:"Excluded app", st_secret:"Text looks like a password/key", st_focus:"Window changed while waiting", st_private:"Private mode on", st_net:"Network error / bad key", st_reset:"Reset sample",
+ ovSending:n=>`Sending ${n} characters to Anthropic…`, ovEsc:"Esc to cancel",
+ ovDone:"Translated to English", ovDoneS:"Ctrl+Z brings the original back",
+ ovCancel:"Cancelled, nothing replaced",
+ ovOff:"Translate in place is off", ovOffS:"Turn it on in Settings → Translate",
+ ovExcl:"Not translating in KeePassXC", ovExclS:"This app is on the don't-save list. Nothing was sent.",
+ ovSecret:"Looks like a password or key: not sent", ovSecretS:"Nothing left this computer",
+ ovFocus:"You switched windows: the translation is on the clipboard", ovFocusS:"Paste it with Ctrl+V where you want",
+ ovPriv:"Private mode is on: not translating", ovPrivS:"Switch back to Recording to use it",
+ ovNet:"Could not translate: invalid key (401)", ovNetS:"Your text is unchanged. Check the key in Settings → Translate",
+ sample:"Chào anh, bản release đang chờ review cuối. Em sẽ gửi changelog trước 3 giờ chiều nay nhé.",
+ translated:"Hi, the release is waiting for its final review. I'll send the changelog before 3 PM today.",
+ mockOther:"[sample translation: the prototype does not call the API]",
+ s2:"2 · Settings → Translate (new section)",
+ s2cap:"Off by default. Turning the switch on opens the one-time consent dialog (your decision). The key is entered once, stored in Windows Credential Manager and never shown again. The last card lists what is never sent, locked, with no control.",
+ setTitle:"Dark Clipboard: Settings",
+ navGeneral:"General", navPrivacy:"Capture & Privacy", navHistory:"History & Storage", navData:"Data & Transfer", navTranslate:"Translate", navAbout:"About",
+ setSub:"Translate what you just typed, right in the field, with your Anthropic key.",
+ enable:"Translate in place", enableD:"Each press of the shortcut sends the selected text (or the whole field) to Anthropic",
+ howCt:"How it works", shortcut:"Shortcut", shortcutD:"Click to change. Ctrl+C is not affected",
+ dir:"Direction", dirD:"Auto: Vietnamese → English, anything else → Vietnamese",
+ dirAuto:"Auto", dirEn:"Always to English", dirVi:"Always to Vietnamese",
+ model:"Model", modelD:"Opus reads more naturally; Haiku is much faster and cheaper",
+ mOpus:"Claude Opus 5.5 (quality)", mHaiku:"Claude Haiku 5.5 (fast, cheap)",
+ keyCt:"API key", key:"Anthropic key",
+ keyNone:"No key yet", keyHave:"Stored in Windows Credential Manager (sk-ant-…7Qx)",
+ keySave:"Save", keyReplace:"Replace key…", keyRemove:"Remove key",
+ test:"Test", testD:"Translates a fixed sample to check the key and the speed", testBtn:"Test",
+ testOk:"OK: \"Xin chào\" → \"Hello\" in 1.2 s (Opus 5.5)", testNoKey:"Save a key first",
+ neverCt:"Never sent",
+ n1:"Text in excluded apps", n1d:"Password managers, Darkshot and your \"Don't save from these apps\" list",
+ n2:"Content marked private", n2d:"Windows and password-manager markers, including \"don't sync to cloud\"",
+ n3:"Text that looks like a password, key or card number", n3d:"Detected on this computer, before sending",
+ n4:"Anything when you don't press the shortcut", n4d:"Nothing runs in the background; clip history is never sent",
+ cTitle:"Turn on translate in place?",
+ c1:"Each time you press <b>Ctrl+Alt+T</b>, the selected text is sent to <b>Anthropic</b> (api.anthropic.com) for translation, with your key.",
+ c2:"With nothing selected, <b>the whole field</b> is sent (up to 8000 characters).",
+ c3:"Only that text is sent. No clip history, app names, window titles or machine details.",
+ c4:"The key is stored in <b>Windows Credential Manager</b>, never in the settings file or logs.",
+ c5:"Anthropic processes the text under its data policy. You can turn this off at any time.",
+ cancel:"Cancel", cEnable:"Turn on"
+}};
+let L="vi", enabled=true, hasKey=true, original=null, timer=null, busy=false;
+const $=id=>document.getElementById(id), ta=$("ta"), ov=$("ov");
+function tr(k){return T[L][k]}
+function render(){
+  document.documentElement.lang=L;
+  document.querySelectorAll("[data-t]").forEach(e=>{const v=tr(e.dataset.t); if(typeof v==="string") e.innerHTML=v;});
+  document.querySelectorAll("[data-state]").forEach(e=>e.textContent=tr("st_"+e.dataset.state));
+  $("lang-vi").classList.toggle("sel",L==="vi"); $("lang-en").classList.toggle("sel",L==="en");
+  renderSettings();
+}
+function renderSettings(){
+  $("sw").classList.toggle("on",enabled);
+  $("cfg").classList.toggle("disabled-card",!enabled); $("keycard").classList.toggle("disabled-card",!enabled);
+  $("keyStatus").innerHTML = hasKey?`<span class="st-ok"><svg class="i" style="width:12px;height:12px"><use href="#check"/></svg>${tr("keyHave")}</span>`:`<span class="st-no">${tr("keyNone")}</span>`;
+  $("keyEdit").style.display=hasKey?"none":"flex"; $("keyHave").style.display=hasKey?"flex":"none";
+}
+function show(kind,icon,main,sub,ms){
+  clearTimeout(timer);
+  ov.className="ov show "+kind;
+  ov.innerHTML=(icon==="spin"?'<span class="spin"></span>':`<svg class="i ic"><use href="#${icon}"/></svg>`)+`<div class="tx"><div>${main}</div>${sub?`<div class="s">${sub}</div>`:""}</div>`;
+  const r=ta.getBoundingClientRect(), c=$("composer").getBoundingClientRect();
+  ov.style.left=(r.left-c.left+24)+"px"; ov.style.top=(r.top-c.top-ov.offsetHeight-8)+"px";
+  if(ms) timer=setTimeout(()=>{ov.className="ov"},ms);
+}
+function selectedOrAll(){const s=ta.selectionStart,e=ta.selectionEnd; return s!==e?[s,e]:[0,ta.value.length]}
+function translate(delay=1300, fail=null){
+  if(busy) return;
+  if(!enabled) return show("warn","alert",tr("ovOff"),tr("ovOffS"),3000);
+  const [s,e]=selectedOrAll(), text=ta.value.slice(s,e);
+  if(!text.trim()) return;
+  busy=true; ta.focus();
+  show("","spin",tr("ovSending")(text.length),tr("ovEsc"));
+  timer=setTimeout(()=>{
+    busy=false;
+    if(fail==="net") return show("err","alert",tr("ovNet"),tr("ovNetS"),5000);
+    if(fail==="focus") return show("warn","alert",tr("ovFocus"),tr("ovFocusS"),5000);
+    const out = text.trim()===T.vi.sample.trim()? T.vi.translated : tr("mockOther");
+    original=ta.value;
+    ta.focus(); ta.setSelectionRange(s,e);
+    // replace as an undoable edit, like a real Ctrl+V
+    if(!document.execCommand || !document.execCommand("insertText",false,out)) ta.value=ta.value.slice(0,s)+out+ta.value.slice(e);
+    show("ok","check",tr("ovDone"),tr("ovDoneS"),3500);
+  },delay);
+}
+function cancel(){ if(!busy) return; clearTimeout(timer); busy=false; show("","x",tr("ovCancel"),"",2000); }
+document.addEventListener("keydown",ev=>{
+  if(ev.ctrlKey && ev.altKey && (ev.key==="t"||ev.key==="T")){ev.preventDefault(); translate();}
+  else if(ev.key==="Escape") cancel();
+});
+document.querySelectorAll("[data-state]").forEach(b=>b.onclick=()=>{
+  const s=b.dataset.state;
+  if(s==="ok") translate();
+  else if(s==="slow") translate(6000);
+  else if(s==="off"){const was=enabled; enabled=false; translate(); enabled=was;}
+  else if(s==="excluded") show("err","lock",tr("ovExcl"),tr("ovExclS"),4500);
+  else if(s==="secret") show("err","shield",tr("ovSecret"),tr("ovSecretS"),4500);
+  else if(s==="focus") translate(1300,"focus");
+  else if(s==="private") show("warn","eyeoff",tr("ovPriv"),tr("ovPrivS"),4500);
+  else if(s==="net") translate(1300,"net");
+  else if(s==="reset"){ta.value=tr("sample"); ov.className="ov";}
+});
+$("sw").onclick=()=>{ if(enabled){enabled=false; renderSettings();} else $("consent").classList.add("show"); };
+$("cNo").onclick=()=>$("consent").classList.remove("show");
+$("cYes").onclick=()=>{enabled=true; $("consent").classList.remove("show"); renderSettings();};
+$("keySave").onclick=()=>{ if($("keyIn").value.trim()){hasKey=true; $("keyIn").value=""; renderSettings();} };
+$("keyRemove").onclick=()=>{hasKey=false; renderSettings();};
+$("keyReplace").onclick=()=>{hasKey=false; renderSettings(); $("keyIn").focus();};
+$("testBtn").onclick=()=>{ $("testOut").textContent = hasKey? "…" : tr("testNoKey"); if(hasKey) setTimeout(()=>$("testOut").textContent=tr("testOk"),1200); };
+$("lang-vi").onclick=()=>{L="vi";render()}; $("lang-en").onclick=()=>{L="en";render()};
+ta.value=T.vi.sample; render();
+</script>
+</body></html>

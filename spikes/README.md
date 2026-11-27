@@ -9,5 +9,6 @@ Rules: never import, depend on or copy this code into `crates/` or `apps/`. Re-i
 | `win-clipboard-monitor/` | Windows listener, exclusion markers, bursts, OLE, source app, self-write suppression | `docs/spikes/windows-clipboard-monitor.md` | `cargo run` (overwrites the clipboard briefly, restores text) |
 | `tauri-shell/` | Tauri 2: tray, global shortcut, always-on-top popup; memory and startup | `docs/spikes/ui-shell-comparison.md` | `cargo build --release`, then run `target/release/tauri-shell-spike.exe 15` |
 | `slint-shell/` | Slint: same checks as above | `docs/spikes/ui-shell-comparison.md` | `cargo build --release`, then run `target/release/slint-shell-spike.exe 15` |
+| `translate-hotkey/` | P2 AI: translate typed text in place with one shortcut (Claude API, user's key) | `translate-hotkey/README.md` | set `ANTHROPIC_API_KEY`, `cargo build --release`, run `target/release/translate-hotkey-spike.exe` |
 
 Spikes log to `%TEMP%\dark-clipboard-*-spike.log`.

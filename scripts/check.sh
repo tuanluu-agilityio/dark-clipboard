@@ -20,8 +20,8 @@ if [ "$has_ws" = 1 ]; then
     banned="$(printf '%s\n' "$tree" | grep -E '^(windows|windows-sys|objc2[A-Za-z0-9_-]*|core-foundation[A-Za-z0-9_-]*|x11rb|wayland-[A-Za-z0-9_-]+|gtk[A-Za-z0-9_-]*|slint[A-Za-z0-9_-]*|tauri[A-Za-z0-9_-]*|tokio) v' | sort -u)"
     [ -z "$banned" ] || { echo "CHECK FAILED: $c depends on a banned crate:"; echo "$banned"; exit 1; }
   done
-  # GC-08 as amended by D-057: the only network code is the opt-in update check in apps/desktop
-  # (src/update.rs). Nothing under crates/ may depend on an HTTP or TLS client, on any target.
+  # GC-08 as amended by D-057 and D-094: the only network code is in apps/desktop: the opt-in update check
+  # (src/update.rs), plus ai_net.rs for translate in place (D-094). Nothing under crates/ may depend on an HTTP or TLS client, on any target.
   echo "== crates/ stay network-free (GC-08, D-057)"
   for m in crates/*/Cargo.toml; do
     [ -f "$m" ] || continue
@@ -60,10 +60,10 @@ hits="$(find crates apps fuzz -name Cargo.toml -not -path '*/target/*' 2>/dev/nu
   | xargs -r grep -nE 'package[[:space:]]*=[[:space:]]*"(ureq|reqwest|hyper|h2|attohttpc|isahc|minreq|curl|socket2|surf)"|Win32_Networking|WinHttp|WinINet' || true)"
 [ -z "$hits" ] || { echo "CHECK FAILED: network dependency or feature in a manifest:"; echo "$hits"; exit 1; }
 
-echo "== network APIs only in apps/desktop/src/update.rs (GC-08, D-057)"
-hits="$(rs_files | grep -vx 'apps/desktop/src/update.rs' \
+echo "== network APIs only in update.rs and ai_net.rs (GC-08, D-057, D-094)"
+hits="$(rs_files | grep -vxE 'apps/desktop/src/(update|ai_net)\.rs' \
   | xargs -r grep -nE '\b(ureq|reqwest|hyper|h2|attohttpc|isahc|minreq|curl|socket2|surf)::|\b(use|extern crate) (ureq|reqwest|hyper|h2|attohttpc|isahc|minreq|curl|socket2|surf)\b|\b(mio|tokio)::net\b|\bstd::net\b|\b(TcpStream|TcpListener|UdpSocket)\b|\bWinHttp|\bWinINet|\bWin32::Networking' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)"
-[ -z "$hits" ] || { echo "CHECK FAILED: network API outside update.rs:"; echo "$hits"; exit 1; }
+[ -z "$hits" ] || { echo "CHECK FAILED: network API outside update.rs and ai_net.rs:"; echo "$hits"; exit 1; }
 
 echo "== no window-title capture (SR-11)"
 hits="$(rs_files | xargs -r grep -nE '\b(GetWindowText(W|A|Length[A-Za-z]*)?|InternalGetWindowText)\b|\bWM_GETTEXT(LENGTH)?\b|_NET_WM_NAME|\bkCGWindowName\b' || true)"
