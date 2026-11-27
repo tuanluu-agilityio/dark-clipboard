@@ -16,6 +16,7 @@ path = "src/main.rs"
 darkclip-core = { path = "../../crates/darkclip-core" }
 darkclip-app = { path = "../../crates/darkclip-app" }
 darkclip-platform = { path = "../../crates/darkclip-platform" }
+darkclip-ai = { path = "../../crates/darkclip-ai" }
 ctrlc = "3.5.3"
 # `~1.19`: the `unstable-winit-030` API is outside Slint's semver promise (Task 204 review).
 slint = { version = "~1.19.0", features = ["unstable-winit-030"] }

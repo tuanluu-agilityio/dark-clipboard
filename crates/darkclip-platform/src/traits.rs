@@ -4,7 +4,7 @@ use crate::caps::Capabilities;
 use crate::error::PlatformError;
 use darkclip_core::markers::PrivacyMarker;
 use darkclip_core::policy::ReadPlan;
-use darkclip_core::{ClipboardSource, Mime, RawRepresentation, Timestamp};
+use darkclip_core::{ClipboardSource, Mime, RawRepresentation, Redacted, Timestamp};
 use std::sync::mpsc::Sender;
 
 /// One change notification from the platform event source.
@@ -128,4 +128,21 @@ pub trait Autostart: Send + Sync {
     fn is_enabled(&self) -> Result<bool, PlatformError>;
     /// Registers (`true`) or removes (`false`) the entry. Removing a missing entry succeeds.
     fn set_enabled(&self, enabled: bool) -> Result<(), PlatformError>;
+}
+
+/// The Credential Manager target (or keychain item) that holds the Anthropic API key
+/// (Task 602, D-094). Fixed; never a setting.
+pub const ANTHROPIC_KEY_TARGET: &str = "dark-clipboard/anthropic";
+
+/// Per-user secret storage outside settings, logs and backups (Task 602; Windows: Credential
+/// Manager). Secrets travel only inside [`Redacted`], so they never reach `Debug` output; errors
+/// carry codes only, never the secret (GC-06). Implementations cache nothing. Calls may block
+/// briefly: call them off the UI thread.
+pub trait SecretStore: Send + Sync {
+    /// The secret stored under `target`; `Ok(None)` when there is none.
+    fn get(&self, target: &str) -> Result<Option<Redacted<String>>, PlatformError>;
+    /// Stores `secret` under `target`, replacing any earlier one.
+    fn set(&self, target: &str, secret: &Redacted<String>) -> Result<(), PlatformError>;
+    /// Removes the secret under `target`; `Ok(())` when there is none.
+    fn delete(&self, target: &str) -> Result<(), PlatformError>;
 }

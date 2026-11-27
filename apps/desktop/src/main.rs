@@ -13,6 +13,10 @@
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+// The translate-in-place transport (Task 602). Nothing calls it until Task 605 wires the
+// translate flow; remove this allow then.
+#[allow(dead_code)]
+mod ai_net;
 mod filedlg;
 mod hardening;
 mod history;
