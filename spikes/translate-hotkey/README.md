@@ -52,9 +52,17 @@ the restored text. The console prints lengths and timings only, never the text.
 
 | App | Selection | Whole field (no selection) | Ctrl+Z restores | Latency (console) |
 |---|---|---|---|---|
-| Notepad | | | | |
-| Chrome/Edge textarea (Gmail, ChatGPT box) | | | | |
-| Zalo | | | | |
-| Slack / Teams | | | | |
-| VS Code | | | | |
-| Word | | | | |
+| Notepad | not tested | | | |
+| Chrome/Edge textarea (Gmail, ChatGPT box) | not tested | | | |
+| Zalo | yes | yes | yes | see below |
+| Slack / Teams | Slack yes | Slack yes | Slack yes | see below |
+| VS Code | yes | yes | yes | see below |
+| Word | not tested | | | |
+
+Owner result 2026-11-27 (G1 passed): works in Zalo, Slack and VS Code; selection is translated,
+no selection translates the whole field, Ctrl+Z restores the original. Console lines reported
+(default model `claude-opus-5-5`, effort low): short texts (37-57 chars) API 1.0-1.6 s, total
+2.0-2.5 s (one 3.8 s); long texts (585-713 chars) API 2.9-5.0 s, total 3.8-7.1 s. Also seen:
+Esc cancel, "focus moved: left on the clipboard", and "the app did not copy anything" (about
+1.1 s, no text field focused). Overhead beyond the API is the copy wait and the 400 ms restore
+wait; the product shows "done" at paste time and restores in the background.
