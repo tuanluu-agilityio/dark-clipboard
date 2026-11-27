@@ -100,7 +100,7 @@ Rules: `--json` prints exactly one envelope document to stdout. Human output goe
 
 ## 4. Optional AI service (P2, design only)
 
-> **Changed by D-093 (2026-11-27):** for the translate-in-place flow only (Phase 6, `docs/specs/translate-in-place/design.md`), an enable-time consent dialog plus a per-press overlay "Sending N characters to Anthropic…" replace the per-request confirmation described here; there is no per-press dialog. Other AI flows keep this section.
+> **Changed by D-093 (2026-11-27):** for the translate-in-place flow only (Phase 6, `docs/specs/translate-in-place/design.md`), an enable-time consent dialog plus a per-press overlay "Sending N characters to Anthropic…" replace the per-request confirmation described here; there is no per-press dialog: pressing the dedicated shortcut counts as the user-initiated action. Other AI flows keep this section.
 
 ```rust
 pub trait Provider: Send + Sync {

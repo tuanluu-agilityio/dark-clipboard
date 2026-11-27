@@ -20,8 +20,8 @@ if [ "$has_ws" = 1 ]; then
     banned="$(printf '%s\n' "$tree" | grep -E '^(windows|windows-sys|objc2[A-Za-z0-9_-]*|core-foundation[A-Za-z0-9_-]*|x11rb|wayland-[A-Za-z0-9_-]+|gtk[A-Za-z0-9_-]*|slint[A-Za-z0-9_-]*|tauri[A-Za-z0-9_-]*|tokio) v' | sort -u)"
     [ -z "$banned" ] || { echo "CHECK FAILED: $c depends on a banned crate:"; echo "$banned"; exit 1; }
   done
-  # GC-08 as amended by D-057: the only network code is the opt-in update check in apps/desktop
-  # (src/update.rs). Nothing under crates/ may depend on an HTTP or TLS client, on any target.
+  # GC-08 as amended by D-057 and D-094: the only network code is in apps/desktop: the opt-in update check
+  # (src/update.rs), plus ai_net.rs for translate in place (D-094). Nothing under crates/ may depend on an HTTP or TLS client, on any target.
   echo "== crates/ stay network-free (GC-08, D-057)"
   for m in crates/*/Cargo.toml; do
     [ -f "$m" ] || continue
