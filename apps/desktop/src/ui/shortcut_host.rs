@@ -155,9 +155,8 @@ mod imp {
     pub fn apply(popup: &str, translate: Option<&str>) -> Statuses {
         STATE.with(|s| match s.borrow_mut().as_mut() {
             Some(st) => {
-                // Translate first: a combination it gives up is then free for the popup.
-                let translate = st.keys.apply_translate(translate, popup);
-                let popup = st.keys.apply(ShortcutId::Popup, popup);
+                // Translate first, and again if the popup freed its combination.
+                let (popup, translate) = st.keys.apply_all(popup, translate);
                 *st.table.lock().unwrap_or_else(PoisonError::into_inner) = st.keys.press_table();
                 Statuses { popup, translate }
             }

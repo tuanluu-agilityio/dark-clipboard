@@ -35,9 +35,35 @@ pub(crate) const POLL_MS: u64 = 10;
 /// (`ai_net::TIMEOUT`); this only stops a flow whose provider never answers.
 pub(crate) const API_GUARD_MS: u64 = 35_000;
 
-/// The refusal reason `darkclip-windows` gives when Shift, Alt, Win or Enter stayed down
-/// (`Refusal::KeysHeld`), told apart from the other refusals for the overlay.
-const KEYS_HELD_REASON: &str = "keys still held";
+/// A reply that may hold text: wiped when the flow gives up on it.
+pub(crate) trait Wipe {
+    fn wipe(&mut self);
+}
+
+impl Wipe for ClaimedText {
+    fn wipe(&mut self) {
+        wipe_string(&mut self.text.0);
+    }
+}
+
+impl Wipe for TransformResult {
+    fn wipe(&mut self) {
+        wipe_string(&mut self.text.0);
+    }
+}
+
+/// Takes every reply already in `rx` and wipes its text (a late reply that landed in the same
+/// tick as a cancel or a timeout). Returns how many texts were wiped.
+pub(crate) fn drain<T: Wipe, E>(rx: &Receiver<Result<T, E>>) -> usize {
+    let mut n = 0;
+    while let Ok(r) = rx.try_recv() {
+        if let Ok(mut v) = r {
+            v.wipe();
+            n += 1;
+        }
+    }
+    n
+}
 
 /// Why a press does nothing. Static data only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,7 +263,8 @@ pub(crate) trait FlowSys {
     fn target(&mut self) -> Option<PasteTarget>;
     /// The first block for `t` (see [`first_block`]).
     fn blocked(&mut self, t: &PasteTarget) -> Option<Block>;
-    fn clipboard_seq(&mut self) -> u64;
+    /// `None` when the seq cannot be read (the flow then never sends the select-all retry).
+    fn clipboard_seq(&mut self) -> Option<u64>;
     /// True once every modifier and the shortcut's key are up, waiting at most `wait` ms.
     fn keys_up(&mut self, wait: u64) -> bool;
     fn claim(&mut self, app_id: &str) -> Receiver<Result<ClaimedText, ClaimError>>;
@@ -315,7 +342,7 @@ fn wait_on<S: FlowSys, T>(
 }
 
 fn keys_held(e: &PlatformError) -> bool {
-    matches!(e, PlatformError::Unsupported(r) if *r == KEYS_HELD_REASON)
+    matches!(e, PlatformError::Unsupported(r) if *r == darkclip_platform::REFUSAL_KEYS_HELD)
 }
 
 /// Runs one press. Ends with the overlay's final state (`Done` was already shown at paste
@@ -351,7 +378,12 @@ fn run_inner<S: FlowSys>(sys: &mut S, cfg: &FlowConfig) -> Outcome {
     // target changed the clipboard by itself. Either way no key is sent.
     let claimed = match rx.try_recv() {
         Ok(Err(e)) => return Outcome::Failed(claim_failure(e)),
-        Ok(Ok(c)) => c,
+        // A change the flow did not ask for (no key was sent yet): wiped, never sent (A1).
+        Ok(Ok(mut c)) => {
+            c.wipe();
+            drain(&rx);
+            return Outcome::Failed(FlowError::NothingCopied);
+        }
         Err(_) => {
             if let Err(e) = sys.send_copy(&t, false) {
                 // The slot expires by itself; a late text is wiped by the actor.
@@ -363,7 +395,11 @@ fn run_inner<S: FlowSys>(sys: &mut S, cfg: &FlowConfig) -> Outcome {
             }
             match wait_for_claim(sys, cfg, &rx, &t, seq0) {
                 Ok(c) => c,
-                Err(o) => return o,
+                Err(o) => {
+                    // A text that landed with the cancel or the timeout is wiped.
+                    drain(&rx);
+                    return o;
+                }
             }
         }
     };
@@ -389,7 +425,7 @@ fn wait_for_claim<S: FlowSys>(
     cfg: &FlowConfig,
     rx: &Receiver<Result<ClaimedText, ClaimError>>,
     t: &PasteTarget,
-    seq0: u64,
+    seq0: Option<u64>,
 ) -> Result<ClaimedText, Outcome> {
     let mut elapsed = 0u64;
     let mut moved = false;
@@ -408,9 +444,11 @@ fn wait_for_claim<S: FlowSys>(
         if sys.cancelled() {
             return Err(Outcome::Cancelled);
         }
-        if sys.clipboard_seq() != seq0 {
-            moved = true;
-            break;
+        if let (Some(a), Some(b)) = (seq0, sys.clipboard_seq()) {
+            if a != b {
+                moved = true;
+                break;
+            }
         }
         sys.sleep(cfg.poll_ms);
         elapsed = elapsed.saturating_add(cfg.poll_ms.max(1));
@@ -419,8 +457,10 @@ fn wait_for_claim<S: FlowSys>(
         if sys.cancelled() {
             return Err(Outcome::Cancelled);
         }
-        // Re-checked right before the retry: a change that landed meanwhile is the copy.
-        if sys.clipboard_seq() == seq0 {
+        // Re-checked right before the retry: a change that landed meanwhile is the copy. An
+        // unknown seq (either one) never gives a select-all.
+        let unchanged = seq0.is_some() && sys.clipboard_seq() == seq0;
+        if unchanged {
             // A refused retry sends nothing; the wait below then ends as nothing copied.
             let _ = sys.send_copy(t, true);
         }
@@ -476,11 +516,15 @@ fn after_claim<S: FlowSys>(
     let answer = match wait_on(sys, &rx, &mut elapsed, cfg.api_guard_ms, cfg.poll_ms) {
         Waited::Got(r) => r,
         Waited::Cancelled => {
+            drain(&rx);
             drop(rx);
             restore_claimed(sys);
             return Outcome::Cancelled;
         }
-        Waited::TimedOut => Err(AiError::Timeout),
+        Waited::TimedOut => {
+            drain(&rx);
+            Err(AiError::Timeout)
+        }
         Waited::Gone => Err(AiError::Network),
     };
     drop(rx);
@@ -583,6 +627,9 @@ mod tests {
         restore: Result<bool, ()>,
         /// `cancelled()` turns true once a call with this label was recorded.
         cancel_after: Option<&'static str>,
+        /// The claim reply is delivered inside the first `cancelled()` that answers true.
+        reply_with_cancel: bool,
+        seq_unknown: bool,
         armed: bool,
         since_arm: u64,
         overlays: Vec<OverlayState>,
@@ -616,6 +663,8 @@ mod tests {
                 paste: Ok(()),
                 restore: Ok(true),
                 cancel_after: None,
+                reply_with_cancel: false,
+                seq_unknown: false,
                 armed: false,
                 since_arm: 0,
                 overlays: Vec::new(),
@@ -664,9 +713,12 @@ mod tests {
             self.calls.push("blocked".into());
             self.block
         }
-        fn clipboard_seq(&mut self) -> u64 {
+        fn clipboard_seq(&mut self) -> Option<u64> {
             self.calls.push("clipboard_seq".into());
-            (self.seq_at)(if self.armed { self.since_arm } else { 0 })
+            if self.seq_unknown {
+                return None;
+            }
+            Some((self.seq_at)(if self.armed { self.since_arm } else { 0 }))
         }
         fn keys_up(&mut self, wait: u64) -> bool {
             self.calls.push(format!("keys_up {wait}"));
@@ -742,7 +794,11 @@ mod tests {
             }
         }
         fn cancelled(&mut self) -> bool {
-            self.cancel_after.is_some_and(|l| self.has(l))
+            let c = self.cancel_after.is_some_and(|l| self.has(l));
+            if c && self.reply_with_cancel {
+                self.deliver();
+            }
+            c
         }
     }
 
@@ -939,7 +995,9 @@ mod tests {
         assert_eq!(f.overlays, vec![OverlayState::Blocked(Block::KeysHeld)]);
         // A copy refused because keys are held is reported the same way.
         let mut f = Fake::new();
-        f.copy_results = vec![Err(PlatformError::Unsupported(KEYS_HELD_REASON))];
+        f.copy_results = vec![Err(PlatformError::Unsupported(
+            darkclip_platform::REFUSAL_KEYS_HELD,
+        ))];
         assert_eq!(f.run(), Outcome::Blocked(Block::KeysHeld));
         assert_eq!(f.count("send_copy"), 1);
         let mut f = Fake::new();
@@ -1049,7 +1107,7 @@ mod tests {
             fn blocked(&mut self, t: &PasteTarget) -> Option<Block> {
                 self.inner.blocked(t)
             }
-            fn clipboard_seq(&mut self) -> u64 {
+            fn clipboard_seq(&mut self) -> Option<u64> {
                 self.inner.clipboard_seq()
             }
             fn keys_up(&mut self, wait: u64) -> bool {
@@ -1135,6 +1193,11 @@ mod tests {
             assert_eq!(f.run(), Outcome::Failed(FlowError::Claim(e)));
             assert!(!f.has("translate") && !f.has("restore_if"));
         }
+        // A text before any key was sent is wiped and not used (A1).
+        let mut f = Fake::new();
+        f.reply_at = ReplyAt::Claim;
+        assert_eq!(f.run(), Outcome::Failed(FlowError::NothingCopied));
+        assert!(!f.has("send_copy") && !f.has("translate") && !f.has("restore_if"));
         // An arm that failed at once sends no key.
         let mut f = Fake::new();
         f.reply = Some(Err(ClaimError::Busy));
@@ -1166,6 +1229,137 @@ mod tests {
         f.reply_at = ReplyAt::Never;
         f.cancel_after = Some("send_copy false");
         f.run();
+        assert_eq!(f.count("send_copy true"), 0);
+    }
+
+    #[test]
+    fn a_reply_landing_with_the_cancel_is_wiped_and_not_used() {
+        // The text arrives in the same tick as Esc: the flow is cancelled, sends nothing and
+        // drains the channel (the drained text is wiped, see `drain_wipes_every_text`).
+        let mut f = Fake::new();
+        f.seq_at = Box::new(|_| SEQ0);
+        f.reply_at = ReplyAt::Never;
+        f.cancel_after = Some("send_copy false");
+        f.reply_with_cancel = true;
+        assert_eq!(f.run(), Outcome::Cancelled);
+        assert!(f.reply.is_none(), "the reply was delivered");
+        assert!(!f.has("translate") && !f.has("write_own_if") && !f.has("paste"));
+        assert!(!f.has("restore_if"));
+        // The same for the translation.
+        let mut f = Fake::new();
+        f.answer = None;
+        f.cancel_after = Some("translate");
+        let mut sent = false;
+        let o = run(
+            &mut LateAnswer {
+                inner: &mut f,
+                sent: &mut sent,
+            },
+            &FlowConfig::default(),
+        );
+        assert_eq!(o, Outcome::Cancelled);
+        assert!(sent);
+        assert!(!f.has("write_own_if") && !f.has("paste"));
+    }
+
+    /// Sends the translation inside the `cancelled()` call that answers true.
+    struct LateAnswer<'a> {
+        inner: &'a mut Fake,
+        sent: &'a mut bool,
+    }
+
+    impl FlowSys for LateAnswer<'_> {
+        fn target(&mut self) -> Option<PasteTarget> {
+            self.inner.target()
+        }
+        fn blocked(&mut self, t: &PasteTarget) -> Option<Block> {
+            self.inner.blocked(t)
+        }
+        fn clipboard_seq(&mut self) -> Option<u64> {
+            self.inner.clipboard_seq()
+        }
+        fn keys_up(&mut self, wait: u64) -> bool {
+            self.inner.keys_up(wait)
+        }
+        fn claim(&mut self, a: &str) -> Receiver<Result<ClaimedText, ClaimError>> {
+            self.inner.claim(a)
+        }
+        fn send_copy(&mut self, t: &PasteTarget, s: bool) -> Result<(), PlatformError> {
+            self.inner.send_copy(t, s)
+        }
+        fn is_sensitive(&mut self, text: &str) -> bool {
+            self.inner.is_sensitive(text)
+        }
+        fn translate(&mut self, text: Cleared) -> Receiver<Result<TransformResult, AiError>> {
+            self.inner.translate(text)
+        }
+        fn write_own_if(&mut self, e: u64, t: Redacted<String>) -> Result<Option<u64>, ()> {
+            self.inner.write_own_if(e, t)
+        }
+        fn paste(&mut self, t: &PasteTarget) -> Result<(), PlatformError> {
+            self.inner.paste(t)
+        }
+        fn restore_candidate(&mut self) -> Option<ClipId> {
+            self.inner.restore_candidate()
+        }
+        fn restore_if(&mut self, e: u64, id: ClipId) -> Result<bool, ()> {
+            self.inner.restore_if(e, id)
+        }
+        fn overlay(&mut self, s: OverlayState) {
+            self.inner.overlay(s);
+        }
+        fn sleep(&mut self, ms: u64) {
+            self.inner.sleep(ms);
+        }
+        fn cancelled(&mut self) -> bool {
+            let c = self.inner.cancelled();
+            if c && !*self.sent {
+                if let Some(tx) = self.inner.translate_tx.as_ref() {
+                    let _ = tx.send(Ok(TransformResult {
+                        text: Redacted(TRANSLATION.into()),
+                    }));
+                    *self.sent = true;
+                }
+            }
+            c
+        }
+    }
+
+    #[test]
+    fn drain_wipes_every_text() {
+        let (tx, rx) = mpsc::channel::<Result<ClaimedText, ClaimError>>();
+        tx.send(Ok(ClaimedText {
+            text: Redacted(SOURCE.into()),
+            seq: 1,
+        }))
+        .unwrap();
+        tx.send(Err(ClaimError::Busy)).unwrap();
+        assert_eq!(drain(&rx), 1);
+        assert!(rx.try_recv().is_err());
+        let mut c = ClaimedText {
+            text: Redacted(SOURCE.into()),
+            seq: 1,
+        };
+        c.wipe();
+        assert!(c.text.0.is_empty());
+        let mut r = TransformResult {
+            text: Redacted(TRANSLATION.into()),
+        };
+        r.wipe();
+        assert!(r.text.0.is_empty());
+    }
+
+    #[test]
+    fn unknown_seq_never_selects_all() {
+        let mut f = Fake::new();
+        f.seq_unknown = true;
+        f.reply_at = ReplyAt::Never;
+        assert_eq!(f.run(), Outcome::Failed(FlowError::NothingCopied));
+        assert_eq!(f.count("send_copy true"), 0);
+        // The plain copy still works when the seq is unknown.
+        let mut f = Fake::new();
+        f.seq_unknown = true;
+        assert_eq!(f.run(), Outcome::Replaced);
         assert_eq!(f.count("send_copy true"), 0);
     }
 

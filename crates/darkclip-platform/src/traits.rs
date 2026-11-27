@@ -141,6 +141,11 @@ pub trait Autostart: Send + Sync {
     fn set_enabled(&self, enabled: bool) -> Result<(), PlatformError>;
 }
 
+/// The reason a `PasteInjector` gives (as `PlatformError::Unsupported`) when it refused because
+/// Shift, Alt, Win or Enter stayed down, so a caller can tell it from the other refusals
+/// (Task 605).
+pub const REFUSAL_KEYS_HELD: &str = "keys still held";
+
 /// The Credential Manager target (or keychain item) that holds the Anthropic API key
 /// (Task 602, D-094). Fixed; never a setting.
 pub const ANTHROPIC_KEY_TARGET: &str = "dark-clipboard/anthropic";

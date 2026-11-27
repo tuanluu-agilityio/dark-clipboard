@@ -389,6 +389,21 @@ impl<B: Backend> Hotkeys<B> {
         self.apply(ShortcutId::Translate, wanted)
     }
 
+    /// Both shortcuts at once (a status refresh). The translate slot goes first, so a
+    /// combination it gives up is free for the popup; when the popup's combination changed and
+    /// the translate shortcut had failed as taken, it is tried again, so a popup that moved
+    /// away from a combination frees it for translate.
+    pub fn apply_all(&mut self, popup: &str, translate: Option<&str>) -> (Status, Status) {
+        let before = self.popup.active.clone();
+        let mut tr = self.apply_translate(translate, popup);
+        let pp = self.apply(ShortcutId::Popup, popup);
+        if self.popup.active != before && tr == Status::Failed(Failure::InUse) {
+            self.translate.last_wanted = None;
+            tr = self.apply_translate(translate, popup);
+        }
+        (pp, tr)
+    }
+
     #[cfg(test)]
     pub fn status(&self, id: ShortcutId) -> Status {
         match id {
@@ -744,6 +759,71 @@ mod tests {
             ]
         );
         assert_eq!(fake.held, vec!["Ctrl+Shift+V", "Ctrl+Alt+T"]);
+    }
+
+    /// A backend that refuses a combination it already holds, like the OS.
+    #[derive(Default)]
+    struct Strict {
+        held: Vec<String>,
+    }
+
+    impl Backend for &mut Strict {
+        fn register(&mut self, s: &Shortcut) -> Result<(), RegError> {
+            if self.held.contains(&s.display()) {
+                return Err(RegError::InUse);
+            }
+            self.held.push(s.display());
+            Ok(())
+        }
+        fn unregister(&mut self, s: &Shortcut) {
+            self.held.retain(|h| *h != s.display());
+        }
+    }
+
+    #[test]
+    fn a_popup_moving_away_frees_its_combination_for_translate() {
+        let mut os = Strict::default();
+        let mut h = Hotkeys::new(&mut os);
+        // Same combination: translate is not registered.
+        assert_eq!(
+            h.apply_all("Ctrl+Alt+T", Some("Ctrl+Alt+T")),
+            (Status::Active, Status::Failed(Failure::SameAsPopup))
+        );
+        // The popup moves away in the same refresh: translate gets Ctrl+Alt+T.
+        assert_eq!(
+            h.apply_all("Ctrl+Shift+V", Some("Ctrl+Alt+T")),
+            (Status::Active, Status::Active)
+        );
+        assert_eq!(
+            h.dispatch(press_id(&ok("Ctrl+Alt+T"))),
+            Some(ShortcutId::Translate)
+        );
+        // Translate taken by the popup's old combination: retried once the popup moves.
+        let mut os = Strict::default();
+        let mut h = Hotkeys::new(&mut os);
+        h.apply_all("Ctrl+Alt+Y", None);
+        // Translate asked for the popup's combination outside a refresh: taken.
+        assert_eq!(
+            h.apply(ShortcutId::Translate, "Ctrl+Alt+Y"),
+            Status::Failed(Failure::InUse)
+        );
+        assert_eq!(
+            h.apply_all("Ctrl+Shift+V", Some("Ctrl+Alt+Y")),
+            (Status::Active, Status::Active)
+        );
+        // Unchanged popup: a taken translate shortcut is not retried on every refresh.
+        let mut os = Strict {
+            held: vec!["Ctrl+Alt+K".into()],
+        };
+        let mut h = Hotkeys::new(&mut os);
+        assert_eq!(
+            h.apply_all("Ctrl+Shift+V", Some("Ctrl+Alt+K")).1,
+            Status::Failed(Failure::InUse)
+        );
+        assert_eq!(
+            h.apply_all("Ctrl+Shift+V", Some("Ctrl+Alt+K")).1,
+            Status::Failed(Failure::InUse)
+        );
     }
 
     #[test]

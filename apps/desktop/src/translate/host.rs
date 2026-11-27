@@ -304,13 +304,29 @@ pub(crate) fn on_press() {
     }
 }
 
+/// Unregisters Esc when dropped: the flow's end, whatever path it takes.
+struct EscGuard(CancelKey);
+
+impl EscGuard {
+    fn arm(key: CancelKey) -> Self {
+        key(true);
+        Self(key)
+    }
+}
+
+impl Drop for EscGuard {
+    fn drop(&mut self) {
+        (self.0)(false);
+    }
+}
+
 fn run_press(h: &'static Host) {
     let t0 = std::time::Instant::now();
     h.cancel.store(false, Ordering::SeqCst);
-    (h.deps.cancel_key)(true);
+    let esc = EscGuard::arm(Arc::clone(&h.deps.cancel_key));
     let injector = lock(&INJECTOR).clone();
     let (outcome, mut m) = imp::run_flow(h, injector);
-    (h.deps.cancel_key)(false);
+    drop(esc);
     m.total_ms = u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX);
     h.deps.log.event("translate", &log_fields(outcome, &m));
 }
@@ -435,11 +451,10 @@ mod imp {
             })
         }
 
-        fn clipboard_seq(&mut self) -> u64 {
-            // 0 when unknown: it can only make the flow skip the select-all retry.
+        fn clipboard_seq(&mut self) -> Option<u64> {
+            // Unknown: the flow then skips the select-all retry.
             self.call(|app| app.ui_clipboard_seq(&Caller::Ui).ok())
                 .flatten()
-                .unwrap_or(0)
         }
 
         fn keys_up(&mut self, wait: u64) -> bool {
@@ -799,6 +814,26 @@ mod tests {
         assert_eq!(first_block(&facts(&ai, true)), None);
         // Not available off Windows at all.
         assert_eq!(available(), cfg!(windows));
+    }
+
+    #[test]
+    fn esc_is_unregistered_when_the_flow_ends_on_any_path() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let c = Arc::clone(&calls);
+        let key: CancelKey = Arc::new(move |on| c.lock().unwrap().push(on));
+        {
+            let _esc = EscGuard::arm(Arc::clone(&key));
+            assert_eq!(*calls.lock().unwrap(), vec![true]);
+        }
+        assert_eq!(*calls.lock().unwrap(), vec![true, false]);
+        // Also when the flow's thread unwinds.
+        let k = Arc::clone(&key);
+        let _ = std::thread::spawn(move || {
+            let _esc = EscGuard::arm(k);
+            panic!("flow failed");
+        })
+        .join();
+        assert_eq!(*calls.lock().unwrap(), vec![true, false, true, false]);
     }
 
     #[test]

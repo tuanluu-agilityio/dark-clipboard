@@ -126,7 +126,7 @@ impl Refusal {
             Refusal::WrongProcess => "target window changed process",
             Refusal::NotNormalWindow => "target is not a normal window",
             Refusal::Elevated => "target runs with higher privileges",
-            Refusal::KeysHeld => "keys still held",
+            Refusal::KeysHeld => darkclip_platform::REFUSAL_KEYS_HELD,
             Refusal::NotForeground => "target did not take the focus",
         }
     }
@@ -390,6 +390,14 @@ impl WindowSys for WinWindows {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn keys_held_refusal_uses_the_shared_reason() {
+        assert_eq!(
+            Refusal::KeysHeld.to_error(),
+            PlatformError::Unsupported(darkclip_platform::REFUSAL_KEYS_HELD)
+        );
+    }
 
     const OWN_PID: u32 = 10;
     const PID: u32 = 42;
