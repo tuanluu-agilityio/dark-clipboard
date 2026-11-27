@@ -25,8 +25,11 @@ mod generated {
 pub use generated::{
     AppRow, Chip, ClipRow, DetailState, FactRow, FileRow, FilterItem, HistoryWindow, KindItem,
     MainWindow, OrgDialogState, OrgStrings, SText, Seg, SettingsWindow, Strings, Theme, TrText,
-    TranslateOverlay, WText, WelcomeWindow,
+    WText, WelcomeWindow,
 };
+// The overlay window is created on Windows only (translate in place, Task 606).
+#[cfg(windows)]
+pub use generated::TranslateOverlay;
 
 mod common;
 mod history_host;
