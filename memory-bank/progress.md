@@ -135,7 +135,7 @@ The owner reviewed the Phase 7 demo on 2026-11-25 ("đã review", D-089); no rel
 | Design, spike, prototype, plan (orchestrator, brainstorming with the owner) | spike/translate-hotkey | orchestrator | opus | done (explore 99,252; builder check 77,593) | | | | 176,845 |
 | 600 Decisions D-093/D-094, GC-08 gate, F-41 | task/600-phase6-decisions | scaffolder | sonnet | done (D-093 consent, D-094 GC-08: exact-path allowlist `update.rs` + `ai_net.rs`, case-sensitive in both scripts; F-41 fixed, gate prints manifest count (8); T-21 added; self-tests recorded) | 73,362 | 69,985 (security-reviewer opus: APPROVED, 6 should-fix applied) | 15,224 | 158,571 |
 | G1 Owner gate: spike rows | — | owner | — | pending (blocks 603) | | | | |
-| 601 darkclip-ai crate | | builder | sonnet | pending | | | | |
+| 601 darkclip-ai crate | task/601-darkclip-ai | builder | sonnet | in progress | | | | |
 | 602 ai_net.rs + SecretStore | | specialist | opus | pending | | | | |
 | 604 Ctrl+C / Ctrl+A injection | | specialist | opus | pending | | | | |
 | 603 Capture claim | | specialist | opus | pending | | | | |
