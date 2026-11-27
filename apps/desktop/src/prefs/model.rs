@@ -550,3 +550,29 @@ pub fn skip_rows(skipped: &BTreeMap<String, u64>) -> Vec<(Msg, u64)> {
         .filter_map(|(name, n)| skip_msg(name).map(|m| (m, *n)))
         .collect()
 }
+
+#[cfg(test)]
+mod ai_round_trip {
+    use super::Draft;
+    use darkclip_app::settings::{AiSettings, Settings};
+
+    /// The form has no translate section yet (Task 606): a save keeps `ai` exactly as loaded.
+    #[test]
+    fn a_save_from_the_form_keeps_the_ai_settings() {
+        let base = Settings {
+            ai: AiSettings {
+                enabled: true,
+                shortcut: "Ctrl+Alt+Y".into(),
+                direction: darkclip_ai::Direction::ToEnglish,
+                model: "claude-haiku-5-5".into(),
+                consent_version: 1,
+            },
+            ..Settings::default()
+        };
+        let mut d = Draft::from_settings(&base);
+        d.shortcut = "Ctrl+Shift+B".into();
+        let saved = d.apply_to(&base).unwrap();
+        assert_eq!(saved.ai, base.ai);
+        assert_eq!(saved.shortcuts.toggle_popup, "Ctrl+Shift+B");
+    }
+}

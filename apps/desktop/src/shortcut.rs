@@ -195,14 +195,28 @@ pub enum RegError {
 pub trait Backend {
     fn register(&mut self, s: &Shortcut) -> Result<(), RegError>;
     fn unregister(&mut self, s: &Shortcut);
+    /// The id the OS reports for a press of `s` (`global-hotkey`'s `HotKey::id()` on
+    /// Windows). The default is [`press_id`], a pure stand-in for tests.
+    fn press_id(&self, s: &Shortcut) -> u32 {
+        press_id(s)
+    }
 }
 
-/// Why the popup shortcut is not working (shown in the tray tooltip and the settings window).
+/// A stable, pure id for `s` (FNV-1a over its display form); the default `Backend::press_id`.
+pub fn press_id(s: &Shortcut) -> u32 {
+    s.display().bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    })
+}
+
+/// Why a shortcut is not working (shown in the tray tooltip and the settings window).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Failure {
     Invalid(ParseError),
     InUse,
     Other,
+    /// The translate shortcut is the popup's combination (Task 605): not registered.
+    SameAsPopup,
 }
 
 /// Where the shortcut stands. A failure never stops the app; `--toggle` and the tray still work.
@@ -210,7 +224,7 @@ pub enum Failure {
 pub enum Status {
     Active,
     Failed(Failure),
-    /// Registration is switched off (tests, platforms without support).
+    /// Registration is switched off (tests, platforms without support, an inactive feature).
     Off,
 }
 
@@ -220,7 +234,11 @@ impl Status {
         match self {
             Status::Active | Status::Off => None,
             Status::Failed(Failure::InUse) => Some(Msg::ShortcutInUse),
-            Status::Failed(Failure::Other) => Some(Msg::ShortcutRegisterFailed),
+            // Task 606 may give "same as the popup shortcut" its own message; until then the
+            // generic one (the log names the exact reason).
+            Status::Failed(Failure::Other | Failure::SameAsPopup) => {
+                Some(Msg::ShortcutRegisterFailed)
+            }
             Status::Failed(Failure::Invalid(e)) => Some(e.msg()),
         }
     }
@@ -233,33 +251,44 @@ impl Status {
             Status::Failed(Failure::InUse) => "in_use",
             Status::Failed(Failure::Other) => "register_failed",
             Status::Failed(Failure::Invalid(_)) => "invalid",
+            Status::Failed(Failure::SameAsPopup) => "same_as_popup",
         }
     }
 }
 
-/// Registers the configured shortcut and follows changes: the old one is unregistered first and
-/// restored when the new one cannot be registered.
-pub struct Registrar<B: Backend> {
-    backend: B,
+/// Which global shortcut (Task 605): the popup's and translate in place's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortcutId {
+    Popup,
+    Translate,
+}
+
+/// The shortcut a press id belongs to, from a table made by [`Hotkeys::press_table`].
+pub fn dispatch(table: &[(ShortcutId, u32)], press: u32) -> Option<ShortcutId> {
+    table.iter().find(|(_, id)| *id == press).map(|(s, _)| *s)
+}
+
+/// One registered shortcut: what is active, what was last asked for, and its status.
+struct Slot {
     active: Option<Shortcut>,
     /// The last configured string that was acted on, so a refresh does not retry a failure.
     last_wanted: Option<String>,
     status: Status,
 }
 
-impl<B: Backend> Registrar<B> {
-    pub fn new(backend: B) -> Self {
+impl Slot {
+    const fn new() -> Self {
         Self {
-            backend,
             active: None,
             last_wanted: None,
             status: Status::Off,
         }
     }
 
-    /// Brings the registration in line with `wanted` and returns the status. Does nothing when
-    /// `wanted` is what was last handled.
-    pub fn apply(&mut self, wanted: &str) -> Status {
+    /// Brings the registration in line with `wanted`: the old one is unregistered first and
+    /// restored when the new one cannot be registered. Does nothing when `wanted` is what was
+    /// last handled.
+    fn apply(&mut self, backend: &mut impl Backend, wanted: &str) -> Status {
         if self.last_wanted.as_deref() == Some(wanted) {
             return self.status;
         }
@@ -278,9 +307,9 @@ impl<B: Backend> Registrar<B> {
         }
         let old = self.active.take();
         if let Some(o) = &old {
-            self.backend.unregister(o);
+            backend.unregister(o);
         }
-        self.status = match self.backend.register(&new) {
+        self.status = match backend.register(&new) {
             Ok(()) => {
                 self.active = Some(new);
                 Status::Active
@@ -288,7 +317,7 @@ impl<B: Backend> Registrar<B> {
             Err(e) => {
                 // Roll back: put the previous shortcut back.
                 if let Some(o) = old {
-                    if self.backend.register(&o).is_ok() {
+                    if backend.register(&o).is_ok() {
                         self.active = Some(o);
                     }
                 }
@@ -301,11 +330,141 @@ impl<B: Backend> Registrar<B> {
         self.status
     }
 
-    /// Unregisters the active shortcut (shutdown).
-    pub fn release(&mut self) {
+    /// Unregisters and reports `status`; the next `apply` acts again whatever it asks for.
+    fn disable(&mut self, backend: &mut impl Backend, status: Status) -> Status {
         if let Some(a) = self.active.take() {
-            self.backend.unregister(&a);
+            backend.unregister(&a);
         }
+        self.last_wanted = None;
+        self.status = status;
+        status
+    }
+}
+
+/// The global shortcuts, keyed by [`ShortcutId`], each with its own status (Task 605
+/// generalizes the Task 203 registrar). Presses are told apart by the OS id
+/// ([`Hotkeys::dispatch`]).
+pub struct Hotkeys<B: Backend> {
+    backend: B,
+    popup: Slot,
+    translate: Slot,
+}
+
+impl<B: Backend> Hotkeys<B> {
+    pub fn new(backend: B) -> Self {
+        Self {
+            backend,
+            popup: Slot::new(),
+            translate: Slot::new(),
+        }
+    }
+
+    /// Registers or changes shortcut `id` to `wanted` and returns its status.
+    pub fn apply(&mut self, id: ShortcutId, wanted: &str) -> Status {
+        let Self {
+            backend,
+            popup,
+            translate,
+        } = self;
+        match id {
+            ShortcutId::Popup => popup.apply(backend, wanted),
+            ShortcutId::Translate => translate.apply(backend, wanted),
+        }
+    }
+
+    /// The translate shortcut: `None` while the feature is not active (not registered,
+    /// `Off`); a combination equal to the popup's `popup` is not registered either
+    /// (`SameAsPopup`). Call it before the popup's `apply` on a change, so a combination the
+    /// translate slot gives up is free for the popup.
+    pub fn apply_translate(&mut self, wanted: Option<&str>, popup: &str) -> Status {
+        let Some(wanted) = wanted else {
+            return self.translate.disable(&mut self.backend, Status::Off);
+        };
+        let same = matches!((parse(wanted), parse(popup)), (Ok(a), Ok(b)) if a == b);
+        if same {
+            return self
+                .translate
+                .disable(&mut self.backend, Status::Failed(Failure::SameAsPopup));
+        }
+        self.apply(ShortcutId::Translate, wanted)
+    }
+
+    /// Both shortcuts at once (a status refresh). The translate slot goes first, so a
+    /// combination it gives up is free for the popup; when the popup's combination changed and
+    /// the translate shortcut had failed as taken, it is tried again, so a popup that moved
+    /// away from a combination frees it for translate.
+    pub fn apply_all(&mut self, popup: &str, translate: Option<&str>) -> (Status, Status) {
+        let before = self.popup.active.clone();
+        let mut tr = self.apply_translate(translate, popup);
+        let pp = self.apply(ShortcutId::Popup, popup);
+        if self.popup.active != before && tr == Status::Failed(Failure::InUse) {
+            self.translate.last_wanted = None;
+            tr = self.apply_translate(translate, popup);
+        }
+        (pp, tr)
+    }
+
+    #[cfg(test)]
+    pub fn status(&self, id: ShortcutId) -> Status {
+        match id {
+            ShortcutId::Popup => self.popup.status,
+            ShortcutId::Translate => self.translate.status,
+        }
+    }
+
+    /// The registered shortcuts with their OS press ids, for the press handler.
+    pub fn press_table(&self) -> Vec<(ShortcutId, u32)> {
+        [
+            (ShortcutId::Popup, &self.popup),
+            (ShortcutId::Translate, &self.translate),
+        ]
+        .into_iter()
+        .filter_map(|(id, slot)| slot.active.as_ref().map(|s| (id, self.backend.press_id(s))))
+        .collect()
+    }
+
+    /// Which registered shortcut a press with OS id `press` belongs to.
+    #[cfg(test)]
+    pub fn dispatch(&self, press: u32) -> Option<ShortcutId> {
+        dispatch(&self.press_table(), press)
+    }
+
+    /// The OS side, for a registration outside the slots (Esc while a translation runs).
+    pub fn backend_mut(&mut self) -> &mut B {
+        &mut self.backend
+    }
+
+    /// Unregisters every active shortcut (shutdown).
+    pub fn release(&mut self) {
+        let Self {
+            backend,
+            popup,
+            translate,
+        } = self;
+        for slot in [popup, translate] {
+            if let Some(a) = slot.active.take() {
+                backend.unregister(&a);
+            }
+        }
+    }
+}
+
+/// The popup shortcut alone: the Task 203 view of [`Hotkeys`], kept for its tests.
+#[cfg(test)]
+pub struct Registrar<B: Backend>(Hotkeys<B>);
+
+#[cfg(test)]
+impl<B: Backend> Registrar<B> {
+    pub fn new(backend: B) -> Self {
+        Self(Hotkeys::new(backend))
+    }
+
+    pub fn apply(&mut self, wanted: &str) -> Status {
+        self.0.apply(ShortcutId::Popup, wanted)
+    }
+
+    pub fn release(&mut self) {
+        self.0.release();
     }
 }
 
@@ -513,5 +672,169 @@ mod tests {
         assert_eq!(Status::Active.warning(), None);
         assert_eq!(Status::Off.warning(), None);
         assert_eq!(Status::Failed(Failure::Other).log_name(), "register_failed");
+    }
+    #[test]
+    fn two_shortcuts_dispatch_by_id() {
+        let mut fake = Fake::default();
+        let mut h = Hotkeys::new(&mut fake);
+        assert_eq!(h.apply(ShortcutId::Popup, "Ctrl+Shift+V"), Status::Active);
+        assert_eq!(
+            h.apply_translate(Some("Ctrl+Alt+T"), "Ctrl+Shift+V"),
+            Status::Active
+        );
+        let popup = press_id(&ok("Ctrl+Shift+V"));
+        let translate = press_id(&ok("Ctrl+Alt+T"));
+        assert_ne!(popup, translate);
+        assert_eq!(h.dispatch(popup), Some(ShortcutId::Popup));
+        assert_eq!(h.dispatch(translate), Some(ShortcutId::Translate));
+        assert_eq!(h.dispatch(press_id(&ok("Ctrl+Alt+Y"))), None);
+        // The table handed to the press handler says the same.
+        let table = h.press_table();
+        assert_eq!(dispatch(&table, popup), Some(ShortcutId::Popup));
+        assert_eq!(dispatch(&table, translate), Some(ShortcutId::Translate));
+        // Each shortcut has its own status.
+        assert_eq!(h.status(ShortcutId::Popup), Status::Active);
+        assert_eq!(h.status(ShortcutId::Translate), Status::Active);
+        h.release();
+        drop(h);
+        assert!(fake.held.is_empty());
+    }
+
+    #[test]
+    fn each_shortcut_has_its_own_in_use_status() {
+        let mut fake = Fake {
+            taken: vec!["Ctrl+Alt+T".into()],
+            ..Fake::default()
+        };
+        let mut h = Hotkeys::new(&mut fake);
+        assert_eq!(h.apply(ShortcutId::Popup, "Ctrl+Shift+V"), Status::Active);
+        let st = h.apply_translate(Some("Ctrl+Alt+T"), "Ctrl+Shift+V");
+        assert_eq!(st, Status::Failed(Failure::InUse));
+        assert_eq!(st.warning(), Some(Msg::ShortcutInUse));
+        assert_eq!(h.status(ShortcutId::Popup), Status::Active);
+        assert_eq!(h.dispatch(press_id(&ok("Ctrl+Alt+T"))), None);
+    }
+
+    #[test]
+    fn translate_not_registered_when_inactive_or_same_as_popup() {
+        let mut fake = Fake::default();
+        let mut h = Hotkeys::new(&mut fake);
+        h.apply(ShortcutId::Popup, "Ctrl+Shift+V");
+        // Inactive: nothing registered, status Off.
+        assert_eq!(h.apply_translate(None, "Ctrl+Shift+V"), Status::Off);
+        // The same combination as the popup (spelled differently): not registered.
+        let st = h.apply_translate(Some("ctrl + shift + v"), "Ctrl+Shift+V");
+        assert_eq!(st, Status::Failed(Failure::SameAsPopup));
+        assert_eq!(st.log_name(), "same_as_popup");
+        assert!(st.warning().is_some());
+        assert_eq!(h.status(ShortcutId::Translate), st);
+        assert_eq!(h.status(ShortcutId::Popup), Status::Active);
+        // Active and different: registered; turning the feature off unregisters it.
+        assert_eq!(
+            h.apply_translate(Some("Ctrl+Alt+T"), "Ctrl+Shift+V"),
+            Status::Active
+        );
+        assert_eq!(h.apply_translate(None, "Ctrl+Shift+V"), Status::Off);
+        assert_eq!(h.dispatch(press_id(&ok("Ctrl+Alt+T"))), None);
+        // Changing it to the popup's combination unregisters it too, and back again works.
+        h.apply_translate(Some("Ctrl+Alt+T"), "Ctrl+Shift+V");
+        assert_eq!(
+            h.apply_translate(Some("Ctrl+Shift+V"), "Ctrl+Shift+V"),
+            Status::Failed(Failure::SameAsPopup)
+        );
+        assert_eq!(
+            h.apply_translate(Some("Ctrl+Alt+T"), "Ctrl+Shift+V"),
+            Status::Active
+        );
+        drop(h);
+        assert_eq!(
+            fake.calls,
+            vec![
+                "reg Ctrl+Shift+V",
+                "reg Ctrl+Alt+T",
+                "unreg Ctrl+Alt+T",
+                "reg Ctrl+Alt+T",
+                "unreg Ctrl+Alt+T",
+                "reg Ctrl+Alt+T",
+            ]
+        );
+        assert_eq!(fake.held, vec!["Ctrl+Shift+V", "Ctrl+Alt+T"]);
+    }
+
+    /// A backend that refuses a combination it already holds, like the OS.
+    #[derive(Default)]
+    struct Strict {
+        held: Vec<String>,
+    }
+
+    impl Backend for &mut Strict {
+        fn register(&mut self, s: &Shortcut) -> Result<(), RegError> {
+            if self.held.contains(&s.display()) {
+                return Err(RegError::InUse);
+            }
+            self.held.push(s.display());
+            Ok(())
+        }
+        fn unregister(&mut self, s: &Shortcut) {
+            self.held.retain(|h| *h != s.display());
+        }
+    }
+
+    #[test]
+    fn a_popup_moving_away_frees_its_combination_for_translate() {
+        let mut os = Strict::default();
+        let mut h = Hotkeys::new(&mut os);
+        // Same combination: translate is not registered.
+        assert_eq!(
+            h.apply_all("Ctrl+Alt+T", Some("Ctrl+Alt+T")),
+            (Status::Active, Status::Failed(Failure::SameAsPopup))
+        );
+        // The popup moves away in the same refresh: translate gets Ctrl+Alt+T.
+        assert_eq!(
+            h.apply_all("Ctrl+Shift+V", Some("Ctrl+Alt+T")),
+            (Status::Active, Status::Active)
+        );
+        assert_eq!(
+            h.dispatch(press_id(&ok("Ctrl+Alt+T"))),
+            Some(ShortcutId::Translate)
+        );
+        // Translate taken by the popup's old combination: retried once the popup moves.
+        let mut os = Strict::default();
+        let mut h = Hotkeys::new(&mut os);
+        h.apply_all("Ctrl+Alt+Y", None);
+        // Translate asked for the popup's combination outside a refresh: taken.
+        assert_eq!(
+            h.apply(ShortcutId::Translate, "Ctrl+Alt+Y"),
+            Status::Failed(Failure::InUse)
+        );
+        assert_eq!(
+            h.apply_all("Ctrl+Shift+V", Some("Ctrl+Alt+Y")),
+            (Status::Active, Status::Active)
+        );
+        // Unchanged popup: a taken translate shortcut is not retried on every refresh.
+        let mut os = Strict {
+            held: vec!["Ctrl+Alt+K".into()],
+        };
+        let mut h = Hotkeys::new(&mut os);
+        assert_eq!(
+            h.apply_all("Ctrl+Shift+V", Some("Ctrl+Alt+K")).1,
+            Status::Failed(Failure::InUse)
+        );
+        assert_eq!(
+            h.apply_all("Ctrl+Shift+V", Some("Ctrl+Alt+K")).1,
+            Status::Failed(Failure::InUse)
+        );
+    }
+
+    #[test]
+    fn an_invalid_translate_shortcut_reports_its_own_error() {
+        let mut fake = Fake::default();
+        let mut h = Hotkeys::new(&mut fake);
+        h.apply(ShortcutId::Popup, "Ctrl+Shift+V");
+        assert_eq!(
+            h.apply_translate(Some("T"), "Ctrl+Shift+V"),
+            Status::Failed(Failure::Invalid(ParseError::NoModifier))
+        );
+        assert_eq!(h.status(ShortcutId::Popup), Status::Active);
     }
 }

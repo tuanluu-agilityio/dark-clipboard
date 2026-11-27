@@ -18,4 +18,5 @@ pub use error::PlatformError;
 pub use traits::{
     Autostart, ChangeSignal, ClipboardAccess, ClipboardMeta, ClipboardMonitor, PasteInjector,
     PasteTarget, PlatformBundle, PlatformFormat, SecretStore, SourceResolver, ANTHROPIC_KEY_TARGET,
+    REFUSAL_KEYS_HELD,
 };
