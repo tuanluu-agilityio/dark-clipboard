@@ -24,8 +24,8 @@ mod generated {
 }
 pub use generated::{
     AppRow, Chip, ClipRow, DetailState, FactRow, FileRow, FilterItem, HistoryWindow, KindItem,
-    MainWindow, OrgDialogState, OrgStrings, SText, Seg, SettingsWindow, Strings, Theme, WText,
-    WelcomeWindow,
+    MainWindow, OrgDialogState, OrgStrings, SText, Seg, SettingsWindow, Strings, Theme, TrText,
+    TranslateOverlay, WText, WelcomeWindow,
 };
 
 mod common;
@@ -34,8 +34,12 @@ mod popup_host;
 mod settings_host;
 mod settings_keys;
 mod shortcut_host;
+mod translate_host;
 mod tray_host;
 mod welcome_host;
+
+/// The backend's window-attributes hook (`renderer::select`, Task 606).
+pub(crate) use translate_host::window_attributes as overlay_window_attributes;
 
 use crate::log::{Log, Val};
 use crate::shortcut::{Failure, Status as ShortcutStatus};
@@ -306,7 +310,14 @@ fn push_status(
         popup_host::set_enter_pastes(enter_pastes);
         popup_host::set_window_prefs(center, close_on_focus_loss);
         welcome_host::set_snapshot(&snapshot, &caps);
-        settings_host::set_snapshot(&snapshot, app_status, caps, sc.warning());
+        settings_host::set_snapshot(
+            &snapshot,
+            app_status,
+            caps,
+            sc.warning(),
+            st.translate.warning(),
+        );
+        translate_host::set_lang(lang);
         history_host::set_remembered(&remembered);
         if let Some(w) = ui.upgrade() {
             set_strings(&w, lang, Some(status), sc);
@@ -651,12 +662,14 @@ pub fn run(
         return false;
     };
     // Translate in place (Task 605): app calls go to the worker; Esc is registered on this
-    // thread while a flow runs; the overlay is a log line until Task 606.
+    // thread while a flow runs. The overlay window (Task 606) is created hidden now, so its
+    // winit window exists (and gets its no-activate styles) before it is first shown.
+    translate_host::install(args_lang, Arc::clone(&log));
     let app_poster = worker.poster();
     crate::translate::host::install(crate::translate::host::HostDeps {
         run_on_app: Arc::new(move |job| app_poster.post_quiet(job)),
         log: Arc::clone(&log),
-        overlay: Arc::new(crate::translate::host::LogOverlay(Arc::clone(&log))),
+        overlay: Arc::new(translate_host::WindowOverlay::new(Arc::clone(&log))),
         cancel_key: Arc::new(|on| {
             let _ = slint::invoke_from_event_loop(move || {
                 let _ = shortcut_host::set_cancel(on);
@@ -724,6 +737,7 @@ pub fn run(
     tray_host::destroy();
     // A running translation stops at its next wait; Esc and both shortcuts are unregistered.
     crate::translate::host::shutdown();
+    translate_host::shutdown();
     shortcut_host::release();
     let failed = worker.failed();
     log.event("stop_requested", &[]);

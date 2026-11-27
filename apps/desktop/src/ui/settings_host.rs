@@ -14,9 +14,16 @@
 //!
 //! Nothing is logged here: settings values, program names and paths are never formatted into
 //! log lines (GC-06).
+//!
+//! Settings > Translate (Task 606): the switch, shortcut, direction and model are part of the
+//! draft and save with the save bar; turning the switch on without consent opens the consent
+//! dialog first. The API key is not in the draft: its Save stores it at once in the OS
+//! credential store (`prefs::translate`), the field is cleared and only the mask is shown back;
+//! the key is never kept in a property or in `Host`. The Test button translates the fixed
+//! sample on its own thread; the answer is shown once, never stored or logged.
 
 use super::settings_keys::{self, EscapeLayer, KeyCtx, SettingsKey};
-use super::{status_msg, Poster, SText, SettingsWindow};
+use super::{status_msg, Poster, SText, SettingsWindow, TrText};
 use super::{AppRow, KindItem};
 use crate::popup::keys::Mods;
 use crate::popup::row::fill;
@@ -28,6 +35,7 @@ use crate::prefs::model::{
 };
 use crate::prefs::sys;
 use crate::prefs::transfer::{self, RestoreFlow};
+use crate::prefs::translate::{self as tr, SwitchStep};
 use crate::update::{self, Outcome, ReleaseUrl, UreqFetch};
 use darkclip_app::api::{AppStatus, Caller, CaptureStatus, StorageStatsView};
 use darkclip_app::settings::{PopupPosition, Settings, UpdateSettings};
@@ -53,6 +61,8 @@ struct Snapshot {
     capture: CaptureStatus,
     caps: Option<Capabilities>,
     shortcut_warning: Option<Msg>,
+    /// Why the translate shortcut is not registered, if it is not (Task 606).
+    translate_warning: Option<Msg>,
     lang: Lang,
 }
 
@@ -83,6 +93,12 @@ struct Host {
     edits: u64,
     /// `edits` when the running save read the form.
     edits_at_save: u64,
+    /// The translate consent of the form: the stored one, or 1 after the dialog (Task 606).
+    ai_consent: u32,
+    /// The mask of the stored API key, read once when the form is filled (never the key).
+    key_mask: Option<String>,
+    /// Bumped by every Test press: a late answer for an older one is dropped.
+    test_gen: u64,
 }
 
 thread_local! {
@@ -313,6 +329,54 @@ fn caps_text(caps: Option<&Capabilities>, lang: Lang) -> String {
 }
 
 /// Sets every label (creation, language change).
+/// The Settings > Translate texts (Task 606).
+fn set_translate_strings(w: &SettingsWindow, lang: Lang) {
+    let s = w.global::<TrText>();
+    let m = |msg: Msg| SharedString::from(t(lang, msg));
+    s.set_section(m(Msg::SettingsSectionTranslate));
+    s.set_section_desc(m(Msg::SettingsDescTranslate));
+    s.set_enable(m(Msg::SettingsTrEnable));
+    s.set_enable_note(m(Msg::SettingsTrEnableNote));
+    s.set_unavailable(m(Msg::SettingsTrUnavailable));
+    s.set_how(m(Msg::SettingsTrHow));
+    s.set_shortcut(m(Msg::SettingsTrShortcut));
+    s.set_shortcut_note(m(Msg::SettingsTrShortcutNote));
+    s.set_shortcut_hint(m(Msg::SettingsShortcutHint));
+    s.set_direction(m(Msg::SettingsTrDirection));
+    s.set_direction_note(m(Msg::SettingsTrDirectionNote));
+    let [auto, en, vi] = tr::direction_labels(lang);
+    s.set_dir_auto(auto.into());
+    s.set_dir_en(en.into());
+    s.set_dir_vi(vi.into());
+    s.set_model(m(Msg::SettingsTrModel));
+    s.set_model_note(m(Msg::SettingsTrModelNote));
+    let [opus, haiku] = tr::model_labels(lang);
+    s.set_model_opus(opus.into());
+    s.set_model_haiku(haiku.into());
+    s.set_key_card(m(Msg::SettingsTrKeyCard));
+    s.set_key(m(Msg::SettingsTrKey));
+    s.set_key_placeholder(m(Msg::SettingsTrKeyPlaceholder));
+    s.set_key_save(m(Msg::SettingsTrKeySave));
+    s.set_key_replace(m(Msg::SettingsTrKeyReplace));
+    s.set_key_remove(m(Msg::SettingsTrKeyRemove));
+    s.set_test(m(Msg::SettingsTrTest));
+    s.set_test_note(m(Msg::SettingsTrTestNote));
+    s.set_test_button(m(Msg::SettingsTrTestButton));
+    s.set_never_card(m(Msg::SettingsTrNeverCard));
+    s.set_never1(m(Msg::SettingsTrNever1));
+    s.set_never1_note(m(Msg::SettingsTrNever1Note));
+    s.set_never2(m(Msg::SettingsTrNever2));
+    s.set_never2_note(m(Msg::SettingsTrNever2Note));
+    s.set_never3(m(Msg::SettingsTrNever3));
+    s.set_never3_note(m(Msg::SettingsTrNever3Note));
+    s.set_never4(m(Msg::SettingsTrNever4));
+    s.set_never4_note(m(Msg::SettingsTrNever4Note));
+    s.set_consent_title(m(Msg::SettingsTrConsentTitle));
+    s.set_consent_on(m(Msg::SettingsTrConsentOn));
+    s.set_cancel(m(Msg::UiCancel));
+    w.set_tr_available(crate::translate::host::available());
+}
+
 fn set_strings(w: &SettingsWindow, lang: Lang, snap: Option<&Snapshot>) {
     let s = w.global::<SText>();
     let m = |msg: Msg| SharedString::from(t(lang, msg));
@@ -431,6 +495,7 @@ fn set_strings(w: &SettingsWindow, lang: Lang, snap: Option<&Snapshot>) {
     s.set_dlg_clear(m(Msg::SettingsDlgClear));
     s.set_dlg_restore(m(Msg::SettingsDlgRestore));
     s.set_clear_row(m(Msg::SettingsClearRow));
+    set_translate_strings(w, lang);
     show_update_view(w, lang);
     w.set_version_text(format!("{} {}", t(lang, Msg::SettingsVersion), about::version()).into());
     // Parts that follow the latest status refresh.
@@ -438,6 +503,9 @@ fn set_strings(w: &SettingsWindow, lang: Lang, snap: Option<&Snapshot>) {
         .map_or((false, None, None, CaptureStatus::Active), |s| {
             (s.read_only, s.caps, s.shortcut_warning, s.capture)
         });
+    let tr_warning = snap.and_then(|s| s.translate_warning);
+    w.global::<TrText>()
+        .set_shortcut_warning(tr_warning.map_or("", |b| t(lang, b)).into());
     s.set_banner(model::banner(read_only).map_or("", |b| t(lang, b)).into());
     s.set_shortcut_warning(warning.map_or("", |b| t(lang, b)).into());
     // Honest about start at login: whether the adapter can register, and whether this process
@@ -514,6 +582,7 @@ impl Host {
             SettingsWindow::set_err_storage,
             SettingsWindow::set_err_kinds,
             SettingsWindow::set_err_app,
+            SettingsWindow::set_err_tr_shortcut,
         ] {
             set(w, SharedString::new());
         }
@@ -555,11 +624,39 @@ impl Host {
         w.set_max_age(d.max_age_days.clone().into());
         w.set_max_storage(d.max_storage_mb.clone().into());
         w.set_new_app(SharedString::new());
+        w.set_tr_enabled(d.ai.enabled);
+        w.set_tr_shortcut(d.ai.shortcut.clone().into());
+        w.set_tr_direction_index(tr::direction_index(d.ai.direction));
+        w.set_tr_model_index(tr::model_index(&d.ai.model));
+        self.ai_consent = d.ai.consent_version;
+        self.fill_key(settings.ai.consent_version);
         self.apps = d.apps;
         self.clear_errors();
         self.refresh_apps();
         // The form shows what is stored: nothing to save.
         self.win.set_dirty(false);
+    }
+
+    /// The key row, read once from the credential store. A user who never accepted the consent
+    /// has no key (the row is disabled until then), so the store is not read for them.
+    fn fill_key(&mut self, consent: u32) {
+        self.key_mask = if consent >= tr::CONSENT_VERSION {
+            secret_store().and_then(|st| tr::stored_mask(st.as_ref()))
+        } else {
+            None
+        };
+        self.show_key();
+        self.win.set_tr_key_input(SharedString::new());
+        self.win.set_tr_key_error(SharedString::new());
+        self.win.set_tr_test_text(SharedString::new());
+        self.win.set_tr_test_busy(false);
+    }
+
+    /// The key row's status and buttons from `key_mask`.
+    fn show_key(&self) {
+        self.win
+            .set_tr_key_status(tr::key_status(self.lang, self.key_mask.as_deref()).into());
+        self.win.set_tr_key_editing(self.key_mask.is_none());
     }
 
     /// The form as a draft.
@@ -596,6 +693,13 @@ impl Host {
             max_items: w.get_max_items().to_string(),
             max_age_days: w.get_max_age().to_string(),
             max_storage_mb: w.get_max_storage().to_string(),
+            ai: model::AiDraft {
+                enabled: w.get_tr_enabled(),
+                consent_version: self.ai_consent,
+                shortcut: w.get_tr_shortcut().to_string(),
+                direction: tr::direction_at(w.get_tr_direction_index()),
+                model: tr::model_at(w.get_tr_model_index()).to_string(),
+            },
         }
     }
 
@@ -633,6 +737,11 @@ impl Host {
         self.picker_rows.set_vec(Vec::new());
         self.picker_names.clear();
         self.win.set_limits_open(false);
+        // A consent dialog closed without an answer leaves the feature off.
+        if self.win.get_tr_consent_open() {
+            self.win.set_tr_consent_open(false);
+            self.win.set_tr_enabled(false);
+        }
         self.picker_gen = self.picker_gen.wrapping_add(1);
         self.refresh_apps();
     }
@@ -648,6 +757,7 @@ impl Host {
                 Field::MaxAgeDays => w.set_err_age(text),
                 Field::MaxStorageMb => w.set_err_storage(text),
                 Field::Kinds => w.set_err_kinds(text),
+                Field::TranslateShortcut => w.set_err_tr_shortcut(text),
             }
         }
     }
@@ -887,6 +997,9 @@ fn create() -> Option<()> {
             login_opened: false,
             edits: 0,
             edits_at_save: 0,
+            ai_consent: 0,
+            key_mask: None,
+            test_gen: 0,
         });
     });
     connect(&w);
@@ -1285,7 +1398,8 @@ fn key_ctx(h: &Host, nav_focused: bool) -> KeyCtx {
             || h.cleanup.is_open()
             || h.restore.is_open()
             || h.apps.pending().is_some()
-            || h.win.get_limits_open(),
+            || h.win.get_limits_open()
+            || h.win.get_tr_consent_open(),
         picker_open: h.win.get_picker_open(),
         list_open: false,
     }
@@ -1497,6 +1611,31 @@ fn connect(w: &SettingsWindow) {
         });
     });
     w.on_escape(escape);
+    w.on_tr_toggled(tr_toggled);
+    w.on_tr_consent_confirm(|| {
+        with_host(|h| {
+            h.ai_consent = h.ai_consent.max(tr::CONSENT_VERSION);
+            h.win.set_tr_consent_open(false);
+            h.win.set_tr_enabled(true);
+            h.mark_dirty();
+            h.set_status(None);
+        });
+    });
+    w.on_tr_consent_cancel(|| {
+        with_host(|h| {
+            h.win.set_tr_consent_open(false);
+            h.win.set_tr_enabled(false);
+        });
+    });
+    w.on_tr_save_key(tr_save_key);
+    w.on_tr_replace_key(|| {
+        with_host(|h| {
+            h.win.set_tr_key_error(SharedString::new());
+            h.win.set_tr_key_editing(true);
+        });
+    });
+    w.on_tr_remove_key(tr_remove_key);
+    w.on_tr_test(tr_test);
     w.on_key(on_key);
     w.on_select_key(|text, alt, open| settings_keys::select_code(text.as_str(), alt, open));
     w.window().on_close_requested(|| {
@@ -1513,6 +1652,7 @@ pub fn set_snapshot(
     status: AppStatus,
     caps: Capabilities,
     shortcut_warning: Option<Msg>,
+    translate_warning: Option<Msg>,
 ) {
     let lang = settings.ui.language;
     SNAP.with(|s| {
@@ -1522,6 +1662,7 @@ pub fn set_snapshot(
             capture: status.capture,
             caps: Some(caps),
             shortcut_warning,
+            translate_warning,
             lang,
         });
     });
@@ -1549,8 +1690,199 @@ pub fn set_snapshot(
             };
             h.kind_rows.set_vec(kinds);
             h.refresh_apps();
+            h.show_key();
         }
     });
+}
+
+// ---- Settings > Translate (Task 606) -------------------------------------------------------
+
+/// The OS credential store of the API key (Windows); `None` where translate is unavailable.
+fn secret_store() -> Option<Box<dyn darkclip_platform::SecretStore>> {
+    #[cfg(windows)]
+    {
+        Some(Box::new(darkclip_windows::WinSecretStore))
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// The Enable switch was clicked (it already shows `on`).
+fn tr_toggled(on: bool) {
+    with_host(|h| match tr::switch_step(on, h.ai_consent) {
+        SwitchStep::AskConsent => {
+            // The switch stays off until "Turn on".
+            h.win.set_tr_enabled(false);
+            let body = tr::consent_body(h.lang, h.win.get_tr_shortcut().as_str());
+            h.win.global::<TrText>().set_consent_body(body.into());
+            h.win.set_tr_consent_open(true);
+        }
+        SwitchStep::On | SwitchStep::Off => {
+            h.mark_dirty();
+            h.set_status(None);
+        }
+    });
+}
+
+/// The key's Save: stored at once (not through the draft), the field cleared either way.
+fn tr_save_key(typed: SharedString) {
+    let Some(store) = secret_store() else {
+        return;
+    };
+    let input = typed.to_string();
+    drop(typed);
+    let saved = with_host(|h| {
+        h.win.set_tr_key_input(SharedString::new());
+        match tr::save_key(store.as_ref(), input) {
+            Ok(mask) => {
+                h.key_mask = Some(mask);
+                h.win.set_tr_key_error(SharedString::new());
+                h.show_key();
+                h.set_status(Some((
+                    t(h.lang, Msg::SettingsTrKeySaved).to_string(),
+                    false,
+                )));
+                true
+            }
+            Err(e) => {
+                h.win.set_tr_key_error(tr::key_error_text(h.lang, e).into());
+                false
+            }
+        }
+    });
+    if saved == Some(true) {
+        key_changed();
+    }
+}
+
+/// The key's Remove.
+fn tr_remove_key() {
+    let Some(store) = secret_store() else {
+        return;
+    };
+    let removed = with_host(|h| match tr::remove_key(store.as_ref()) {
+        Ok(()) => {
+            h.key_mask = None;
+            h.win.set_tr_key_error(SharedString::new());
+            h.show_key();
+            h.set_status(Some((
+                t(h.lang, Msg::SettingsTrKeyRemoved).to_string(),
+                false,
+            )));
+            true
+        }
+        Err(e) => {
+            h.win.set_tr_key_error(tr::key_error_text(h.lang, e).into());
+            false
+        }
+    });
+    if removed == Some(true) {
+        key_changed();
+    }
+}
+
+/// The key was set or removed: the flow's cached presence is dropped and a status refresh
+/// registers or unregisters the shortcut.
+fn key_changed() {
+    crate::translate::host::key_changed();
+    if let Some(p) = with_host(|h| h.poster.clone()) {
+        p.post(|_app: &App| {});
+    }
+}
+
+/// What the Test button found.
+enum TestAnswer {
+    Ok { text: String, ms: u64 },
+    NoKey,
+    Failed(darkclip_ai::AiError),
+}
+
+/// The Test button: the fixed sample, the form's model, on its own thread (never the UI one).
+fn tr_test() {
+    let Some((gen, model)) = with_host(|h| {
+        if h.key_mask.is_none() {
+            h.win
+                .set_tr_test_text(t(h.lang, Msg::SettingsTrTestNoKey).into());
+            return None;
+        }
+        h.test_gen = h.test_gen.wrapping_add(1);
+        h.win.set_tr_test_busy(true);
+        h.win
+            .set_tr_test_text(t(h.lang, Msg::SettingsTrTestRunning).into());
+        Some((h.test_gen, tr::model_at(h.win.get_tr_model_index())))
+    })
+    .flatten() else {
+        return;
+    };
+    let started = std::thread::Builder::new()
+        .name("darkclip-translate-test".into())
+        .spawn(move || {
+            let answer = run_test(model);
+            let _ = slint::invoke_from_event_loop(move || on_test_answer(gen, answer));
+        });
+    if started.is_err() {
+        on_test_answer(gen, TestAnswer::Failed(darkclip_ai::AiError::Network));
+    }
+}
+
+/// Translates [`tr::TEST_SAMPLE`] with the stored key (read here, wiped after use).
+fn run_test(model: &'static str) -> TestAnswer {
+    use darkclip_ai::{AnthropicProvider, Provider, TransformKind, TransformRequest};
+    use darkclip_core::sensitive::wipe_string;
+    let Some(store) = secret_store() else {
+        return TestAnswer::NoKey;
+    };
+    let Some(key) = store
+        .get(darkclip_platform::ANTHROPIC_KEY_TARGET)
+        .ok()
+        .flatten()
+        .filter(|k| !k.0.trim().is_empty())
+    else {
+        return TestAnswer::NoKey;
+    };
+    let t0 = std::time::Instant::now();
+    let provider = AnthropicProvider::new(crate::ai_net::UreqTransport::new(), key, model);
+    let req = TransformRequest {
+        kind: TransformKind::Translate {
+            direction: darkclip_ai::Direction::Auto,
+        },
+        text: darkclip_core::Redacted(tr::TEST_SAMPLE.to_string()),
+    };
+    let answer = provider.transform(&req);
+    drop(provider);
+    let ms = u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX);
+    match answer {
+        Ok(mut r) => {
+            let text = std::mem::take(&mut r.text.0);
+            wipe_string(&mut r.text.0);
+            TestAnswer::Ok { text, ms }
+        }
+        Err(e) => TestAnswer::Failed(e),
+    }
+}
+
+/// Shows the Test answer once (an older press's answer is dropped). Nothing is stored or logged.
+fn on_test_answer(gen: u64, answer: TestAnswer) {
+    with_host(|h| {
+        if h.test_gen != gen {
+            return;
+        }
+        h.win.set_tr_test_busy(false);
+        let text = match &answer {
+            TestAnswer::Ok { text, ms } => tr::test_ok_text(h.lang, text, *ms),
+            TestAnswer::NoKey => t(h.lang, Msg::SettingsTrTestNoKey).to_string(),
+            TestAnswer::Failed(e) => {
+                let (m, _) = super::translate_host::ai_error_parts(*e);
+                t(h.lang, m).to_string()
+            }
+        };
+        h.win.set_tr_test_text(text.into());
+    });
+    if let TestAnswer::Ok { mut text, .. } = answer {
+        darkclip_core::sensitive::wipe_string(&mut text);
+    }
 }
 
 /// The data may have changed: a visible window refreshes its statistics.

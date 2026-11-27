@@ -375,7 +375,7 @@ fn every_icon_button_has_a_tooltip_text() {
 
 #[test]
 fn every_window_has_one_tooltip_layer_as_its_last_child() {
-    for name in ["app.slint", "history.slint"] {
+    for name in ["app.slint", "history.slint", "translate_overlay.slint"] {
         let src = strip_comments(&read(&manifest().join("ui").join(name)));
         assert_eq!(
             src.matches("TooltipLayer {").count(),

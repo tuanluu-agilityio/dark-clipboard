@@ -5,6 +5,11 @@
 import { Theme } from "theme.slint";
 import { Icon, IconName } from "kit/icon.slint";
 import { KeyCap } from "kit/key_cap.slint";
+import { Switch } from "kit/switch.slint";
+import { Select } from "kit/select.slint";
+import { Field } from "kit/field.slint";
+import { Button, ButtonKind } from "kit/button.slint";
+import { ConfirmDialog } from "kit/confirm_dialog.slint";
 
 // One section in the nav: icon and label, role `tab`, focusable with a 2 px ring. The active one
 // has the `selected` fill and a 3 px accent bar.
@@ -387,4 +392,331 @@ export component ProtectedRow inherits Rectangle {
             horizontal-stretch: 1;
         }
     }
+}
+
+// ---- Settings → Translate (Task 606) --------------------------------------------------------
+// The rows of the prototype (`docs/specs/translate-in-place/prototype.html`, part 2). Every
+// string comes from `TrText`, filled by the host from i18n. While the feature is off the cards
+// below the switch are dimmed and their controls disabled (shown, not hidden). The API key is
+// never shown back: after Save the field is cleared and only the masked status is shown.
+
+export global TrText {
+    in property <string> section;
+    in property <string> section-desc;
+    in property <string> enable;
+    in property <string> enable-note;
+    in property <string> unavailable;
+    in property <string> how;
+    in property <string> shortcut;
+    in property <string> shortcut-note;
+    in property <string> shortcut-hint;
+    // Why the translate shortcut is not registered (in use, same as the popup), if it is not.
+    in property <string> shortcut-warning;
+    in property <string> direction;
+    in property <string> direction-note;
+    in property <string> dir-auto;
+    in property <string> dir-en;
+    in property <string> dir-vi;
+    in property <string> model;
+    in property <string> model-note;
+    in property <string> model-opus;
+    in property <string> model-haiku;
+    in property <string> key-card;
+    in property <string> key;
+    in property <string> key-placeholder;
+    in property <string> key-save;
+    in property <string> key-replace;
+    in property <string> key-remove;
+    in property <string> test;
+    in property <string> test-note;
+    in property <string> test-button;
+    in property <string> never-card;
+    in property <string> never1;
+    in property <string> never1-note;
+    in property <string> never2;
+    in property <string> never2-note;
+    in property <string> never3;
+    in property <string> never3-note;
+    in property <string> never4;
+    in property <string> never4-note;
+    in property <string> consent-title;
+    in property <string> consent-body;
+    in property <string> consent-on;
+    in property <string> cancel;
+}
+
+// A field-shaped box with no input: a disabled text field (the kit `Field` has no disabled state).
+component DisabledField inherits Rectangle {
+    in property <string> text;
+    height: 32px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.surface;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.text;
+    Text {
+        x: 10px;
+        width: parent.width - 20px;
+        text: root.text;
+        color: Theme.text-3;
+        font-size: 13px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+// The Enable switch. Turning it on without consent opens the consent dialog (the host decides).
+export component TrEnableCard inherits Card {
+    in-out property <bool> checked;
+    // False off Windows: one line says so and the switch is disabled.
+    in property <bool> available: true;
+    callback toggled(bool);
+
+    SettingRow {
+        first: true;
+        label: TrText.enable;
+        description: root.available ? TrText.enable-note : TrText.unavailable;
+        Switch {
+            label: TrText.enable;
+            description: TrText.enable-note;
+            enabled: root.available;
+            checked <=> root.checked;
+            toggled(v) => {
+                root.toggled(v);
+            }
+        }
+    }
+}
+
+// Shortcut, direction and model.
+export component TrHowCard inherits Card {
+    // The feature is on (and available): the controls are enabled.
+    in property <bool> on;
+    in-out property <string> shortcut;
+    in property <string> error;
+    in-out property <int> direction-index;
+    in-out property <int> model-index;
+    callback edited();
+    callback select-key(string, bool, bool) -> int;
+
+    title: TrText.how;
+    opacity: root.on ? 1 : 0.45;
+
+    SettingRow {
+        first: true;
+        label: TrText.shortcut;
+        description: TrText.shortcut-note;
+        error: root.error != "" ? root.error : (root.on ? TrText.shortcut-warning : "");
+        if root.on: Field {
+            width: 220px;
+            text <=> root.shortcut;
+            placeholder: TrText.shortcut-hint;
+            label: TrText.shortcut;
+            error: root.error;
+            inline-error: false;
+            edited => {
+                root.edited();
+            }
+        }
+        if !root.on: DisabledField {
+            width: 220px;
+            text: root.shortcut;
+        }
+    }
+    SettingRow {
+        label: TrText.direction;
+        description: TrText.direction-note;
+        Select {
+            enabled: root.on;
+            model: [TrText.dir-auto, TrText.dir-en, TrText.dir-vi];
+            current-index <=> root.direction-index;
+            label: TrText.direction;
+            selected(v) => {
+                root.edited();
+            }
+            key(t, a, o) => {
+                return root.select-key(t, a, o);
+            }
+        }
+    }
+    SettingRow {
+        label: TrText.model;
+        description: TrText.model-note;
+        Select {
+            // Wider than the kit's 200 px: the model names are long (settings_budget.rs).
+            width: 260px;
+            enabled: root.on;
+            model: [TrText.model-opus, TrText.model-haiku];
+            current-index <=> root.model-index;
+            label: TrText.model;
+            selected(v) => {
+                root.edited();
+            }
+            key(t, a, o) => {
+                return root.select-key(t, a, o);
+            }
+        }
+    }
+}
+
+// The API key and the Test button.
+export component TrKeyCard inherits Card {
+    in property <bool> on;
+    // The input shows when no key is stored, or after "Replace key...".
+    in property <bool> editing: true;
+    // "No key yet" or "Stored in Windows Credential Manager (sk-ant-...XXXX)".
+    in property <string> key-status;
+    in property <string> key-error;
+    // What the user types; cleared by the host after Save, never filled with a stored key.
+    in-out property <string> key-input;
+    in property <string> test-text;
+    in property <bool> test-busy;
+    callback save-key(string);
+    callback replace-key();
+    callback remove-key();
+    callback test();
+
+    title: TrText.key-card;
+    opacity: root.on ? 1 : 0.45;
+
+    SettingRow {
+        first: true;
+        label: TrText.key;
+        description: root.key-status;
+        error: root.key-error;
+        if root.editing: HorizontalLayout {
+            spacing: 6px;
+            if root.on: Field {
+                width: 220px;
+                text <=> root.key-input;
+                input-type: InputType.password;
+                placeholder: TrText.key-placeholder;
+                label: TrText.key;
+                error: root.key-error;
+                inline-error: false;
+                accepted => {
+                    root.save-key(root.key-input);
+                }
+            }
+            if !root.on: DisabledField {
+                width: 220px;
+                text: TrText.key-placeholder;
+            }
+            Button {
+                text: TrText.key-save;
+                enabled: root.on;
+                clicked => {
+                    root.save-key(root.key-input);
+                }
+            }
+        }
+        if !root.editing: HorizontalLayout {
+            spacing: 6px;
+            Button {
+                text: TrText.key-replace;
+                enabled: root.on;
+                clicked => {
+                    root.replace-key();
+                }
+            }
+            Button {
+                text: TrText.key-remove;
+                kind: ButtonKind.ghost;
+                enabled: root.on;
+                clicked => {
+                    root.remove-key();
+                }
+            }
+        }
+    }
+    SettingRow {
+        label: TrText.test;
+        description: root.test-text != "" ? root.test-text : TrText.test-note;
+        Button {
+            text: TrText.test-button;
+            enabled: root.on && !root.test-busy;
+            clicked => {
+                root.test();
+            }
+        }
+    }
+}
+
+// One thing that is never sent: a lock, a name and a line. Only drawn: nothing to press, no
+// focus, no value anything can write (GC-07 style, like `ProtectedRow`).
+component LockedRow inherits Rectangle {
+    in property <string> label;
+    in property <string> description;
+    in property <bool> first;
+
+    height: lay.preferred-height;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.label + ". " + root.description;
+
+    if !root.first: Rectangle {
+        y: 0px;
+        height: 1px;
+        background: Theme.border;
+    }
+
+    lay := HorizontalLayout {
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 16px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: root.label;
+                color: Theme.text;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.description;
+                color: Theme.text-3;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                name: IconName.lock;
+                size: 14px;
+                tint: Theme.text-3;
+            }
+        }
+    }
+}
+
+// What is never sent: four locked rows with no control.
+export component TrNeverCard inherits Card {
+    title: TrText.never-card;
+    LockedRow {
+        first: true;
+        label: TrText.never1;
+        description: TrText.never1-note;
+    }
+    LockedRow {
+        label: TrText.never2;
+        description: TrText.never2-note;
+    }
+    LockedRow {
+        label: TrText.never3;
+        description: TrText.never3-note;
+    }
+    LockedRow {
+        label: TrText.never4;
+        description: TrText.never4-note;
+    }
+}
+
+// The one-time consent dialog: the kit `ConfirmDialog` with the prototype's title and five lines.
+export component TrConsentDialog inherits ConfirmDialog {
+    title: TrText.consent-title;
+    body: TrText.consent-body;
+    confirm-text: TrText.consent-on;
+    cancel-text: TrText.cancel;
 }

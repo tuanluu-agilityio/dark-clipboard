@@ -42,7 +42,8 @@ pub(crate) fn available() -> bool {
     cfg!(windows)
 }
 
-/// Where the overlay states go. Task 606 replaces [`LogOverlay`] with the window.
+/// Where the overlay states go: the overlay window (`ui::translate_host::WindowOverlay`, Task
+/// 606), which also writes the [`LogOverlay`] line.
 pub(crate) trait OverlaySink: Send + Sync {
     fn show(&self, s: &OverlayState);
 }
@@ -59,7 +60,7 @@ pub(crate) fn overlay_name(s: &OverlayState) -> &'static str {
     }
 }
 
-/// The overlay until Task 606: one content-free log line per state.
+/// One content-free log line per state (kept beside the window since Task 606).
 pub(crate) struct LogOverlay(pub Arc<Log>);
 
 impl OverlaySink for LogOverlay {
@@ -264,7 +265,6 @@ pub(crate) fn shutdown() {
 }
 
 /// The stored key changed (Task 606): the next status refresh reads its presence again.
-#[allow(dead_code)] // called by Task 606's key entry
 pub(crate) fn key_changed() {
     *lock(&KEY_PRESENT) = None;
 }

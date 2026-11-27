@@ -75,6 +75,8 @@ pub fn select() -> Chosen {
         && slint::BackendSelector::new()
             .backend_name("winit".into())
             .renderer_name("software".into())
+            // Only the translate overlay's window is changed (inactive, topmost; Task 606).
+            .with_winit_window_attributes_hook(crate::ui::overlay_window_attributes)
             .select()
             .is_ok();
     outcome(p, selected)

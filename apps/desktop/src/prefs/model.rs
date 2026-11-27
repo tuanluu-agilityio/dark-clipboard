@@ -1,7 +1,7 @@
 //! The settings draft and its rules (Task 207). Pure data and logic, tested on every platform.
 
 use crate::shortcut;
-use darkclip_app::settings::{PopupPosition, Settings};
+use darkclip_app::settings::{AiSettings, PopupPosition, Settings};
 use darkclip_core::i18n::Msg;
 use darkclip_core::{ClipType, ExcludedApp, Lang, Platform, RetentionPolicy, SensitiveHandling};
 use darkclip_platform::Autostart;
@@ -33,6 +33,8 @@ pub enum Field {
     MaxAgeDays,
     MaxStorageMb,
     Kinds,
+    /// The translate-in-place shortcut (Task 606).
+    TranslateShortcut,
 }
 
 /// One refused input: which field, and the message that explains it.
@@ -199,6 +201,32 @@ pub struct Draft {
     pub max_items: String,
     pub max_age_days: String,
     pub max_storage_mb: String,
+    /// Settings → Translate (Task 606). The API key is not part of the draft: it is stored at
+    /// once by its own Save button.
+    pub ai: AiDraft,
+}
+
+/// The translate-in-place part of the form.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AiDraft {
+    pub enabled: bool,
+    /// 1 once the consent dialog was accepted (in this form or before); never lowered.
+    pub consent_version: u32,
+    pub shortcut: String,
+    pub direction: darkclip_ai::Direction,
+    pub model: String,
+}
+
+impl AiDraft {
+    pub fn from_settings(ai: &AiSettings) -> AiDraft {
+        AiDraft {
+            enabled: ai.enabled,
+            consent_version: ai.consent_version,
+            shortcut: ai.shortcut.clone(),
+            direction: ai.direction,
+            model: ai.model_or_default().to_string(),
+        }
+    }
 }
 
 fn parse_in(text: &str, range: &RangeInclusive<u32>, field: Field) -> Result<u32, Problem> {
@@ -236,6 +264,7 @@ impl Draft {
             max_items: s.retention.max_items.to_string(),
             max_age_days: s.retention.max_age_days.to_string(),
             max_storage_mb: s.retention.max_storage_mb.to_string(),
+            ai: AiDraft::from_settings(&s.ai),
         }
     }
 
@@ -276,6 +305,7 @@ impl Draft {
                 msg: Msg::SettingsErrNoKinds,
             });
         }
+        let ai = self.ai_settings(&base.ai, shortcut.as_deref(), &mut problems);
         let Some(shortcut) = shortcut.filter(|_| problems.is_empty()) else {
             return Err(problems);
         };
@@ -298,7 +328,49 @@ impl Draft {
         s.retention.max_items = max_items;
         s.retention.max_age_days = max_age_days;
         s.retention.max_storage_mb = max_storage_mb;
+        s.ai = ai;
         Ok(s)
+    }
+
+    /// The translate settings of the draft merged onto `base`. While the feature is off its rows
+    /// are disabled, so the shortcut is not checked and the stored one is kept. When it is on the
+    /// shortcut must parse and differ from the popup's (`popup` is the popup shortcut's display
+    /// form when it parsed). The consent is never lowered.
+    fn ai_settings(
+        &self,
+        base: &AiSettings,
+        popup: Option<&str>,
+        problems: &mut Vec<Problem>,
+    ) -> AiSettings {
+        let mut ai = base.clone();
+        ai.enabled = self.ai.enabled;
+        ai.consent_version = base.consent_version.max(self.ai.consent_version);
+        ai.direction = self.ai.direction;
+        ai.model = if darkclip_ai::MODELS.contains(&self.ai.model.as_str()) {
+            self.ai.model.clone()
+        } else {
+            darkclip_ai::DEFAULT_MODEL.to_string()
+        };
+        if !self.ai.enabled {
+            return ai;
+        }
+        match shortcut::parse(&self.ai.shortcut) {
+            Ok(s) => {
+                let display = s.display();
+                if popup == Some(display.as_str()) {
+                    problems.push(Problem {
+                        field: Field::TranslateShortcut,
+                        msg: Msg::SettingsTrShortcutSameAsPopup,
+                    });
+                }
+                ai.shortcut = display;
+            }
+            Err(e) => problems.push(Problem {
+                field: Field::TranslateShortcut,
+                msg: e.msg(),
+            }),
+        }
+        ai
     }
 }
 

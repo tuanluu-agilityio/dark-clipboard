@@ -234,11 +234,9 @@ impl Status {
         match self {
             Status::Active | Status::Off => None,
             Status::Failed(Failure::InUse) => Some(Msg::ShortcutInUse),
-            // Task 606 may give "same as the popup shortcut" its own message; until then the
-            // generic one (the log names the exact reason).
-            Status::Failed(Failure::Other | Failure::SameAsPopup) => {
-                Some(Msg::ShortcutRegisterFailed)
-            }
+            Status::Failed(Failure::Other) => Some(Msg::ShortcutRegisterFailed),
+            // Its own message since Task 606 (605 deviation 7).
+            Status::Failed(Failure::SameAsPopup) => Some(Msg::SettingsTrShortcutSameAsPopup),
             Status::Failed(Failure::Invalid(e)) => Some(e.msg()),
         }
     }
@@ -726,7 +724,7 @@ mod tests {
         let st = h.apply_translate(Some("ctrl + shift + v"), "Ctrl+Shift+V");
         assert_eq!(st, Status::Failed(Failure::SameAsPopup));
         assert_eq!(st.log_name(), "same_as_popup");
-        assert!(st.warning().is_some());
+        assert_eq!(st.warning(), Some(Msg::SettingsTrShortcutSameAsPopup));
         assert_eq!(h.status(ShortcutId::Translate), st);
         assert_eq!(h.status(ShortcutId::Popup), Status::Active);
         // Active and different: registered; turning the feature off unregisters it.

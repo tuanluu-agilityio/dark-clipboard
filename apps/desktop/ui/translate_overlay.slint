@@ -1,0 +1,143 @@
+// The translate-in-place overlay (Task 606): a small frameless, always-on-top window near the
+// mouse cursor that says what a press of the translate shortcut is doing. Layout, states and
+// texts follow the approved prototype (`docs/specs/translate-in-place/prototype.html`, `.ov`).
+//
+// It must never take the keyboard focus from the app being translated: the host
+// (`src/ui/translate_host.rs`) gives its OS window `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW |
+// WS_EX_TOPMOST` before it is first shown and shows it without activating it. Nothing here asks
+// for the focus either (the close button does not take it on click).
+//
+// Every text comes from the host (i18n); no text ever names the app or carries clip text.
+
+import { Theme } from "theme.slint";
+import { Icon, IconName } from "kit/icon.slint";
+import { IconButton } from "kit/icon_button.slint";
+import { TipAlign, TooltipLayer } from "kit/tooltip.slint";
+
+export component TranslateOverlay inherits Window {
+    // 0 sending, 1 done, 2 cancelled, 3 left on the clipboard, 4 blocked, 5 failed.
+    in property <int> state;
+    in property <string> message;
+    in property <string> detail;
+    // The icon of every state but sending (sending shows the spinner).
+    in property <IconName> state-icon: IconName.info;
+    // The border and icon tone: 0 neutral, 1 warning, 2 danger (the prototype's `.warn` / `.err`).
+    in property <int> tone;
+    // Accessible name of the close button (i18n).
+    in property <string> cancel-label;
+    // The user asked the system for less motion: the spinner stands still.
+    in property <bool> reduce-motion;
+    // The window is on screen: the spinner turns only then.
+    in property <bool> active;
+    // Bumped by the host each time the window is shown, so the whole window is painted again.
+    in property <int> paint;
+    // The height the content needs (the host places the window with it).
+    out property <length> content-height: lay.preferred-height;
+    // Sending: Esc or the close button cancel. Other states: the close button hides it.
+    callback cancel();
+
+    property <int> tick;
+
+    title: "";
+    no-frame: true;
+    always-on-top: true;
+    width: 340px;
+    height: lay.preferred-height;
+    background: Theme.raised;
+    default-font-size: 12.5px;
+
+    // The whole window, repainted when `paint` changes (the host hides the window behind
+    // Slint's back, and Windows drops what a hidden window drew).
+    Rectangle {
+        background: root.paint >= 0 ? Theme.raised : Theme.raised;
+        border-width: 1px;
+        border-color: root.tone == 2 ? Theme.danger : (root.tone == 1 ? Theme.warning : Theme.border-strong);
+    }
+
+    // The spinner's step, 8 steps a turn; it never runs with reduced motion or while hidden.
+    Timer {
+        interval: 100ms;
+        running: root.state == 0 && root.active && !root.reduce-motion;
+        triggered => {
+            root.tick = Math.mod(root.tick + 1, 8);
+        }
+    }
+
+    lay := HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 4px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        spacing: 8px;
+
+        // Icon column: the 14 px spinner while sending, otherwise the state's icon.
+        VerticalLayout {
+            alignment: start;
+            padding-top: 2px;
+            Rectangle {
+                width: 16px;
+                height: 16px;
+                if root.state == 0: Rectangle {
+                    x: 1px;
+                    y: 1px;
+                    width: 14px;
+                    height: 14px;
+                    border-radius: 7px;
+                    border-width: 2px;
+                    border-color: Theme.border-strong;
+                    accessible-role: none;
+                    // The accent head on the ring: at the top when it stands still.
+                    Rectangle {
+                        width: 4px;
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Theme.accent;
+                        x: 5px + 5px * sin(root.tick * 45deg);
+                        y: 5px - 5px * cos(root.tick * 45deg);
+                    }
+                }
+                if root.state != 0: Icon {
+                    name: root.state-icon;
+                    size: 16px;
+                    tint: root.state == 1 ? Theme.success
+                        : (root.tone == 2 ? Theme.danger : (root.tone == 1 ? Theme.warning : Theme.text-2));
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.message;
+                color: Theme.text;
+                font-size: 12.5px;
+                wrap: word-wrap;
+                accessible-role: text;
+            }
+            if root.detail != "": Text {
+                text: root.detail;
+                color: Theme.text-3;
+                font-size: 11.5px;
+                wrap: word-wrap;
+                accessible-role: text;
+            }
+        }
+
+        VerticalLayout {
+            alignment: start;
+            IconButton {
+                name: IconName.x;
+                label: root.cancel-label;
+                focusable: false;
+                tip-align: TipAlign.end;
+                clicked => {
+                    root.cancel();
+                }
+            }
+        }
+    }
+
+    TooltipLayer { }
+}
