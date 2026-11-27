@@ -14,7 +14,7 @@ if [ "$has_ws" = 1 ]; then
   step "cargo clippy" cargo clippy --workspace --all-targets -- -D warnings
   step "cargo test" cargo test --workspace
   echo "== portable crates must not depend on OS/UI/async crates (GC-01)"
-  for c in darkclip-core darkclip-platform darkclip-storage darkclip-app; do
+  for c in darkclip-core darkclip-ai darkclip-platform darkclip-storage darkclip-app; do
     [ -f "crates/$c/Cargo.toml" ] || continue
     tree="$(cargo tree -p "$c" -e normal --prefix none)" || fail "cargo tree -p $c"
     banned="$(printf '%s\n' "$tree" | grep -E '^(windows|windows-sys|objc2[A-Za-z0-9_-]*|core-foundation[A-Za-z0-9_-]*|x11rb|wayland-[A-Za-z0-9_-]+|gtk[A-Za-z0-9_-]*|slint[A-Za-z0-9_-]*|tauri[A-Za-z0-9_-]*|tokio) v' | sort -u)"
@@ -35,7 +35,7 @@ rs_files() { find crates apps -name '*.rs' -not -path '*/target/*' 2>/dev/null; 
 
 echo "== no logging in privacy-critical modules (GC-06)"
 # Also the platform adapters and the app's image decoder (Task 110).
-hits="$(rs_files | grep -E '^(crates/darkclip-app/src/capture/.*\.rs|crates/darkclip-app/src/image\.rs|crates/darkclip-core/src/policy\.rs|crates/darkclip-core/src/sensitive/.*\.rs|crates/darkclip-(windows|macos|linux)/src/.*\.rs)$' \
+hits="$(rs_files | grep -E '^(crates/darkclip-app/src/capture/.*\.rs|crates/darkclip-app/src/image\.rs|crates/darkclip-ai/src/.*\.rs|crates/darkclip-core/src/policy\.rs|crates/darkclip-core/src/sensitive/.*\.rs|crates/darkclip-(windows|macos|linux)/src/.*\.rs)$' \
   | xargs -r grep -nE '\b(e?println|e?print|dbg)!|\b(log|tracing)::(trace|debug|info|warn|error)!|\b(trace|debug|info|warn|error)!\s*\(' || true)"
 [ -z "$hits" ] || { echo "CHECK FAILED: logging macro:"; echo "$hits"; exit 1; }
 
