@@ -173,6 +173,8 @@ pub struct FakeSecretStore;  // in-memory, in the fake platform
 
 ### 603: capture claim
 
+> **Changed by Task 603 (2026-11-27):** the claim matches the target by `app_id`, not pid: `ClipboardSource` carries the executable identity (`app_id`) resolved at signal time and no pid, and `PasteTarget.app_id` carries the same identity, so `ExpectForeignCopy` takes `app_id: String` instead of `pid: u32`. Two own writes in a row are suppressed by the existing snapshot-truth rule (proved by `two_own_writes_in_a_row_are_never_stored`), not by a set of 4 seqs.
+
 ```rust
 // darkclip-core::policy
 pub fn decide_translate_read(input: &PreReadInput) -> Decision;

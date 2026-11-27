@@ -102,6 +102,8 @@ impl App {
             deadline,
             reply,
         })
+        // The own write's seq is for translate in place (Task 603); not needed here.
+        .map(|_seq| ())
     }
 
     /// The text the editor starts from: the whole plain text, at most `EDIT_MAX_BYTES`.

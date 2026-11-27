@@ -2,6 +2,7 @@
 //! read → classify → kind check → sensitive scan → decode and hash → store.
 
 use super::actor::{size_caps, Actor};
+use super::claim::ClaimedChange;
 use super::pending::{Carried, ExcludedRecent, Pending};
 use super::wipe::{wipe_bytes, wipe_reps, wipe_string};
 use super::SaveOutcome;
@@ -9,7 +10,8 @@ use crate::events::{ApiError, AppEvent, UNAVAILABLE_STORAGE_WRITE};
 use crate::image;
 use darkclip_core::markers::PrivacyMarker;
 use darkclip_core::policy::{
-    decide_pre_read, AvailableFormat, Decision, PreReadInput, SizeCaps, SkipReason,
+    decide_pre_read, decide_translate_read, AvailableFormat, Decision, PreReadInput, SizeCaps,
+    SkipReason,
 };
 use darkclip_core::sensitive::{masked_preview, scan, MaskHint, ScanResult, MAX_SCAN_BYTES};
 use darkclip_core::{
@@ -54,13 +56,24 @@ pub(super) fn gate_without_formats(
 /// `decide_pre_read` with the primary source, then the excluded-app check against every
 /// other source seen for the same change: if any of them is excluded, the change is skipped.
 /// Steps before the app check do not depend on the source, so precedence is unchanged.
+#[cfg(test)]
 pub(super) fn decide_all_sources(
     input: &PreReadInput<'_>,
     others: &[&ClipboardSource],
 ) -> Decision {
-    let d = decide_pre_read(input);
+    decide_all_sources_with(decide_pre_read, input, others)
+}
+
+/// `decide_all_sources` with the given decision (`decide_pre_read`, or
+/// `decide_translate_read` for a claimed change).
+fn decide_all_sources_with(
+    decide: fn(&PreReadInput<'_>) -> Decision,
+    input: &PreReadInput<'_>,
+    others: &[&ClipboardSource],
+) -> Decision {
+    let d = decide(input);
     for other in others {
-        let alt = decide_pre_read(&PreReadInput {
+        let alt = decide(&PreReadInput {
             source: Some(*other),
             ..*input
         });
@@ -72,13 +85,17 @@ pub(super) fn decide_all_sources(
 }
 
 /// The sources of a change (primary and others) that the excluded-app step matches.
-fn excluded_sources(input: &PreReadInput<'_>, others: &[&ClipboardSource]) -> Vec<ClipboardSource> {
+fn excluded_sources(
+    decide: fn(&PreReadInput<'_>) -> Decision,
+    input: &PreReadInput<'_>,
+    others: &[&ClipboardSource],
+) -> Vec<ClipboardSource> {
     input
         .source
         .into_iter()
         .chain(others.iter().copied())
         .filter(|s| {
-            decide_pre_read(&PreReadInput {
+            decide(&PreReadInput {
                 source: Some(*s),
                 ..*input
             }) == Decision::Skip(SkipReason::ExcludedApp)
@@ -171,13 +188,26 @@ impl Actor {
         if self.last_processed_seq == Some(p.seq) {
             return;
         }
+        // `held`: a gate reason a live claim let through (Task 603). The change is then
+        // either claimed or dropped with that reason, exactly as without a claim.
+        let mut held = None;
         if let Some(reason) = self.gate(p.seq) {
-            self.drop_gated(p.seq, reason);
-            return;
+            if !self.claim_lets_through(reason, p.seen_at) {
+                if self.claim.is_some() {
+                    self.claim_gated();
+                }
+                self.drop_gated(p.seq, reason);
+                return;
+            }
+            held = Some(reason);
         }
         let meta: ClipboardMeta = match self.with_retries(|a| a.snapshot_meta()) {
             Ok(m) => m,
             Err(e) => {
+                if let Some(reason) = held {
+                    self.drop_gated(p.seq, reason);
+                    return;
+                }
                 self.last_processed_seq = Some(p.seq);
                 self.capture_failed(&e);
                 return;
@@ -189,8 +219,14 @@ impl Actor {
             return;
         }
         if let Some(reason) = self.gate(seq) {
-            self.drop_gated(seq, reason);
-            return;
+            if !self.claim_lets_through(reason, p.seen_at) {
+                if self.claim.is_some() {
+                    self.claim_gated();
+                }
+                self.drop_gated(seq, reason);
+                return;
+            }
+            held = Some(reason);
         }
         let (carried, carried_others) = match self.carried.take() {
             Some(c) if c.seq == seq => (c.primary, c.others),
@@ -245,6 +281,22 @@ impl Actor {
             }
         }
         let others: Vec<&ClipboardSource> = others.iter().collect();
+        // Task 603: decided from the snapshot's metadata only, before anything is read. A
+        // snapshot newer than the signalled change counts as first seen now.
+        let claimed = self.claim.is_some() && {
+            let seen_at = if newer {
+                std::time::Instant::now()
+            } else {
+                p.seen_at
+            };
+            self.claims(source.as_ref(), seen_at)
+        };
+        if !claimed {
+            if let Some(reason) = held {
+                self.drop_gated(seq, reason);
+                return;
+            }
+        }
         let available: Vec<AvailableFormat> = meta
             .formats
             .iter()
@@ -270,12 +322,28 @@ impl Actor {
             enabled_kinds: &self.policy.capture_kinds,
             caps: size_caps(&self.retention),
         };
-        let decision = decide_all_sources(&input, &others);
+        let decide = if claimed {
+            decide_translate_read
+        } else {
+            decide_pre_read
+        };
+        let decision = decide_all_sources_with(decide, &input, &others);
         let excluded_now = if decision == Decision::Skip(SkipReason::ExcludedApp) {
-            excluded_sources(&input, &others)
+            excluded_sources(decide, &input, &others)
         } else {
             Vec::new()
         };
+        if claimed {
+            // Handed to the requester, never stored.
+            self.finish_claim(ClaimedChange {
+                seq,
+                decision,
+                excluded_now,
+                markers: &meta.markers,
+                signal_at: p.signal_at,
+            });
+            return;
+        }
         let plan = match decision {
             Decision::Read(plan) => plan,
             Decision::Skip(SkipReason::NothingReadable) => {
@@ -331,11 +399,12 @@ impl Actor {
         // NoCloud (`CanUploadToCloudClipboard` = 0): stored, but never exported
         // (privacy-design §3; Task 405).
         let no_export = meta.markers.contains(&PrivacyMarker::NoCloud);
-        self.store(reps, source, now, no_export);
+        self.store(seq, reps, source, now, no_export);
     }
 
     fn store(
         &mut self,
+        seq: u64,
         reps: Vec<RawRepresentation>,
         source: Option<ClipboardSource>,
         now: Timestamp,
@@ -344,7 +413,11 @@ impl Actor {
         match self.prepare(reps, source, now) {
             Ok(mut new) => {
                 new.no_export = no_export;
-                self.insert_new(new);
+                if let Some(UpsertOutcome::Inserted(id) | UpsertOutcome::Bumped(id)) =
+                    self.insert_new(new)
+                {
+                    self.last_stored = Some((seq, id));
+                }
             }
             Err(reason) => self.skip(reason),
         }

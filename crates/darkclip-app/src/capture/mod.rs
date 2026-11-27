@@ -19,6 +19,7 @@
 //! logging).
 
 mod actor;
+mod claim;
 mod copy_back;
 mod maintenance;
 mod organize;
@@ -33,6 +34,7 @@ mod wipe;
 use crate::config::CaptureConfig;
 use crate::events::{ApiError, AppEvent, SkipCounters};
 use actor::Actor;
+pub use claim::{ClaimError, CLAIM_WINDOW_MS};
 use darkclip_core::{
     CaptureMode, ClipId, Clock, CollectionId, Lang, PrivacyPolicy, RetentionPolicy,
 };
@@ -63,11 +65,24 @@ pub enum ActorCommand {
         reply: Sender<Result<(), ApiError>>,
     },
     /// "Copy as...": writes this text to the clipboard as our own write (never captured,
-    /// never stored; Task 404).
+    /// never stored; Task 404). Replies with the seq of that write (Task 603).
     CopyText {
         text: darkclip_core::Redacted<String>,
         deadline: Instant,
-        reply: Sender<Result<(), ApiError>>,
+        reply: Sender<Result<u64, ApiError>>,
+    },
+    /// Translate in place (Task 603): arms the claim slot for `app_id` for `CLAIM_WINDOW_MS`.
+    /// The next change from that app (or its F-14 ownerless flush) is replied as text and
+    /// never stored. Every privacy skip still wins; a second request while one is armed
+    /// replies `Busy`; no change in time replies `Expired`.
+    ExpectForeignCopy {
+        app_id: String,
+        reply: Sender<Result<darkclip_core::Redacted<String>, ClaimError>>,
+    },
+    /// The stored clip the clipboard holds now, if any: `Some` only when the OS seq equals the
+    /// last processed seq and that change was stored (inserted or deduplicated).
+    RestoreCandidate {
+        reply: Sender<Option<ClipId>>,
     },
     /// "Save as new clip": the edited text goes through capture's classify, kind check,
     /// sensitive handling and size limit (Task 404). Not gated by the capture mode: the user
@@ -213,6 +228,12 @@ struct RetentionHooks {
     /// while one runs (Task 405).
     #[cfg(test)]
     transfer_stall_ms: std::sync::atomic::AtomicU64,
+    /// Tests: the claim window in milliseconds (0 = `CLAIM_WINDOW_MS`).
+    #[cfg(test)]
+    claim_window_ms: std::sync::atomic::AtomicU64,
+    /// Tests: the next signal for each of these seqs is lost (removed when it arrives).
+    #[cfg(test)]
+    drop_signal: Mutex<Vec<u64>>,
 }
 
 /// What the actor's queue carries.
@@ -294,6 +315,8 @@ impl CaptureHandle {
             pending: None,
             carried: None,
             excluded_recent: None,
+            claim: None,
+            last_stored: None,
             next_retention: Instant::now(),
             fts_merge_due: None,
             next_expiry: None,

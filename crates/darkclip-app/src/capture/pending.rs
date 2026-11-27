@@ -27,6 +27,9 @@ pub(super) struct Pending {
     pub(super) signal_at: Timestamp,
     /// Signal time of this change's latest signal.
     pub(super) last_signal_at: Timestamp,
+    /// When the actor dequeued this change's first signal (Task 603: a claim covers only
+    /// changes first seen while it is armed).
+    pub(super) seen_at: Instant,
     /// F-14 rule 1: every source of the changes this burst superseded before they were
     /// inspected. Checked against the excluded apps when this change has no source of its own.
     pub(super) superseded: Vec<ClipboardSource>,
@@ -109,12 +112,30 @@ impl Actor {
                 }
             }
         }
-        // Paused, private, disabled or our own write: no clipboard access at all.
-        if let Some(reason) = self.gate(s.seq) {
-            self.drop_gated(s.seq, reason);
-            return;
+        #[cfg(test)]
+        {
+            let mut lost = self
+                .hooks
+                .drop_signal
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some(i) = lost.iter().position(|q| *q == s.seq) {
+                lost.remove(i);
+                return;
+            }
         }
         let now = Instant::now();
+        // Paused, private, disabled or our own write: no clipboard access at all. A live
+        // claim (Task 603) lets Paused and Disabled through to its decision, never Private.
+        if let Some(reason) = self.gate(s.seq) {
+            if !self.claim_lets_through(reason, now) {
+                if self.claim.is_some() {
+                    self.claim_gated();
+                }
+                self.drop_gated(s.seq, reason);
+                return;
+            }
+        }
         if let Some(p) = &self.pending {
             if p.seq == s.seq {
                 let due = self.due_at(now, p.first_at);
@@ -159,6 +180,7 @@ impl Actor {
             burst_signal_at,
             signal_at: s.at,
             last_signal_at: s.at,
+            seen_at: now,
             superseded,
             heir,
         });

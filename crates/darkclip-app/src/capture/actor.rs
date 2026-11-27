@@ -1,6 +1,7 @@
 //! The actor thread: start-up, the run loop, the settings/self-write gate, platform retries
 //! and command handling. It owns the platform access, the monitor and the storage handle.
 
+use super::claim::ClaimSlot;
 use super::pending::{Carried, ExcludedRecent, Pending};
 use super::pipeline::gate_without_formats;
 use super::{ActorCommand, Msg, RetentionHooks};
@@ -60,6 +61,10 @@ pub(super) struct Actor {
     pub(super) carried: Option<Carried>,
     /// F-14 rule 3: the last excluded-app skip, for a following ownerless flush.
     pub(super) excluded_recent: Option<ExcludedRecent>,
+    /// Task 603: the armed claim of translate in place, if any.
+    pub(super) claim: Option<ClaimSlot>,
+    /// The last captured change that was stored (inserted or deduplicated): its seq and clip.
+    pub(super) last_stored: Option<(u64, ClipId)>,
     pub(super) next_retention: Instant,
     /// Clock time by which pending search-index changes must be merged: set when the first one
     /// becomes pending, never pushed back by later evictions or retention runs (F-20).
@@ -116,6 +121,9 @@ impl Actor {
             if let Some(p) = &self.pending {
                 wake = wake.min(p.due);
             }
+            if let Some(d) = self.claim_wake() {
+                wake = wake.min(d);
+            }
             match rx.recv_timeout(wake.saturating_duration_since(Instant::now())) {
                 Ok(msg) => {
                     if !self.handle(msg) {
@@ -151,6 +159,9 @@ impl Actor {
                 if let Some(p) = self.pending.take() {
                     self.process(p);
                 }
+            }
+            if self.claim.is_some() {
+                self.expire_claim_if_due(Instant::now());
             }
             let tick = self.next_retention <= now;
             if tick || self.expiry_due() {
@@ -279,6 +290,10 @@ impl Actor {
                     self.copy_text(text.0)
                 };
                 let _ = reply.send(r);
+            }
+            ActorCommand::ExpectForeignCopy { app_id, reply } => self.arm_claim(app_id, reply),
+            ActorCommand::RestoreCandidate { reply } => {
+                let _ = reply.send(self.restore_candidate());
             }
             ActorCommand::SaveText {
                 text,

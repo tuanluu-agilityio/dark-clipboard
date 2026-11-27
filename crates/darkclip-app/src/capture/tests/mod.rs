@@ -1,6 +1,7 @@
 //! Capture actor tests, split by topic. This file holds the shared harness (fake platform,
 //! test clock, temporary storage) and helpers; each topic file starts with `use super::*;`.
 
+mod claim;
 mod commands;
 mod copy_back;
 mod debounce;
