@@ -1,6 +1,6 @@
 # Progress and token ledger
 
-Updated: 2026-11-25 (Phase 7 demo reviewed by the owner)
+Updated: 2026-11-27 (Phase 6 approved; Task 600 in progress)
 
 Statuses: `pending`, `in progress`, `review`, `done`. Tokens are the numbers subagents report when they finish. Orchestrator tokens cannot be measured per task.
 
@@ -127,6 +127,23 @@ The owner reviewed the Phase 7 demo on 2026-11-25 ("đã review", D-089); no rel
 | 715 Project website EN/VI + GitHub Pages (owner request, D-092; prototype by orchestrator, reviewed by owner) | task/715-website | scaffolder | sonnet | done (`website/index.html` one file, self-hosted Geist/Geist Mono with vietnamese subset, EN/VI switch, `pages.yml` with an external-load check; owner must review the VI copy) | 150,471 | 71,507 + 2,461 re-review (reviewer sonnet: APPROVED; should-fix duplicate id fixed, KeePassXC wording aligned to the matrix) | 3,689 | 228,128 |
 | 716 Pages deploy fix (hotfix, orchestrator) | task/716-pages-actions | orchestrator | opus | done (first deploy after PR #66 failed twice: `deploy-pages@v4` found 0 artifacts although `upload-pages-artifact@v3` finalized one; bumped to configure-pages@v6, upload-pages-artifact@v5, deploy-pages@v5, the current majors) | | reviewer sonnet (resumed) | | |
 | 717 Pages deploy: build and deploy jobs (hotfix, orchestrator) | task/717-pages-two-jobs | orchestrator | opus | done (716 did not fix it: `deploy-pages@v5` still found 0 artifacts in the same job right after the upload (run 45569260331); split into a `build` job (check, configure, upload) and a `deploy` job (`needs: build`), the layout of GitHub's own Pages starter workflows) | | reviewer sonnet (resumed) | | |
+
+## Phase 6: Translate in place (opens P2; approved 2026-11-27, plan `docs/plans/phase-6-translate-in-place.md`)
+
+| Task | Branch | Agent | Model | Status | Tokens (impl) | Tokens (review) | Tokens (fix) | Total |
+|---|---|---|---|---|---|---|---|---|
+| Design, spike, prototype, plan (orchestrator, brainstorming with the owner) | spike/translate-hotkey | orchestrator | opus | done (explore 99,252; builder check 77,593) | | | | 176,845 |
+| 600 Decisions D-093/D-094, GC-08 gate, F-41 | task/600-phase6-decisions | scaffolder | sonnet | in progress | | | | |
+| G1 Owner gate: spike rows | — | owner | — | pending (blocks 603) | | | | |
+| 601 darkclip-ai crate | | builder | sonnet | pending | | | | |
+| 602 ai_net.rs + SecretStore | | specialist | opus | pending | | | | |
+| 604 Ctrl+C / Ctrl+A injection | | specialist | opus | pending | | | | |
+| 603 Capture claim | | specialist | opus | pending | | | | |
+| I1 Integration review 602-604 | | reviewer | sonnet | pending | | | | |
+| 605 Flow controller + settings | | specialist | opus | pending | | | | |
+| 606 Overlay, Settings → Translate, consent | | builder | sonnet | pending | | | | |
+| 607 Verification + docs | | platform-verifier | sonnet | pending | | | | |
+| 608 Phase review | | specialist | opus | pending | | | | |
 
 Phase 7 complete 2026-11-25 (709 APPROVED; budgets per D-086; every visual, keyboard, Narrator and DPI check is an untested owner row, see the "Phase 7 demo checklist" in `docs/testing/platform-checklist.md`).
 
