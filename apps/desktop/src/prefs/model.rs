@@ -537,6 +537,7 @@ pub fn skip_msg(name: &str) -> Option<Msg> {
         "nothing_readable" => Msg::SkipNothingReadable,
         "sensitive" => Msg::SkipSensitive,
         "busy" => Msg::SkipBusy,
+        "translate_source" => Msg::SkipTranslateSource,
         _ => return None,
     })
 }

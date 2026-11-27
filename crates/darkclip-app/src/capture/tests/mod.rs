@@ -2,6 +2,7 @@
 //! test clock, temporary storage) and helpers; each topic file starts with `use super::*;`.
 
 mod claim;
+mod claim_contract;
 mod commands;
 mod copy_back;
 mod debounce;

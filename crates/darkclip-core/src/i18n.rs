@@ -512,6 +512,7 @@ messages! {
     SkipNothingReadable => ("Nothing readable", "Không có gì đọc được"),
     SkipSensitive => ("Sensitive data", "Dữ liệu nhạy cảm"),
     SkipBusy => ("Clipboard busy", "Bảng nhớ tạm bận"),
+    SkipTranslateSource => ("Translate in place source", "Nguồn dịch tại chỗ"),
     SettingsClear => ("Clear history...", "Xóa lịch sử..."),
     SettingsClearConfirm => (
         "Delete {n} clips from the history? This cannot be undone.",

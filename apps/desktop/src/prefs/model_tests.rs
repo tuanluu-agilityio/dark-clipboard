@@ -316,6 +316,7 @@ fn every_skip_reason_has_a_message_and_zero_counts_are_hidden() {
         NothingReadable,
         Sensitive,
         Busy,
+        TranslateSource,
     ] {
         assert!(skip_msg(r.name()).is_some(), "{}", r.name());
     }

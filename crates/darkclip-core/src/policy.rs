@@ -55,6 +55,10 @@ pub enum SkipReason {
     Sensitive,
     /// Set by the actor.
     Busy,
+    /// Set by the actor (Task 603b): a copy that belongs to a translate-in-place source
+    /// already handed to the flow (its late OLE flush, or the same app's follow-up copy of
+    /// the select-all retry). Never stored.
+    TranslateSource,
 }
 
 impl SkipReason {
@@ -74,6 +78,7 @@ impl SkipReason {
             Self::NothingReadable => "nothing_readable",
             Self::Sensitive => "sensitive",
             Self::Busy => "busy",
+            Self::TranslateSource => "translate_source",
         }
     }
 }
@@ -287,6 +292,7 @@ mod tests {
             (SkipReason::NothingReadable, "nothing_readable"),
             (SkipReason::Sensitive, "sensitive"),
             (SkipReason::Busy, "busy"),
+            (SkipReason::TranslateSource, "translate_source"),
         ];
         for (reason, name) in expected {
             assert_eq!(reason.name(), name);

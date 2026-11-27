@@ -2,12 +2,48 @@
 //! is never captured again (rule 5).
 
 use super::actor::{map_platform, Actor};
-use super::wipe::wipe_reps;
+use super::wipe::{wipe_reps, wipe_string};
 use crate::events::{map_storage, ApiError};
 use darkclip_core::{ClipId, Mime, RawRepresentation};
 
 impl Actor {
     pub(super) fn copy_back(&mut self, id: &ClipId, plain: bool) -> Result<(), ApiError> {
+        self.write_clip(id, plain)?;
+        self.storage.mark_used(id).map_err(|e| map_storage(&e))
+    }
+
+    /// `RestoreIf` (Task 603b): `copy_back(id, false)` only while the clipboard still holds
+    /// `expect_seq`, and without `mark_used` (a restore is not a use).
+    pub(super) fn restore_if(&mut self, expect_seq: u64, id: &ClipId) -> Result<bool, ApiError> {
+        if self.access.sequence().map_err(|e| map_platform(&e))? != expect_seq {
+            return Ok(false);
+        }
+        self.write_clip(id, false)?;
+        Ok(true)
+    }
+
+    /// `CopyTextIf` (Task 603b): `copy_text` only while the clipboard still holds
+    /// `expect_seq`. The text is wiped on every path.
+    pub(super) fn copy_text_if(
+        &mut self,
+        expect_seq: u64,
+        mut text: String,
+    ) -> Result<Option<u64>, ApiError> {
+        match self.access.sequence() {
+            Ok(seq) if seq == expect_seq => self.copy_text(text).map(Some),
+            Ok(_) => {
+                wipe_string(&mut text);
+                Ok(None)
+            }
+            Err(e) => {
+                wipe_string(&mut text);
+                Err(map_platform(&e))
+            }
+        }
+    }
+
+    /// Writes stored clip `id` (`plain`: text/plain only) as our own write.
+    fn write_clip(&mut self, id: &ClipId, plain: bool) -> Result<(), ApiError> {
         let clip = self
             .storage
             .get_clip(id)
@@ -39,7 +75,7 @@ impl Actor {
             return Err(ApiError::InvalidArgument("clip has no plain text"));
         }
         self.write_own(reps)?;
-        self.storage.mark_used(id).map_err(|e| map_storage(&e))
+        Ok(())
     }
 
     /// "Copy as..." (Task 404): writes `text` as plain text, as our own write. Nothing is

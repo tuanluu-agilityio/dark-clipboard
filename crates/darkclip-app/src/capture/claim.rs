@@ -26,8 +26,28 @@ use std::sync::mpsc::Sender;
 use std::sync::PoisonError;
 use std::time::{Duration, Instant};
 
-/// How long an armed slot waits for the target's change (covers the Ctrl+A, Ctrl+C retry).
-pub const CLAIM_WINDOW_MS: u64 = 600;
+/// How long an armed slot waits for the target's change (covers the Ctrl+A, Ctrl+C retry
+/// and a slow app; Task 603b, I1 R1).
+pub const CLAIM_WINDOW_MS: u64 = 1_000;
+
+/// The flow's receive timeout for a claim reply is `CLAIM_WINDOW_MS` plus this: a change seen
+/// just before the deadline still waits for its burst cap (500 ms) and the read retries.
+pub const CLAIM_REPLY_SLACK_MS: u64 = 800;
+
+/// The text of a claimed change and the seq it was read at (the snapshot's seq), so the flow
+/// can write only over that exact change (`CopyTextIf`). `Debug` prints the seq only.
+pub struct ClaimedText {
+    pub text: Redacted<String>,
+    pub seq: u64,
+}
+
+impl std::fmt::Debug for ClaimedText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClaimedText")
+            .field("seq", &self.seq)
+            .finish()
+    }
+}
 
 /// Why a claim gave no text. Carries no content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +68,7 @@ pub enum ClaimError {
     Busy,
 }
 
-pub(super) type ClaimReply = Sender<Result<Redacted<String>, ClaimError>>;
+pub(super) type ClaimReply = Sender<Result<ClaimedText, ClaimError>>;
 
 /// The one armed claim.
 pub(super) struct ClaimSlot {
@@ -59,18 +79,34 @@ pub(super) struct ClaimSlot {
 }
 
 impl ClaimSlot {
+    pub(super) fn new(
+        app_id: String,
+        armed_at: Instant,
+        window: Duration,
+        reply: ClaimReply,
+    ) -> Self {
+        Self {
+            app_id,
+            armed_at,
+            deadline: armed_at.checked_add(window).unwrap_or(armed_at),
+            reply,
+        }
+    }
+
     /// A change whose first signal reached the actor at `at` may be claimed by this slot:
     /// after arming (a change already pending before is never claimed) and before the
     /// deadline.
-    fn covers(&self, at: Instant) -> bool {
+    pub(super) fn covers(&self, at: Instant) -> bool {
         self.armed_at <= at && at < self.deadline
     }
 }
 
-/// The last claimed change, for its late ownerless OLE flush (skip only, never stored).
+/// The last claimed change, for its late ownerless OLE flush and the same app's follow-up
+/// copy (skip only, never stored).
 pub(super) struct ClaimedRecent {
     seq: u64,
     signal_at: Timestamp,
+    app_id: String,
 }
 
 /// `app_id` match: case-insensitive for Windows exe names (as the excluded-app match),
@@ -115,12 +151,7 @@ impl Actor {
             let _ = reply.send(Err(ClaimError::Busy));
             return;
         }
-        self.claim = Some(ClaimSlot {
-            app_id,
-            armed_at: now,
-            deadline: now.checked_add(self.claim_window()).unwrap_or(now),
-            reply,
-        });
+        self.claim = Some(ClaimSlot::new(app_id, now, self.claim_window(), reply));
     }
 
     /// The slot cannot expire while a change it covers is still pending: that change is
@@ -212,14 +243,44 @@ impl Actor {
         self.claimed_recent = Some(ClaimedRecent {
             seq: change.seq,
             signal_at: change.signal_at,
+            app_id: slot.app_id.clone(),
         });
-        let r = self.claim_outcome(change);
+        let seq = change.seq;
+        let r = self
+            .claim_outcome(change)
+            .map(|text| ClaimedText { text, seq });
         if let Err(e) = slot.reply.send(r) {
             // The requester is gone: the text goes nowhere and is wiped.
-            if let Ok(mut text) = e.0 {
-                wipe_string(&mut text.0);
+            if let Ok(mut claimed) = e.0 {
+                wipe_string(&mut claimed.text.0);
             }
         }
+    }
+
+    /// Task 603b (I1 M4): a change whose primary source is the app of the last claimed
+    /// change, 1..=`MAX_HEIR_SEQ_GAP` seqs after it, at most `max_burst_wait` plus
+    /// `CLAIM_WINDOW_MS` after its first signal (signal time), with no self-write in between:
+    /// the select-all retry's second copy of the same source text. Skip only; never stored.
+    pub(super) fn recent_claim_follow_up(
+        &self,
+        source: Option<&ClipboardSource>,
+        seq: u64,
+        signal_at: Timestamp,
+    ) -> bool {
+        let (Some(r), Some(source)) = (&self.claimed_recent, source) else {
+            return false;
+        };
+        let cap_ms = u64::try_from(self.max_burst_wait.as_millis())
+            .unwrap_or(u64::MAX)
+            .saturating_add(CLAIM_WINDOW_MS);
+        same_app(source, &r.app_id)
+            && seq
+                .checked_sub(r.seq)
+                .is_some_and(|gap| (1..=MAX_HEIR_SEQ_GAP).contains(&gap))
+            && !self
+                .last_self_write_seq
+                .is_some_and(|w| w > r.seq && w <= seq)
+            && within_ms_or_earlier(r.signal_at, signal_at, cap_ms)
     }
 
     /// An ownerless change with the OLE signature 1..=`MAX_HEIR_SEQ_GAP` seqs after the last

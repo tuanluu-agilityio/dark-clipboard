@@ -3,10 +3,10 @@ use super::*;
 // Task 603: the capture claim for translate in place. The source copy is handed to the
 // requester and never stored; every privacy skip still wins.
 
-type ClaimRx = Receiver<Result<darkclip_core::Redacted<String>, ClaimError>>;
+pub(super) type ClaimRx = Receiver<Result<ClaimedText, ClaimError>>;
 
 /// Arms the claim slot for `app_id`.
-fn arm(h: &H, app_id: &str) -> ClaimRx {
+pub(super) fn arm(h: &H, app_id: &str) -> ClaimRx {
     let (tx, rx) = mpsc::channel();
     h.cap()
         .send(ActorCommand::ExpectForeignCopy {
@@ -19,18 +19,18 @@ fn arm(h: &H, app_id: &str) -> ClaimRx {
 
 /// A window long enough that a slow machine never expires a claim the test expects to
 /// succeed (F-16 / F-19). Read by the actor when the slot is armed.
-fn long_window(h: &H) {
+pub(super) fn long_window(h: &H) {
     h.cap()
         .hooks
         .claim_window_ms
         .store(30_000, Ordering::SeqCst);
 }
 
-fn claim_reply(rx: &ClaimRx) -> Result<String, ClaimError> {
-    rx.recv_timeout(WAIT).unwrap().map(|r| r.0)
+pub(super) fn claim_reply(rx: &ClaimRx) -> Result<String, ClaimError> {
+    rx.recv_timeout(WAIT).unwrap().map(|r| r.text.0)
 }
 
-fn owned(app: &str, text: &str) -> FakeCopy {
+pub(super) fn owned(app: &str, text: &str) -> FakeCopy {
     FakeCopy {
         source: Some(src(app)),
         ..text_copy(text)
@@ -45,7 +45,7 @@ fn restore_candidate(h: &H) -> Option<ClipId> {
     rx.recv_timeout(WAIT).unwrap()
 }
 
-fn copy_text(h: &H, text: &str) -> Result<u64, ApiError> {
+pub(super) fn copy_text(h: &H, text: &str) -> Result<u64, ApiError> {
     let (tx, rx) = mpsc::channel();
     h.cap()
         .send(ActorCommand::CopyText {
@@ -64,7 +64,7 @@ fn ole_cfg() -> CaptureConfig {
     }
 }
 
-fn ole_owned(app: &str, text: &str) -> FakeCopy {
+pub(super) fn ole_owned(app: &str, text: &str) -> FakeCopy {
     FakeCopy {
         formats: vec![
             (pf("DataObject", None, 8), Vec::new()),
@@ -78,7 +78,7 @@ fn ole_owned(app: &str, text: &str) -> FakeCopy {
     }
 }
 
-fn ole_flush(text: &str) -> FakeCopy {
+pub(super) fn ole_flush(text: &str) -> FakeCopy {
     FakeCopy {
         formats: vec![
             (pf("DataObject", None, 8), Vec::new()),
@@ -132,9 +132,14 @@ fn claimed_change_is_returned_and_never_stored() {
     assert!(!h.stored_previews().iter().any(|p| p == "xin chao"));
     // Windows exe names match without case; the slot is single use.
     let rx = arm(&h, "Zalo.EXE");
-    h.fake.copy(owned("zalo.exe", "lan hai"));
+    h.fake
+        .copy_burst_at(vec![(Timestamp(T0), owned("zalo.exe", "lan hai"))]);
     assert_eq!(claim_reply(&rx), Ok("lan hai".to_string()));
-    h.fake.copy(owned("zalo.exe", "stored again"));
+    // Beyond the same-app follow-up skip (Task 603b: 1500 ms by signal time).
+    h.fake.copy_burst_at(vec![(
+        Timestamp(T0 + 2_000),
+        owned("zalo.exe", "stored again"),
+    )]);
     let (id, before) = h.wait_added();
     assert!(no_store_events(&before), "{before:?}");
     assert_eq!(
