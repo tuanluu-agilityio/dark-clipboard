@@ -189,10 +189,10 @@ impl Actor {
             return;
         }
         // `held`: a gate reason a live claim let through (Task 603). The change is then
-        // either claimed or dropped with that reason, exactly as without a claim.
-        let mut held = None;
+        // either claimed or dropped with that reason, even if capture resumed meanwhile.
+        let mut held = p.held;
         if let Some(reason) = self.gate(p.seq) {
-            if !self.claim_lets_through(reason, p.seen_at) {
+            if held.is_none() || !self.claim_lets_through(reason, p.seen_at) {
                 if self.claim.is_some() {
                     self.claim_gated();
                 }
@@ -219,7 +219,7 @@ impl Actor {
             return;
         }
         if let Some(reason) = self.gate(seq) {
-            if !self.claim_lets_through(reason, p.seen_at) {
+            if held.is_none() || !self.claim_lets_through(reason, p.seen_at) {
                 if self.claim.is_some() {
                     self.claim_gated();
                 }
@@ -291,6 +291,14 @@ impl Actor {
             };
             self.claims(source.as_ref(), seen_at)
         };
+        // Task 603: the late ownerless flush of a claimed copy is never stored.
+        if !claimed && ownerless && self.recent_claim_flush(seq, p.signal_at, &meta) {
+            match held {
+                Some(reason) => self.drop_gated(seq, reason),
+                None => self.last_processed_seq = Some(seq),
+            }
+            return;
+        }
         if !claimed {
             if let Some(reason) = held {
                 self.drop_gated(seq, reason);

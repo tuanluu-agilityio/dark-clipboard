@@ -4,18 +4,22 @@
 //!
 //! Privacy order is unchanged: the settings gate lets a change through for the claim decision
 //! only when it would drop it as Paused or Disabled (those stop storing; nothing is stored
-//! here), never in Private mode and never for our own write. The claim is decided from the
-//! snapshot's metadata (source, markers, format names), then `decide_translate_read` runs
-//! with every privacy step, and only `Decision::Read` reads text/plain (GC-03). No logging
-//! (GC-06): replies carry skip reasons only.
+//! here) and its signal names the target app, or it is an ownerless change following the
+//! target's (its possible OLE flush); never in Private mode and never for our own write.
+//! Every other change is dropped at step 1 as without a claim (privacy-design section 5). A
+//! change let through and not claimed is dropped, whatever the gate says later. The claim is
+//! decided from the snapshot's metadata (source, markers, format names), then
+//! `decide_translate_read` runs with every privacy step, and only `Decision::Read` reads
+//! text/plain (GC-03). A late ownerless flush of a claimed change is skipped too
+//! (`recent_claim_flush`). No logging (GC-06): replies carry skip reasons only.
 
 use super::actor::Actor;
-use super::pending::ExcludedRecent;
-use super::wipe::{wipe_bytes, wipe_reps};
+use super::pending::{has_ole_signature, within_ms_or_earlier, ExcludedRecent, MAX_HEIR_SEQ_GAP};
+use super::wipe::{wipe_bytes, wipe_reps, wipe_string};
 use darkclip_core::markers::PrivacyMarker;
 use darkclip_core::policy::{Decision, SkipReason};
 use darkclip_core::{CaptureMode, ClipId, ClipboardSource, Mime, Platform, Redacted, Timestamp};
-use darkclip_platform::PlatformError;
+use darkclip_platform::{ChangeSignal, ClipboardMeta, PlatformError};
 #[cfg(test)]
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Sender;
@@ -61,6 +65,12 @@ impl ClaimSlot {
     fn covers(&self, at: Instant) -> bool {
         self.armed_at <= at && at < self.deadline
     }
+}
+
+/// The last claimed change, for its late ownerless OLE flush (skip only, never stored).
+pub(super) struct ClaimedRecent {
+    seq: u64,
+    signal_at: Timestamp,
 }
 
 /// `app_id` match: case-insensitive for Windows exe names (as the excluded-app match),
@@ -150,6 +160,29 @@ impl Actor {
             && self.claim.as_ref().is_some_and(|c| c.covers(at))
     }
 
+    /// `claim_lets_through` for a signal: only a change that can be the target's gets past
+    /// step 1. Its signal names the target app; or it is ownerless and the pending change it
+    /// follows is the target's (the only way the F-14 heir can name the target); or it is one
+    /// more signal of a change already let through.
+    pub(super) fn claim_admits(&self, reason: SkipReason, now: Instant, s: &ChangeSignal) -> bool {
+        if !self.claim_lets_through(reason, now) {
+            return false;
+        }
+        let Some(c) = &self.claim else {
+            return false;
+        };
+        let pending = self.pending.as_ref();
+        if pending.is_some_and(|p| p.seq == s.seq && p.held.is_some()) {
+            return true;
+        }
+        match &s.source {
+            Some(src) => same_app(src, &c.app_id),
+            None => pending
+                .and_then(|p| p.sources.first())
+                .is_some_and(|src| same_app(src, &c.app_id)),
+        }
+    }
+
     /// The gate dropped a change while a slot is armed: in Private mode the slot fails now
     /// with `Skipped(Private)` (nothing is ever read in Private mode). Otherwise it stays.
     pub(super) fn claim_gated(&mut self) {
@@ -176,8 +209,40 @@ impl Actor {
             return;
         };
         self.last_processed_seq = Some(change.seq);
+        self.claimed_recent = Some(ClaimedRecent {
+            seq: change.seq,
+            signal_at: change.signal_at,
+        });
         let r = self.claim_outcome(change);
-        let _ = slot.reply.send(r);
+        if let Err(e) = slot.reply.send(r) {
+            // The requester is gone: the text goes nowhere and is wiped.
+            if let Ok(mut text) = e.0 {
+                wipe_string(&mut text.0);
+            }
+        }
+    }
+
+    /// An ownerless change with the OLE signature 1..=`MAX_HEIR_SEQ_GAP` seqs after the last
+    /// claimed change, at most `max_burst_wait` after it by signal time, with no self-write
+    /// in between: the claimed copy's late flush (Notepad shape). Skip only; the caller marks
+    /// it processed and never stores it.
+    pub(super) fn recent_claim_flush(
+        &self,
+        seq: u64,
+        signal_at: Timestamp,
+        meta: &ClipboardMeta,
+    ) -> bool {
+        let Some(r) = &self.claimed_recent else {
+            return false;
+        };
+        let cap_ms = u64::try_from(self.max_burst_wait.as_millis()).unwrap_or(u64::MAX);
+        seq.checked_sub(r.seq)
+            .is_some_and(|gap| (1..=MAX_HEIR_SEQ_GAP).contains(&gap))
+            && !self
+                .last_self_write_seq
+                .is_some_and(|w| w > r.seq && w <= seq)
+            && within_ms_or_earlier(r.signal_at, signal_at, cap_ms)
+            && has_ole_signature(meta)
     }
 
     fn claim_outcome(&mut self, change: ClaimedChange<'_>) -> Result<Redacted<String>, ClaimError> {

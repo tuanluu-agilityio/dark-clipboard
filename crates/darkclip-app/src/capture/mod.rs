@@ -316,6 +316,7 @@ impl CaptureHandle {
             carried: None,
             excluded_recent: None,
             claim: None,
+            claimed_recent: None,
             last_stored: None,
             next_retention: Instant::now(),
             fts_merge_due: None,

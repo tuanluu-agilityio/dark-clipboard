@@ -209,25 +209,180 @@ fn ownerless_change_without_target_heir_is_not_claimed() {
 
 #[test]
 fn ownerless_ole_flush_with_target_heir_is_claimed() {
-    // Notepad shape (F-14): an owned phase, then the ownerless flush, in one burst.
+    // Notepad shape (F-14): an owned phase, then the ownerless flush, in one burst. While
+    // paused, the flush gets past step 1 because the pending change it follows is the
+    // target's.
+    for paused in [false, true] {
+        let policy = if paused {
+            paused_policy()
+        } else {
+            PrivacyPolicy::default()
+        };
+        let h = start_with(policy, RetentionPolicy::default(), ole_cfg(), |_| {});
+        long_window(&h);
+        let rx = arm(&h, "notepad.exe");
+        h.fake.copy_burst(vec![
+            ole_owned("notepad.exe", "flushed text"),
+            ole_flush("flushed text"),
+        ]);
+        assert_eq!(
+            claim_reply(&rx),
+            Ok("flushed text".to_string()),
+            "paused={paused}"
+        );
+        assert_eq!(h.fake.snapshot_meta_calls(), 1, "paused={paused}");
+        if !paused {
+            let between = h.sentinel();
+            assert!(no_store_events(&between), "{between:?}");
+            assert_eq!(h.clip_count(), 1);
+        }
+        assert!(!h.stored_previews().iter().any(|p| p == "flushed text"));
+    }
+}
+
+#[test]
+fn late_ole_flush_of_claimed_copy_is_not_stored() {
+    // Notepad shape across two bursts: the owned phase is claimed, then its ownerless flush
+    // arrives (20 ms later by signal time). It must not be stored as a clip.
+    let h = start(PrivacyPolicy::default());
+    long_window(&h);
+    let rx = arm(&h, "notepad.exe");
+    h.fake.copy_burst_at(vec![(
+        Timestamp(T0),
+        ole_owned("notepad.exe", "source text"),
+    )]);
+    assert_eq!(claim_reply(&rx), Ok("source text".to_string()));
+    h.fake
+        .copy_burst_at(vec![(Timestamp(T0 + 20), ole_flush("source text"))]);
+    let metas = h.fake.snapshot_meta_calls();
+    let deadline = Instant::now() + WAIT;
+    while h.fake.snapshot_meta_calls() == metas {
+        assert!(Instant::now() < deadline, "the flush was never looked at");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let between = h.sentinel();
+    assert!(no_store_events(&between), "{between:?}");
+    assert_eq!(h.fake.read_calls(), 2);
+    assert_eq!(h.clip_count(), 1);
+    assert!(!h.stored_previews().iter().any(|p| p == "source text"));
+    // Beyond the burst cap by signal time it is an ordinary ownerless change: stored.
+    let h = start(PrivacyPolicy::default());
+    long_window(&h);
+    let rx = arm(&h, "notepad.exe");
+    h.fake.copy_burst_at(vec![(
+        Timestamp(T0),
+        ole_owned("notepad.exe", "source text"),
+    )]);
+    assert_eq!(claim_reply(&rx), Ok("source text".to_string()));
+    h.fake
+        .copy_burst_at(vec![(Timestamp(T0 + 600), ole_flush("later text"))]);
+    let (id, _) = h.wait_added();
+    assert_eq!(h.ro().get_clip(&id).unwrap().unwrap().preview, "later text");
+}
+
+/// Waits until the actor has dropped the fake's own signals listed in `drop_signal`.
+fn wait_signal_lost(h: &H) {
+    let deadline = Instant::now() + WAIT;
+    while !h.cap().hooks.drop_signal.lock().unwrap().is_empty() {
+        assert!(Instant::now() < deadline, "the signal never arrived");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn let_through_change_is_never_stored_after_resume() {
+    // Paused until T0 + 60 s; the debounce keeps the change pending while capture resumes.
+    let policy = PrivacyPolicy {
+        mode: CaptureMode::Paused {
+            until: Timestamp(T0 + 60_000),
+        },
+        ..PrivacyPolicy::default()
+    };
+    // 1. The pause ends by its deadline: the target's signal was let through, but the
+    //    snapshot is a newer change of another app (never claimed).
     let h = start_with(
-        PrivacyPolicy::default(),
+        policy.clone(),
         RetentionPolicy::default(),
         ole_cfg(),
         |_| {},
     );
     long_window(&h);
-    let rx = arm(&h, "notepad.exe");
-    h.fake.copy_burst(vec![
-        ole_owned("notepad.exe", "flushed text"),
-        ole_flush("flushed text"),
-    ]);
-    assert_eq!(claim_reply(&rx), Ok("flushed text".to_string()));
-    assert_eq!(h.fake.snapshot_meta_calls(), 1);
+    let rx = arm(&h, "zalo.exe");
+    // The fake's own signal is replaced by one sent in the actor's queue, so a later command
+    // proves the actor has let it through before the clock moves.
+    h.cap().hooks.drop_signal.lock().unwrap().push(1);
+    let newer = h.fake.copy_then_replace_silently(
+        owned("zalo.exe", "target text"),
+        owned("chrome.exe", "copied during the pause"),
+    );
+    assert_eq!(newer, 2);
+    wait_signal_lost(&h);
+    h.cap()
+        .tx
+        .as_ref()
+        .unwrap()
+        .send(Msg::Signal(ChangeSignal {
+            seq: 1,
+            at: Timestamp(T0),
+            source: Some(src("zalo.exe")),
+        }))
+        .unwrap();
+    assert_eq!(claim_reply(&arm(&h, "other.exe")), Err(ClaimError::Busy));
+    h.clock.set(T0 + 120_000);
+    let seen = h.wait_skip(SkipReason::Paused);
+    assert!(no_store_events(&seen), "{seen:?}");
+    assert_eq!(h.fake.read_calls(), 0);
     let between = h.sentinel();
     assert!(no_store_events(&between), "{between:?}");
     assert_eq!(h.clip_count(), 1);
-    assert!(!h.stored_previews().iter().any(|p| p == "flushed text"));
+    assert!(!h
+        .stored_previews()
+        .iter()
+        .any(|p| p == "copied during the pause"));
+    assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+
+    // 2. The user resumes (SetMode) while the target's change is pending: never stored.
+    let h = start_with(policy, RetentionPolicy::default(), ole_cfg(), |_| {});
+    long_window(&h);
+    let _rx = arm(&h, "zalo.exe");
+    h.cap().hooks.drop_signal.lock().unwrap().push(1);
+    h.fake.copy(owned("zalo.exe", "target text"));
+    wait_signal_lost(&h);
+    h.cap()
+        .tx
+        .as_ref()
+        .unwrap()
+        .send(Msg::Signal(ChangeSignal {
+            seq: 1,
+            at: Timestamp(T0),
+            source: Some(src("zalo.exe")),
+        }))
+        .unwrap();
+    assert_eq!(claim_reply(&arm(&h, "other.exe")), Err(ClaimError::Busy));
+    h.set_mode(CaptureMode::Normal);
+    let between = h.sentinel();
+    assert!(no_store_events(&between), "{between:?}");
+    assert_eq!(h.clip_count(), 1);
+    assert!(!h.stored_previews().iter().any(|p| p == "target text"));
+}
+
+#[test]
+fn claim_with_gone_requester_is_not_stored() {
+    let h = start(PrivacyPolicy::default());
+    long_window(&h);
+    drop(arm(&h, "zalo.exe"));
+    h.fake.copy(owned("zalo.exe", "nobody waits"));
+    // The claim was read (and its reply could not be delivered) before the sentinel.
+    let deadline = Instant::now() + WAIT;
+    while h.fake.read_calls() == 0 {
+        assert!(Instant::now() < deadline, "the claim was never read");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let between = h.sentinel();
+    assert!(no_store_events(&between), "{between:?}");
+    assert_eq!(h.fake.read_calls(), 2);
+    assert_eq!(h.clip_count(), 1);
+    assert!(!h.stored_previews().iter().any(|p| p == "nobody waits"));
 }
 
 #[test]
@@ -239,11 +394,15 @@ fn claim_works_while_paused_and_while_disabled_and_nothing_is_stored() {
         let h = start(policy);
         long_window(&h);
         let rx = arm(&h, "zalo.exe");
-        // Another app's change gets past the gate only for the claim decision; then it is
-        // dropped with its gate reason, unread.
+        // Another app's change, or an ownerless one, is dropped at step 1 as without a claim:
+        // not even its metadata is looked at (privacy-design section 5).
         h.fake.copy(owned("chrome.exe", "other app text"));
         let seen = h.wait_skip(reason);
         assert!(no_store_events(&seen), "{seen:?}");
+        h.fake.copy(text_copy("nobody's text"));
+        let seen = h.wait_skip(reason);
+        assert!(no_store_events(&seen), "{seen:?}");
+        assert_eq!(h.fake.snapshot_meta_calls(), 0);
         assert_eq!(h.fake.read_calls(), 0);
         // The target's change is claimed.
         h.fake.copy(owned("zalo.exe", "target text"));
@@ -613,6 +772,7 @@ fn two_own_writes_in_a_row_are_never_stored() {
         }
         if matches!(order, Order::BA) {
             // A's signal arrives after B's, and the actor looks at the clipboard for it.
+            wait_signal_lost(&h);
             let metas = h.fake.snapshot_meta_calls();
             h.cap()
                 .tx

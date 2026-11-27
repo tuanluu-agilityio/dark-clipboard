@@ -1,7 +1,7 @@
 //! The actor thread: start-up, the run loop, the settings/self-write gate, platform retries
 //! and command handling. It owns the platform access, the monitor and the storage handle.
 
-use super::claim::ClaimSlot;
+use super::claim::{ClaimSlot, ClaimedRecent};
 use super::pending::{Carried, ExcludedRecent, Pending};
 use super::pipeline::gate_without_formats;
 use super::{ActorCommand, Msg, RetentionHooks};
@@ -63,6 +63,8 @@ pub(super) struct Actor {
     pub(super) excluded_recent: Option<ExcludedRecent>,
     /// Task 603: the armed claim of translate in place, if any.
     pub(super) claim: Option<ClaimSlot>,
+    /// The last claimed change, so its late OLE flush is never stored.
+    pub(super) claimed_recent: Option<ClaimedRecent>,
     /// The last captured change that was stored (inserted or deduplicated): its seq and clip.
     pub(super) last_stored: Option<(u64, ClipId)>,
     pub(super) next_retention: Instant,

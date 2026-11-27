@@ -61,6 +61,8 @@ The list is code (one table per adapter) plus tests. Adding to it is a reviewed 
 - In both, the monitor keeps running but the actor drops signals at step 1, without reading formats.
 - Resuming does not backfill: the clipboard content present at resume time is **not** captured unless it changes again. This avoids capturing something copied during the pause.
 
+> **Changed by Task 603 (D-093, 2026-11-27):** while a translate-in-place slot is armed (at most 600 ms after the hotkey), a Paused or Disabled change whose signal names the target app, or an ownerless change (OLE flush) following such a change, passes step 1 so its metadata (formats, markers, owner) can be inspected for the claim. A claimed change is handed to the translate flow as text after `decide_translate_read`, and never stored. Any other change is still dropped at step 1 without reading formats, and a change that passed only because of the slot is never stored, even if capture resumes before it is processed. Private mode is never bypassed.
+
 ## 6. Excluded apps
 
 - Matching by `app_id` per platform (exe name, bundle id, desktop id), case-insensitive on Windows.
