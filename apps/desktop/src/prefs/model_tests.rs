@@ -702,3 +702,50 @@ mod login {
         assert!(!LoginAvail::CustomProfile.editable());
     }
 }
+
+#[test]
+fn the_translate_part_saves_and_keeps_the_consent() {
+    let base = defaults();
+    let mut d = Draft::from_settings(&base);
+    assert!(!d.ai.enabled);
+    assert_eq!(d.ai.consent_version, 0);
+    // Turned on after the consent dialog, with another model and direction.
+    d.ai.enabled = true;
+    d.ai.consent_version = 1;
+    d.ai.model = "claude-haiku-5-5".into();
+    d.ai.direction = darkclip_ai::Direction::ToVietnamese;
+    d.ai.shortcut = "ctrl+alt+y".into();
+    let s = d.apply_to(&base).unwrap();
+    assert!(s.ai.enabled);
+    assert_eq!(s.ai.consent_version, 1);
+    assert_eq!(s.ai.model, "claude-haiku-5-5");
+    assert_eq!(s.ai.direction, darkclip_ai::Direction::ToVietnamese);
+    assert_eq!(s.ai.shortcut, "Ctrl+Alt+Y");
+    // Turning it off later never lowers the consent.
+    let mut d = Draft::from_settings(&s);
+    d.ai.enabled = false;
+    d.ai.consent_version = 0;
+    let off = d.apply_to(&s).unwrap();
+    assert!(!off.ai.enabled);
+    assert_eq!(off.ai.consent_version, 1);
+}
+
+#[test]
+fn the_translate_shortcut_is_checked_only_while_on() {
+    let base = defaults();
+    let mut d = Draft::from_settings(&base);
+    d.ai.shortcut = "nonsense".into();
+    // Off: the rows are disabled, the stored shortcut stays.
+    assert_eq!(d.apply_to(&base).unwrap().ai.shortcut, base.ai.shortcut);
+    d.ai.enabled = true;
+    d.ai.consent_version = 1;
+    let m = msgs(d.apply_to(&base));
+    assert_eq!(m.len(), 1);
+    assert_eq!(m[0].0, Field::TranslateShortcut);
+    // The popup's own combination is refused with its own message.
+    d.ai.shortcut = base.shortcuts.toggle_popup.to_lowercase();
+    assert_eq!(
+        msgs(d.apply_to(&base)),
+        vec![(Field::TranslateShortcut, Msg::SettingsTrShortcutSameAsPopup)]
+    );
+}

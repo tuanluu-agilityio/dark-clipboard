@@ -1,5 +1,5 @@
 // The settings window (Task 207, redesigned in Task 705): General, Capture and Privacy, History
-// and Storage, Data and Transfer, About. Every value and every
+// and Storage, Data and Transfer, Translate (Task 606), About. Every value and every
 // decision comes from Rust (`src/ui/settings_host.rs`, with the pure rules in `src/prefs`);
 // this file lays things out and forwards input. Every string comes from the `SText` global
 // (i18n), never from here. Dark only (D-037).
@@ -16,7 +16,9 @@ import { Switch } from "kit/switch.slint";
 import { Select } from "kit/select.slint";
 import { Field } from "kit/field.slint";
 import { ConfirmDialog, DialogScrim } from "kit/confirm_dialog.slint";
-import { NavItem, Card, SettingRow, InfoRow, ModeCard, SaveButton, ProtectedRow } from "settings_parts.slint";
+import { NavItem, Card, SettingRow, InfoRow, ModeCard, SaveButton, ProtectedRow, TrText, TrEnableCard, TrHowCard, TrKeyCard, TrNeverCard, TrConsentDialog } from "settings_parts.slint";
+
+export { TrText }
 
 export struct AppRow {
     name: string,
@@ -188,7 +190,8 @@ export component SettingsWindow inherits Window {
     preferred-height: 640px;
     default-font-size: 13px;
 
-    // 0 General, 1 Capture and Privacy, 2 History and Storage, 3 Data and Transfer, 4 About.
+    // 0 General, 1 Capture and Privacy, 2 History and Storage, 3 Data and Transfer, 4 Translate,
+    // 5 About.
     in-out property <int> section: 0;
     in property <bool> can-save: true;
     // Something was changed since the last save, revert or open: the save bar shows (Rust owns it).
@@ -252,6 +255,20 @@ export component SettingsWindow inherits Window {
     in-out property <bool> auto-update;
     in property <bool> auto-update-enabled: true;
     in property <string> data-path;
+    // Settings > Translate (Task 606). `tr-available` is false off Windows.
+    in property <bool> tr-available: true;
+    in-out property <bool> tr-enabled;
+    in-out property <string> tr-shortcut;
+    in property <string> err-tr-shortcut;
+    in-out property <int> tr-direction-index;
+    in-out property <int> tr-model-index;
+    in property <bool> tr-key-editing: true;
+    in property <string> tr-key-status;
+    in property <string> tr-key-error;
+    in-out property <string> tr-key-input;
+    in property <string> tr-test-text;
+    in property <bool> tr-test-busy;
+    in property <bool> tr-consent-open;
 
     callback save();
     callback revert();
@@ -287,6 +304,13 @@ export component SettingsWindow inherits Window {
     callback auto-update-toggled(bool);
     callback open-release();
     callback escape();
+    callback tr-toggled(bool);
+    callback tr-consent-confirm();
+    callback tr-consent-cancel();
+    callback tr-save-key(string);
+    callback tr-replace-key();
+    callback tr-remove-key();
+    callback tr-test();
     // Every key before the focused element: text, Ctrl, Shift, Alt, Meta, a nav item has the
     // focus. True when the host handled it (Task 705: the meaning of a key is decided in Rust).
     callback key(string, bool, bool, bool, bool, bool) -> bool;
@@ -294,16 +318,16 @@ export component SettingsWindow inherits Window {
     callback select-key(string, bool, bool) -> int;
 
     // A nav item has the keyboard focus (Up and Down then move between sections).
-    property <bool> nav-focus: nav0.has-focus || nav1.has-focus || nav2.has-focus || nav3.has-focus || nav4.has-focus;
+    property <bool> nav-focus: nav0.has-focus || nav1.has-focus || nav2.has-focus || nav3.has-focus || nav4.has-focus || nav5.has-focus;
     // One of the questions or the picker is open.
-    property <bool> layer-open: root.confirm-remove-text != "" || root.limits-open || root.clear-open || root.cleanup-open || root.restore-open || root.picker-open;
+    property <bool> layer-open: root.confirm-remove-text != "" || root.limits-open || root.clear-open || root.cleanup-open || root.restore-open || root.picker-open || root.tr-consent-open;
 
     init => {
         Palette.color-scheme = ColorScheme.dark;
     }
 
     // The control that opened the layer (0: none or not known, 1 picker, 2 orphans, 3 compact,
-    // 4 clear, 5 restore, 6 save, 100 + i the remove button of exclusion row i), and the one that
+    // 4 clear, 5 restore, 6 save, 7 the translate Enable switch, 100 + i the remove button of exclusion row i), and the one that
     // gets the focus back when the layer closes (each of them has a `want` property that
     // focuses it when `return-to` names it; Slint cannot name the element that had the focus).
     property <int> opener;
@@ -324,6 +348,8 @@ export component SettingsWindow inherits Window {
     // The section changed by the keys (Ctrl+digit, Up, Down): while a nav item has the focus the
     // ring follows the selection.
     changed section => {
+        // A key typed but not saved never stays behind another section (Task 606).
+        root.tr-key-input = "";
         if (root.nav-focus) {
             if (root.section == 0) {
                 nav0.focus();
@@ -333,8 +359,10 @@ export component SettingsWindow inherits Window {
                 nav2.focus();
             } else if (root.section == 3) {
                 nav3.focus();
-            } else {
+            } else if (root.section == 4) {
                 nav4.focus();
+            } else {
+                nav5.focus();
             }
         }
     }
@@ -404,11 +432,20 @@ export component SettingsWindow inherits Window {
                         }
                     }
                     nav4 := NavItem {
-                        icon: IconName.info;
-                        text: SText.about;
+                        icon: IconName.type;
+                        text: TrText.section;
                         active: root.section == 4;
                         clicked => {
                             root.section = 4;
+                            self.focus();
+                        }
+                    }
+                    nav5 := NavItem {
+                        icon: IconName.info;
+                        text: SText.about;
+                        active: root.section == 5;
+                        clicked => {
+                            root.section = 5;
                             self.focus();
                         }
                     }
@@ -444,7 +481,7 @@ export component SettingsWindow inherits Window {
                         alignment: start;
 
                         Text {
-                            text: [SText.general, SText.nav-capture, SText.nav-storage, SText.nav-data, SText.about][root.section];
+                            text: [SText.general, SText.nav-capture, SText.nav-storage, SText.nav-data, TrText.section, SText.about][root.section];
                             color: Theme.text;
                             font-size: 18px;
                             font-weight: 700;
@@ -452,7 +489,7 @@ export component SettingsWindow inherits Window {
                             accessible-role: text;
                         }
                         Text {
-                            text: [SText.desc-general, SText.desc-capture, SText.desc-storage, SText.desc-data, SText.desc-about][root.section];
+                            text: [SText.desc-general, SText.desc-capture, SText.desc-storage, SText.desc-data, TrText.section-desc, SText.desc-about][root.section];
                             color: Theme.text-2;
                             font-size: 13px;
                             wrap: word-wrap;
@@ -1011,11 +1048,73 @@ export component SettingsWindow inherits Window {
                             }
                         }
 
-                        // ---------------------------------------------------- About
+                        // ---------------------------------------------------- Translate (Task 606)
                         if root.section == 4: VerticalLayout {
                             spacing: 16px;
+                            // section:4 translate-enable
+                            TrEnableCard {
+                                available: root.tr-available;
+                                checked <=> root.tr-enabled;
+                                want-focus: root.return-to == 7;
+                                toggled(v) => {
+                                    // Turning it on may open the consent dialog: the focus comes
+                                    // back here when it closes.
+                                    if (v) {
+                                        root.opener = 7;
+                                    }
+                                    root.tr-toggled(v);
+                                }
+                            }
+                            // The shortcut, direction and model rows.
+                            // section:4 translate-shortcut
+                            // section:4 translate-direction
+                            // section:4 translate-model
+                            TrHowCard {
+                                on: root.tr-available && root.tr-enabled;
+                                shortcut <=> root.tr-shortcut;
+                                error: root.err-tr-shortcut;
+                                direction-index <=> root.tr-direction-index;
+                                model-index <=> root.tr-model-index;
+                                edited => {
+                                    root.edited();
+                                }
+                                select-key(t, a, o) => {
+                                    return root.select-key(t, a, o);
+                                }
+                            }
+                            // The key row and the Test row.
+                            // section:4 translate-key
+                            // section:4 translate-test
+                            TrKeyCard {
+                                on: root.tr-available && root.tr-enabled;
+                                editing: root.tr-key-editing;
+                                key-status: root.tr-key-status;
+                                key-error: root.tr-key-error;
+                                key-input <=> root.tr-key-input;
+                                test-text: root.tr-test-text;
+                                test-busy: root.tr-test-busy;
+                                save-key(k) => {
+                                    root.tr-save-key(k);
+                                }
+                                replace-key => {
+                                    root.tr-replace-key();
+                                }
+                                remove-key => {
+                                    root.tr-remove-key();
+                                }
+                                test => {
+                                    root.tr-test();
+                                }
+                            }
+                            // section:4 translate-never-sent
+                            TrNeverCard { }
+                        }
+
+                        // ---------------------------------------------------- About
+                        if root.section == 5: VerticalLayout {
+                            spacing: 16px;
                             Card {
-                                // section:4 version
+                                // section:5 version
                                 InfoRow {
                                     first: true;
                                     label: SText.version;
@@ -1039,7 +1138,7 @@ export component SettingsWindow inherits Window {
                                     text: SText.update-note;
                                     pad-bottom: 4px;
                                 }
-                                // section:4 auto-update
+                                // section:5 auto-update
                                 SettingRow {
                                     first: true;
                                     label: SText.update-auto;
@@ -1052,7 +1151,7 @@ export component SettingsWindow inherits Window {
                                         }
                                     }
                                 }
-                                // section:4 check-updates
+                                // section:5 check-updates
                                 SettingRow {
                                     label: SText.update-check;
                                     description: root.update-status;
@@ -1077,7 +1176,7 @@ export component SettingsWindow inherits Window {
                             }
                             Card {
                                 title: SText.caps-label;
-                                // section:4 capabilities
+                                // section:5 capabilities
                                 InfoRow {
                                     first: true;
                                     label: SText.caps-label;
@@ -1086,7 +1185,7 @@ export component SettingsWindow inherits Window {
                             }
                             Card {
                                 title: SText.licences-label;
-                                // section:4 licences
+                                // section:5 licences
                                 InfoRow {
                                     first: true;
                                     label: SText.licences-label;
@@ -1118,7 +1217,7 @@ export component SettingsWindow inherits Window {
                 }
 
                 // The save bar: only after a change, and not on About (nothing to save there).
-                if root.dirty && root.section != 4: Rectangle {
+                if root.dirty && root.section != 5: Rectangle {
                     height: 52px;
                     background: Theme.raised;
                     HorizontalLayout {
@@ -1182,6 +1281,17 @@ export component SettingsWindow inherits Window {
         }
         cancelled => {
             root.cancel-remove();
+        }
+    }
+
+    // Turning translate in place on for the first time asks for consent (Task 606, D-093).
+    TrConsentDialog {
+        open: root.tr-consent-open;
+        confirmed => {
+            root.tr-consent-confirm();
+        }
+        cancelled => {
+            root.tr-consent-cancel();
         }
     }
 

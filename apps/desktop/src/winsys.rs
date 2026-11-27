@@ -10,6 +10,8 @@
 //!   (work area and DPI), and the foreground window recorded at show time (handle only).
 //! - Translate in place (Task 605): whether a window is a console or terminal (a bool only,
 //!   see `is_console_window`) and whether keys are still down (`GetAsyncKeyState`).
+//! - Translate overlay (Task 606): the no-activate styles of our own overlay window, showing it
+//!   without activating it, hiding it, and the system's reduced-motion setting.
 //!
 //! > **Changed by D-095 (2026-11-27, Task 605):** "no class name" (SR-11) has one exception:
 //! > `is_console_window` reads the window class of the translate target with `GetClassNameW`
@@ -683,6 +685,147 @@ pub fn sddl_spelling_of_sid(sid: &str) -> Option<String> {
     (!who.is_empty()).then(|| who.to_string())
 }
 
+// ---- Translate overlay (Task 606): a window that never takes the focus ----------------------
+
+/// The extended styles the translate overlay needs: never activated by a click
+/// (`WS_EX_NOACTIVATE`), not in the taskbar or Alt+Tab (`WS_EX_TOOLWINDOW`), above other windows
+/// (`WS_EX_TOPMOST`).
+pub const OVERLAY_EX_STYLE: u32 = 0x0800_0000 | 0x0000_0080 | 0x0000_0008;
+/// `WS_EX_APPWINDOW`: would put the window back in the taskbar; removed from the overlay.
+const EX_APPWINDOW: u32 = 0x0004_0000;
+
+/// Pure: the overlay's extended style made from `current`.
+pub fn overlay_ex_style(current: u32) -> u32 {
+    (current | OVERLAY_EX_STYLE) & !EX_APPWINDOW
+}
+
+/// Pure: `ex` carries the styles that keep the focus away: no activation, not in Alt+Tab, and
+/// no taskbar style.
+pub fn has_no_activate_style(ex: u32) -> bool {
+    const NO_ACTIVATE: u32 = 0x0800_0000 | 0x0000_0080;
+    ex & NO_ACTIVATE == NO_ACTIVATE && ex & EX_APPWINDOW == 0
+}
+
+/// Pure: `ex` carries every overlay style and no taskbar style.
+pub fn has_overlay_ex_style(ex: u32) -> bool {
+    ex & OVERLAY_EX_STYLE == OVERLAY_EX_STYLE && ex & EX_APPWINDOW == 0
+}
+
+fn hwnd_of(window: u64) -> Option<windows::Win32::Foundation::HWND> {
+    let v = usize::try_from(window).ok().filter(|v| *v != 0)?;
+    Some(windows::Win32::Foundation::HWND(
+        v as *mut core::ffi::c_void,
+    ))
+}
+
+/// The extended window style of `window` (0 when the handle is not valid).
+pub fn ex_style(window: u64) -> u32 {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, GWL_EXSTYLE};
+    let Some(hwnd) = hwnd_of(window) else {
+        return 0;
+    };
+    // SAFETY: plain value arguments; a stale handle only makes the call return 0.
+    let v = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
+    u32::try_from(v & 0xFFFF_FFFF).unwrap_or(0)
+}
+
+/// Gives our own window `window` the overlay styles ([`OVERLAY_EX_STYLE`]) and asks for the
+/// topmost band, without showing, moving or activating it. True when the no-activate styles
+/// (`WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`) read back. Windows does not move a *hidden* window
+/// into the topmost band (measured: `SetWindowPos(HWND_TOPMOST)` returns success and leaves
+/// `WS_EX_TOPMOST` clear), so the overlay is created topmost (winit `AlwaysOnTop`) and every
+/// show passes `HWND_TOPMOST` again. Called before the window is first shown and again after
+/// winit's one show (winit rewrites the extended style when it shows a window).
+pub fn set_overlay_style(window: u64) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST, SWP_FRAMECHANGED,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+    let Some(hwnd) = hwnd_of(window) else {
+        return false;
+    };
+    let wanted = overlay_ex_style(ex_style(window));
+    // SAFETY: `hwnd` is our own window (the caller passes the overlay's handle); the value is a
+    // plain style bit set. A stale handle only makes the call fail.
+    unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, wanted as isize) };
+    // SAFETY: plain value arguments; NOMOVE | NOSIZE | NOACTIVATE: only the z-order band and the
+    // frame change, the window is neither shown nor activated.
+    let _ = unsafe {
+        SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
+    };
+    has_no_activate_style(ex_style(window))
+}
+
+/// Shows our own window `window` at the physical point (`x`, `y`), topmost, **without
+/// activating it** (`SWP_SHOWWINDOW | SWP_NOACTIVATE`): the foreground window keeps the focus.
+pub fn show_no_activate_at(window: u64, x: i32, y: i32) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    };
+    let Some(hwnd) = hwnd_of(window) else {
+        return false;
+    };
+    // SAFETY: plain value arguments on our own window; never activates (SWP_NOACTIVATE).
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        )
+    }
+    .is_ok()
+}
+
+/// Hides our own window `window` (hiding never activates anything).
+pub fn hide_window(window: u64) {
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+    if let Some(hwnd) = hwnd_of(window) {
+        // SAFETY: plain value arguments on our own window; the return value is the previous
+        // visibility, not an error.
+        let _ = unsafe { ShowWindow(hwnd, SW_HIDE) };
+    }
+}
+
+/// True when `window` is the foreground window (a check that the overlay did not take it).
+pub fn is_foreground(window: u64) -> bool {
+    // SAFETY: no arguments; returns a handle that is not owned by the caller.
+    let fg = unsafe { GetForegroundWindow() };
+    usize::try_from(window).is_ok_and(|w| w != 0 && fg.0 as usize == w)
+}
+
+/// True when the user turned animations off (Settings > Accessibility > Visual effects >
+/// Animation effects, `SPI_GETCLIENTAREAANIMATION`). Unknown counts as "animations on".
+pub fn reduced_motion() -> bool {
+    use windows::core::BOOL;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    };
+    let mut on = BOOL(1);
+    // SAFETY: `on` is a valid, writable BOOL, the type this query writes.
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            Some(std::ptr::from_mut(&mut on).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    }
+    .is_ok();
+    ok && !on.as_bool()
+}
+
 /// True when this process's token has `BUILTIN\Administrators` enabled
 /// (`CheckTokenMembership` with no token: the thread's or the process's token). A UAC-filtered
 /// token has the group as deny-only and answers false; an elevated one, or any administrator
@@ -766,5 +909,81 @@ mod tests {
         // SAFETY: `own` was created above on this thread and is destroyed once.
         let _ = unsafe { DestroyWindow(own) };
         assert!(!console);
+    }
+
+    #[test]
+    fn overlay_style_bits_are_pure_and_drop_the_taskbar_bit() {
+        // WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST.
+        assert_eq!(OVERLAY_EX_STYLE, 0x0800_0000 | 0x80 | 0x08);
+        let from_winit = 0x0004_0000 | 0x0000_0100 | 0x0000_0010; // APPWINDOW | WINDOWEDGE | ACCEPTFILES
+        let ex = overlay_ex_style(from_winit);
+        assert!(has_overlay_ex_style(ex));
+        assert_eq!(ex & 0x0004_0000, 0);
+        // Other bits are kept.
+        assert_eq!(ex & 0x0000_0110, 0x0000_0110);
+        assert!(!has_overlay_ex_style(0));
+        // The focus guarantee does not depend on the topmost bit.
+        assert!(has_no_activate_style(0x0800_0080));
+        assert!(!has_no_activate_style(0x0800_0000));
+        assert!(!has_no_activate_style(0x0004_0000 | 0x0800_0080));
+        assert!(!has_overlay_ex_style(OVERLAY_EX_STYLE | 0x0004_0000));
+    }
+
+    #[test]
+    fn overlay_styles_read_back_on_our_own_hidden_window() {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, IsWindowVisible, WINDOW_EX_STYLE, WS_POPUP,
+        };
+        // Our own top-level window, never shown (no input, no screen capture, GC-19), created
+        // like winit creates the overlay: topmost (`AlwaysOnTop`) with WS_EX_APPWINDOW.
+        // SAFETY: a `w!` literal class name; no title, parent, menu, instance or create data;
+        // the window is destroyed below.
+        let own = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0x0004_0008),
+                w!("Static"),
+                None,
+                WS_POPUP,
+                -32000,
+                -32000,
+                1,
+                1,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .unwrap();
+        let v = u64::try_from(own.0 as usize).unwrap();
+        let before = ex_style(v);
+        let set = set_overlay_style(v);
+        let after = ex_style(v);
+        // SAFETY: `own` is a valid window handle created above.
+        let visible = unsafe { IsWindowVisible(own) }.as_bool();
+        let foreground = is_foreground(v);
+        hide_window(v);
+        // SAFETY: `own` was created above on this thread and is destroyed once.
+        let _ = unsafe { DestroyWindow(own) };
+        assert!(!has_overlay_ex_style(before));
+        assert!(
+            set,
+            "set_overlay_style did not read back: {before:#x} -> {after:#x}"
+        );
+        assert!(has_overlay_ex_style(after), "{after:#x}");
+        assert_eq!(
+            after & OVERLAY_EX_STYLE,
+            OVERLAY_EX_STYLE,
+            "ex style {after:#x}"
+        );
+        assert_eq!(after & 0x0004_0000, 0, "WS_EX_APPWINDOW left: {after:#x}");
+        // Setting the styles neither showed nor activated it.
+        assert!(!visible);
+        assert!(!foreground);
+        // Invalid handles are refused without a call.
+        assert!(!set_overlay_style(0));
+        assert!(!show_no_activate_at(0, 0, 0));
+        assert_eq!(ex_style(0), 0);
+        let _ = reduced_motion();
     }
 }

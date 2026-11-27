@@ -11,11 +11,12 @@ import { PopupRow, PopupRowMetrics } from "popup_row.slint";
 
 import { HistoryWindow, FilterItem } from "history.slint";
 import { TransformPanel, ShortcutSheet, SheetLine, SheetStrings } from "transform.slint";
-import { SettingsWindow, SText, AppRow, KindItem } from "settings.slint";
+import { SettingsWindow, SText, AppRow, KindItem, TrText } from "settings.slint";
+import { TranslateOverlay } from "translate_overlay.slint";
 import { WelcomeWindow, WText } from "welcome.slint";
 import { OrgStrings, OrgDialogState } from "organize.slint";
 
-export { SheetLine, SheetStrings, IconName, MenuEntry, SegTab, StatusHint, Theme, Strings, Seg, ClipRow, FileRow, Chip, DetailState, HistoryWindow, FilterItem, SettingsWindow, SText, AppRow, KindItem, WelcomeWindow, WText, OrgStrings, OrgDialogState }
+export { SheetLine, SheetStrings, IconName, MenuEntry, SegTab, StatusHint, Theme, Strings, Seg, ClipRow, FileRow, Chip, DetailState, HistoryWindow, FilterItem, SettingsWindow, SText, TrText, AppRow, KindItem, TranslateOverlay, WelcomeWindow, WText, OrgStrings, OrgDialogState }
 
 // The popup (Task 204): created once at start and kept hidden; shown near the cursor by the
 // shortcut, the tray or `--toggle`. All data and every decision come from Rust

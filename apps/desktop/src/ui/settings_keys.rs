@@ -6,15 +6,15 @@
 use crate::popup::keys::{key_from_text, Key, Mods};
 
 /// Number of sections in the nav (General, Capture and Privacy, History and Storage, Data and
-/// Transfer, About).
-pub const SECTION_COUNT: i32 = 5;
+/// Transfer, Translate, About).
+pub const SECTION_COUNT: i32 = 6;
 
 /// What a key does in the settings window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsKey {
     /// Ctrl+S: the same as pressing Save.
     Save,
-    /// Ctrl+1..5: the section with this 0-based index.
+    /// Ctrl+1..6: the section with this 0-based index.
     Section(u8),
     /// Up in the nav: the previous section.
     NavUp,
@@ -76,7 +76,7 @@ pub fn map_key(k: Key, m: Mods, ctx: KeyCtx) -> Option<SettingsKey> {
     match k {
         // Ctrl+S may also arrive as its control code (U+0013).
         Key::Char('s' | 'S' | '\u{13}') if ctrl => Some(SettingsKey::Save),
-        Key::Char(c @ '1'..='5') if ctrl => {
+        Key::Char(c @ '1'..='6') if ctrl => {
             let n = u8::try_from(c.to_digit(10)?).ok()?;
             Some(SettingsKey::Section(n - 1))
         }
@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn ctrl_digits_pick_a_section() {
-        for (c, n) in [('1', 0u8), ('2', 1), ('3', 2), ('4', 3), ('5', 4)] {
+        for (c, n) in [('1', 0u8), ('2', 1), ('3', 2), ('4', 3), ('5', 4), ('6', 5)] {
             assert_eq!(
                 map_key(Key::Char(c), CTRL, IDLE),
                 Some(SettingsKey::Section(n))
@@ -232,8 +232,8 @@ mod tests {
                 Some(SettingsKey::Section(n))
             );
         }
-        // There is no sixth section; plain digits are typing.
-        assert_eq!(map_key(Key::Char('6'), CTRL, IDLE), None);
+        // There is no seventh section; plain digits are typing.
+        assert_eq!(map_key(Key::Char('7'), CTRL, IDLE), None);
         assert_eq!(map_key(Key::Char('0'), CTRL, IDLE), None);
         assert_eq!(map_key(Key::Char('1'), NONE, IDLE), None);
         assert_eq!(map_key(Key::Char('1'), ALT, IDLE), None);

@@ -34,10 +34,18 @@ pub const SETTING_SECTIONS: &[(u8, &str)] = &[
     (3, "restore"),
     (3, "import"),
     (3, "data-folder"),
-    // 4 About
-    (4, "version"),
-    (4, "auto-update"),
-    (4, "check-updates"),
-    (4, "capabilities"),
-    (4, "licences"),
+    // 4 Translate (Task 606: the fifth section, so index 4; About moved from 4 to 5)
+    (4, "translate-enable"),
+    (4, "translate-shortcut"),
+    (4, "translate-direction"),
+    (4, "translate-model"),
+    (4, "translate-key"),
+    (4, "translate-test"),
+    (4, "translate-never-sent"),
+    // 5 About (section 4 until Task 606)
+    (5, "version"),
+    (5, "auto-update"),
+    (5, "check-updates"),
+    (5, "capabilities"),
+    (5, "licences"),
 ];

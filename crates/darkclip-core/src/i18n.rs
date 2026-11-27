@@ -1005,6 +1005,259 @@ messages! {
     SheetNextArea => ("Next area", "Vùng kế tiếp"),
     SheetSidebar => ("Sidebar", "Thanh bên"),
     SheetDrawer => ("Details (narrow)", "Chi tiết (hẹp)"),
+    // Translate in place: the overlay (Task 606, text from the approved prototype). No string
+    // names an app or carries clip text.
+    TranslateOvSending => (
+        "Sending {n} characters to Anthropic…",
+        "Đang gửi {n} ký tự tới Anthropic…"
+    ),
+    TranslateOvEscToCancel => ("Esc to cancel", "Esc để huỷ"),
+    TranslateOvDone => ("Translated", "Đã dịch"),
+    TranslateOvDoneDetail => (
+        "Ctrl+Z brings the original back",
+        "Ctrl+Z để trả lại câu gốc"
+    ),
+    TranslateOvCancelled => ("Cancelled, nothing replaced", "Đã huỷ, không thay gì"),
+    TranslateOvLeft => (
+        "You switched windows: the translation is on the clipboard",
+        "Bạn đã chuyển cửa sổ: bản dịch nằm trong clipboard"
+    ),
+    TranslateOvLeftDetail => ("Paste it with Ctrl+V", "Dán bằng Ctrl+V"),
+    TranslateOvNothingSent => ("Nothing was sent", "Không có gì được gửi"),
+    TranslateOvUnchanged => ("Your text is unchanged", "Câu gốc giữ nguyên"),
+    TranslateOvTryLater => (
+        "Your text is unchanged. Try again in a moment",
+        "Câu gốc giữ nguyên. Thử lại sau giây lát"
+    ),
+    TranslateOvOff => ("Translate in place is off", "Dịch tại chỗ đang tắt"),
+    TranslateOvOffDetail => (
+        "Turn it on in Settings → Translate",
+        "Bật trong Settings → Dịch"
+    ),
+    TranslateOvNoKey => ("No Anthropic key saved", "Chưa lưu key Anthropic"),
+    TranslateOvNoKeyDetail => (
+        "Save your key in Settings → Translate",
+        "Lưu key trong Settings → Dịch"
+    ),
+    TranslateOvPrivate => (
+        "Private mode is on: not translating",
+        "Đang ở chế độ Private: không dịch"
+    ),
+    TranslateOvPrivateDetail => (
+        "Switch back to Recording to use it",
+        "Chuyển về Ghi để dùng"
+    ),
+    TranslateOvTerminal => ("Not supported in terminals", "Không hỗ trợ trong terminal"),
+    TranslateOvUnknownApp => (
+        "Not translating: this app could not be identified",
+        "Không dịch: không nhận ra app này"
+    ),
+    TranslateOvExcluded => ("Not translating in this app", "Không dịch trong app này"),
+    TranslateOvExcludedDetail => (
+        "This app is on the don't-save list. Nothing was sent.",
+        "App này nằm trong danh sách không lưu. Không có gì được gửi."
+    ),
+    TranslateOvNotNormalWindow => (
+        "Not translating in this window",
+        "Không dịch trong cửa sổ này"
+    ),
+    TranslateOvKeysHeld => (
+        "Release the shortcut keys and try again",
+        "Thả các phím tắt ra rồi thử lại"
+    ),
+    TranslateOvNothingCopied => (
+        "Nothing to translate: no text was copied",
+        "Không có gì để dịch: không chép được chữ nào"
+    ),
+    TranslateOvNothingCopiedDetail => (
+        "Select the text, or click in the field, and try again",
+        "Chọn chữ, hoặc bấm vào ô, rồi thử lại"
+    ),
+    TranslateOvProtected => (
+        "Not translating: this text is marked private",
+        "Không dịch: chữ này được đánh dấu riêng tư"
+    ),
+    TranslateOvNotText => (
+        "Not translating: the copy is not plain text",
+        "Không dịch: nội dung chép không phải chữ thường"
+    ),
+    TranslateOvSensitive => (
+        "Looks like a password or key: not sent",
+        "Trông giống mật khẩu hoặc key: không gửi"
+    ),
+    TranslateOvSensitiveDetail => ("Nothing left this computer", "Không có gì rời khỏi máy"),
+    TranslateOvEmpty => (
+        "Nothing to translate: the text is empty",
+        "Không có gì để dịch: chữ đang trống"
+    ),
+    TranslateOvTooLong => (
+        "Too long: up to 8000 characters",
+        "Quá dài: tối đa 8000 ký tự"
+    ),
+    TranslateOvClipboardChanged => (
+        "The clipboard changed: nothing replaced",
+        "Clipboard đã thay đổi: không thay gì"
+    ),
+    TranslateOvClipboardChangedDetail => (
+        "Your newer copy was kept",
+        "Bản bạn vừa chép được giữ nguyên"
+    ),
+    TranslateOvWriteFailed => (
+        "Could not put the translation on the clipboard",
+        "Không đưa được bản dịch vào clipboard"
+    ),
+    TranslateOvAuth => (
+        "Could not translate: invalid key",
+        "Không dịch được: key không hợp lệ"
+    ),
+    TranslateOvAuthDetail => (
+        "Your text is unchanged. Check the key in Settings → Translate",
+        "Câu gốc giữ nguyên. Kiểm tra key trong Settings → Dịch"
+    ),
+    TranslateOvRateLimited => (
+        "Could not translate: too many requests",
+        "Không dịch được: quá nhiều yêu cầu"
+    ),
+    TranslateOvOverloaded => (
+        "Could not translate: Anthropic is busy",
+        "Không dịch được: Anthropic đang quá tải"
+    ),
+    TranslateOvNetwork => (
+        "Could not translate: no connection",
+        "Không dịch được: không kết nối được"
+    ),
+    TranslateOvRefused => (
+        "The model declined to translate this text",
+        "Model từ chối dịch đoạn này"
+    ),
+    TranslateOvOther => ("Could not translate", "Không dịch được"),
+    // Translate in place: Settings → Translate (Task 606, text from the approved prototype).
+    SettingsSectionTranslate => ("Translate", "Dịch"),
+    SettingsDescTranslate => (
+        "Translate what you just typed, right in the field, with your Anthropic key.",
+        "Dịch chữ bạn vừa gõ ngay trong ô, bằng key Anthropic của bạn."
+    ),
+    SettingsTrEnable => ("Translate in place", "Dịch tại chỗ"),
+    SettingsTrEnableNote => (
+        "Each press of the shortcut sends the selected text (or the whole field) to Anthropic",
+        "Mỗi lần bấm phím tắt, chữ đang chọn (hoặc cả ô) được gửi tới Anthropic"
+    ),
+    SettingsTrUnavailable => (
+        "Not available on this platform",
+        "Không có trên hệ điều hành này"
+    ),
+    SettingsTrHow => ("How it works", "Cách dùng"),
+    SettingsTrShortcut => ("Shortcut", "Phím tắt"),
+    SettingsTrShortcutNote => ("Ctrl+C is not affected", "Ctrl+C không bị ảnh hưởng"),
+    SettingsTrShortcutSameAsPopup => (
+        "Same as the popup shortcut: choose another one",
+        "Trùng phím tắt mở cửa sổ nhanh: chọn phím khác"
+    ),
+    SettingsTrDirection => ("Direction", "Chiều dịch"),
+    SettingsTrDirectionNote => (
+        "Auto: Vietnamese → English, anything else → Vietnamese",
+        "Tự động: tiếng Việt → Anh, còn lại → Việt"
+    ),
+    SettingsTrDirAuto => ("Auto", "Tự động"),
+    SettingsTrDirEn => ("Always to English", "Luôn sang tiếng Anh"),
+    SettingsTrDirVi => ("Always to Vietnamese", "Luôn sang tiếng Việt"),
+    SettingsTrModel => ("Model", "Model"),
+    SettingsTrModelNote => (
+        "Opus reads more naturally; Haiku is much faster and cheaper",
+        "Opus dịch tự nhiên hơn; Haiku nhanh và rẻ hơn nhiều"
+    ),
+    SettingsTrModelOpus => ("Claude Opus 5.5 (quality)", "Claude Opus 5.5 (chất lượng)"),
+    SettingsTrModelHaiku => (
+        "Claude Haiku 5.5 (fast, cheap)",
+        "Claude Haiku 5.5 (nhanh, rẻ)"
+    ),
+    SettingsTrKeyCard => ("API key", "API key"),
+    SettingsTrKey => ("Anthropic key", "Key Anthropic"),
+    SettingsTrKeyNone => ("No key yet", "Chưa có key"),
+    SettingsTrKeyStored => (
+        "Stored in Windows Credential Manager ({key})",
+        "Đã lưu trong Windows Credential Manager ({key})"
+    ),
+    SettingsTrKeyPlaceholder => ("sk-ant-…", "sk-ant-…"),
+    SettingsTrKeySave => ("Save", "Lưu"),
+    SettingsTrKeyReplace => ("Replace key…", "Thay key…"),
+    SettingsTrKeyRemove => ("Remove key", "Xoá key"),
+    SettingsTrKeyEmpty => ("Paste a key first", "Dán key vào trước"),
+    SettingsTrKeyTooLong => (
+        "This key is too long (over 2560 bytes): not saved",
+        "Key quá dài (hơn 2560 byte): chưa lưu"
+    ),
+    SettingsTrKeyStoreFailed => (
+        "Could not store the key (code {n})",
+        "Không lưu được key (mã {n})"
+    ),
+    SettingsTrKeyRemoveFailed => (
+        "Could not remove the key (code {n})",
+        "Không xoá được key (mã {n})"
+    ),
+    SettingsTrKeySaved => ("Key saved", "Đã lưu key"),
+    SettingsTrKeyRemoved => ("Key removed", "Đã xoá key"),
+    SettingsTrTest => ("Test", "Thử"),
+    SettingsTrTestNote => (
+        "Translates a fixed sample to check the key and the speed",
+        "Dịch một câu mẫu cố định để kiểm tra key và tốc độ"
+    ),
+    SettingsTrTestButton => ("Test", "Thử dịch"),
+    SettingsTrTestRunning => ("Testing…", "Đang thử…"),
+    SettingsTrTestOk => (
+        "OK: \"Xin chào\" → \"{out}\" in {secs} s",
+        "OK: \"Xin chào\" → \"{out}\" trong {secs} s"
+    ),
+    SettingsTrTestNoKey => ("Save a key first", "Cần lưu key trước"),
+    SettingsTrNeverCard => ("Never sent", "Không bao giờ được gửi"),
+    SettingsTrNever1 => ("Text in excluded apps", "Chữ trong app bị loại trừ"),
+    SettingsTrNever1Note => (
+        "Password managers, Darkshot and your \"Don't save from these apps\" list",
+        "Trình quản lý mật khẩu, Darkshot và danh sách \"Không lưu từ các app này\""
+    ),
+    SettingsTrNever2 => ("Content marked private", "Nội dung có đánh dấu riêng tư"),
+    SettingsTrNever2Note => (
+        "Windows and password-manager markers, including \"don't sync to cloud\"",
+        "Đánh dấu của Windows và trình quản lý mật khẩu, kể cả \"không đồng bộ lên cloud\""
+    ),
+    SettingsTrNever3 => (
+        "Text that looks like a password, key or card number",
+        "Chữ trông giống mật khẩu, key, số thẻ"
+    ),
+    SettingsTrNever3Note => (
+        "Detected on this computer, before sending",
+        "Phát hiện ngay trên máy, trước khi gửi"
+    ),
+    SettingsTrNever4 => (
+        "Anything when you don't press the shortcut",
+        "Bất cứ thứ gì khi bạn không bấm phím"
+    ),
+    SettingsTrNever4Note => (
+        "Nothing runs in the background; clip history is never sent",
+        "Không chạy nền; lịch sử clip không bao giờ được gửi"
+    ),
+    SettingsTrConsentTitle => ("Turn on translate in place?", "Bật dịch tại chỗ?"),
+    SettingsTrConsent1 => (
+        "Each time you press {key}, the selected text is sent to Anthropic (api.anthropic.com) for translation, with your key.",
+        "Mỗi lần bạn bấm {key}, chữ đang chọn được gửi tới Anthropic (api.anthropic.com) để dịch, bằng key của bạn."
+    ),
+    SettingsTrConsent2 => (
+        "With nothing selected, the whole field is sent (up to 8000 characters).",
+        "Nếu không chọn gì, cả ô đang gõ được gửi (tối đa 8000 ký tự)."
+    ),
+    SettingsTrConsent3 => (
+        "Only that text is sent. No clip history, app names, window titles or machine details.",
+        "Chỉ gửi chữ đó. Không gửi lịch sử clip, tên app, tiêu đề cửa sổ hay thông tin máy."
+    ),
+    SettingsTrConsent4 => (
+        "The key is stored in Windows Credential Manager, never in the settings file or logs.",
+        "Key được lưu trong Windows Credential Manager, không nằm trong file cài đặt hay log."
+    ),
+    SettingsTrConsent5 => (
+        "Anthropic processes the text under its data policy. You can turn this off at any time.",
+        "Anthropic xử lý chữ theo chính sách dữ liệu của họ. Bạn có thể tắt bất cứ lúc nào."
+    ),
+    SettingsTrConsentOn => ("Turn on", "Bật"),
 }
 
 /// Messages allowed to read the same in both languages.
@@ -1037,6 +1290,9 @@ pub const SAME_IN_BOTH: &[Msg] = &[
     Msg::PlatformWindows,
     Msg::PlatformMacos,
     Msg::PlatformLinux,
+    Msg::SettingsTrModel,
+    Msg::SettingsTrKeyCard,
+    Msg::SettingsTrKeyPlaceholder,
 ];
 
 #[cfg(test)]

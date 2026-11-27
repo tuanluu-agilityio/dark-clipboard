@@ -311,7 +311,8 @@ fn every_setting_is_in_the_table_exactly_once() {
         "an id is listed twice in SETTING_SECTIONS"
     );
     for (n, id) in &t {
-        assert!(*n <= 4, "{id}: section {n} does not exist");
+        // Six sections since Task 606 (Translate is 4, About moved to 5).
+        assert!(*n <= 5, "{id}: section {n} does not exist");
     }
     // The settings of the old window must all be placed.
     for id in [
@@ -343,6 +344,14 @@ fn every_setting_is_in_the_table_exactly_once() {
         "check-updates",
         "capabilities",
         "licences",
+        // Task 606.
+        "translate-enable",
+        "translate-shortcut",
+        "translate-direction",
+        "translate-model",
+        "translate-key",
+        "translate-test",
+        "translate-never-sent",
     ] {
         assert!(ids.contains(id), "setting {id} is missing from the table");
     }
@@ -467,6 +476,67 @@ fn always_protected_has_no_control_no_callback_and_no_writable_property() {
         "win.get_protected",
     ] {
         assert!(!host.contains(w), "settings_host.rs uses `{w}`");
+    }
+}
+
+/// The body of `component <name>` in `src` (up to the next top-level component or global).
+fn component_body<'a>(src: &'a str, name: &str) -> &'a str {
+    let start = src.find(&format!("component {name} "));
+    assert!(start.is_some(), "component {name} is missing");
+    let start = start.unwrap_or(0);
+    let body = &src[start..];
+    let end = [
+        "
+component ",
+        "
+export component ",
+        "
+export global ",
+        "
+// ",
+    ]
+    .iter()
+    .filter_map(|m| body[1..].find(m).map(|i| i + 1))
+    .min()
+    .unwrap_or(body.len());
+    &body[..end]
+}
+
+/// Task 606: the "Never sent" card of Settings > Translate is locked like "Always protected":
+/// four rows, no control, no callback, nothing writable (GC-07 style). Translate sits in
+/// section 4 and About in section 5.
+#[test]
+fn never_sent_has_no_control_and_translate_is_section_four() {
+    let parts = read("ui/settings_parts.slint");
+    for name in ["TrNeverCard", "LockedRow"] {
+        let body = component_body(&parts, name);
+        for word in FORBIDDEN_IN_PROTECTED.iter().chain(&["in-out", "focus"]) {
+            assert!(!body.contains(word), "{name} contains `{word}`");
+        }
+    }
+    assert_eq!(
+        component_body(&parts, "TrNeverCard")
+            .matches("LockedRow {")
+            .count(),
+        4
+    );
+    let t = table();
+    for (n, id) in &t {
+        if id.starts_with("translate-") {
+            assert_eq!(*n, 4, "{id} must be in Translate (4)");
+        }
+    }
+    for id in [
+        "version",
+        "auto-update",
+        "check-updates",
+        "capabilities",
+        "licences",
+    ] {
+        assert!(
+            t.iter().any(|(n, i)| *n == 5 && i == id),
+            "{id} not in About (5)"
+        );
     }
 }
 
