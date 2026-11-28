@@ -34,7 +34,9 @@ mod wipe;
 use crate::config::CaptureConfig;
 use crate::events::{ApiError, AppEvent, SkipCounters};
 use actor::Actor;
-pub use claim::{ClaimError, ClaimedText, CLAIM_REPLY_SLACK_MS, CLAIM_WINDOW_MS};
+pub use claim::{
+    ClaimError, ClaimedText, CLAIM_REPLY_SLACK_MS, CLAIM_WINDOW_MS, UNCLAIMED_TAIL_MS,
+};
 use darkclip_core::{
     CaptureMode, ClipId, Clock, CollectionId, Lang, PrivacyPolicy, RetentionPolicy,
 };
@@ -75,7 +77,9 @@ pub enum ActorCommand {
     /// The next change from that app (or its F-14 ownerless flush) is replied as text with
     /// the seq it was read at (Task 603b) and never stored. Every privacy skip still wins; a
     /// second request while one is armed replies `Busy`; no change in time replies
-    /// `Expired`. The caller waits at most `CLAIM_WINDOW_MS + CLAIM_REPLY_SLACK_MS`.
+    /// `Expired`. The caller waits at most `CLAIM_WINDOW_MS + CLAIM_REPLY_SLACK_MS`. A slot
+    /// that ends without a claim skips that app's late copy for `UNCLAIMED_TAIL_MS` after
+    /// its deadline, until our next own write (Task 610).
     ExpectForeignCopy {
         app_id: String,
         reply: Sender<Result<ClaimedText, ClaimError>>,
@@ -342,6 +346,7 @@ impl CaptureHandle {
             excluded_recent: None,
             claim: None,
             claimed_recent: None,
+            unclaimed_tail: None,
             last_stored: None,
             next_retention: Instant::now(),
             fts_merge_due: None,

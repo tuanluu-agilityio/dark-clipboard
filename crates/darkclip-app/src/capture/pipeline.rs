@@ -283,19 +283,19 @@ impl Actor {
         let others: Vec<&ClipboardSource> = others.iter().collect();
         // Task 603: decided from the snapshot's metadata only, before anything is read. A
         // snapshot newer than the signalled change counts as first seen now.
-        let claimed = self.claim.is_some() && {
-            let seen_at = if newer {
-                std::time::Instant::now()
-            } else {
-                p.seen_at
-            };
-            self.claims(source.as_ref(), seen_at)
+        let seen_at = if newer {
+            std::time::Instant::now()
+        } else {
+            p.seen_at
         };
+        let claimed = self.claim.is_some() && self.claims(source.as_ref(), seen_at);
         // Task 603 / 603b: the late ownerless flush of a claimed copy, and the same app's
         // follow-up copy (select-all retry), are never stored; counted as `TranslateSource`.
+        // Task 610: nor the target's late copy (or its flush) after an unclaimed slot.
         if !claimed
             && ((ownerless && self.recent_claim_flush(seq, p.signal_at, &meta))
-                || self.recent_claim_follow_up(source.as_ref(), seq, p.signal_at))
+                || self.recent_claim_follow_up(source.as_ref(), seq, p.signal_at)
+                || self.unclaimed_tail_skips(source.as_ref(), seq, seen_at, p.signal_at, &meta))
         {
             self.drop_gated(seq, held.unwrap_or(SkipReason::TranslateSource));
             return;

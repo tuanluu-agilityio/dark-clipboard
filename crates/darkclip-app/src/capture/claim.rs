@@ -12,6 +12,12 @@
 //! `decide_translate_read` runs with every privacy step, and only `Decision::Read` reads
 //! text/plain (GC-03). A late ownerless flush of a claimed change is skipped too
 //! (`recent_claim_flush`). No logging (GC-06): replies carry skip reasons only.
+//!
+//! Task 610 (Q-08): a slot that ends without a claim leaves an unclaimed tail. The target's
+//! copy arriving after the deadline (a slow app answering the synthetic Ctrl+C late), and
+//! its ownerless flush, are skipped as `TranslateSource` and never stored, for
+//! `UNCLAIMED_TAIL_MS` after the deadline and until our own next write. Decided from
+//! metadata only, like the claim.
 
 use super::actor::Actor;
 use super::pending::{has_ole_signature, within_ms_or_earlier, ExcludedRecent, MAX_HEIR_SEQ_GAP};
@@ -28,7 +34,13 @@ use std::time::{Duration, Instant};
 
 /// How long an armed slot waits for the target's change (covers the Ctrl+A, Ctrl+C retry
 /// and a slow app; Task 603b, I1 R1).
-pub const CLAIM_WINDOW_MS: u64 = 1_000;
+/// 3000 since Task 610: Chrome answers the synthetic Ctrl+C later than 1 s (Q-08). A claimed
+/// change still replies as soon as it is read.
+pub const CLAIM_WINDOW_MS: u64 = 3_000;
+
+/// How long after an unclaimed slot's deadline (signal time) the target's late copy is
+/// still skipped (Task 610).
+pub const UNCLAIMED_TAIL_MS: u64 = 5_000;
 
 /// The flow's receive timeout for a claim reply is `CLAIM_WINDOW_MS` plus this: a change seen
 /// just before the deadline still waits for its burst cap (500 ms) and the read retries.
@@ -75,6 +87,11 @@ pub(super) struct ClaimSlot {
     app_id: String,
     armed_at: Instant,
     deadline: Instant,
+    /// The actor clock at arming (signal-time domain) and the window in ms, for the tail.
+    armed_signal_at: Timestamp,
+    window_ms: u64,
+    /// `last_self_write_seq` at arming: a later own write ends the tail.
+    self_write_at_arm: Option<u64>,
     reply: ClaimReply,
 }
 
@@ -89,6 +106,9 @@ impl ClaimSlot {
             app_id,
             armed_at,
             deadline: armed_at.checked_add(window).unwrap_or(armed_at),
+            armed_signal_at: Timestamp(0),
+            window_ms: u64::try_from(window.as_millis()).unwrap_or(u64::MAX),
+            self_write_at_arm: None,
             reply,
         }
     }
@@ -99,6 +119,23 @@ impl ClaimSlot {
     pub(super) fn covers(&self, at: Instant) -> bool {
         self.armed_at <= at && at < self.deadline
     }
+}
+
+/// Task 610: what is left of a slot that ended without a claim. The target app's change
+/// first seen after arming, at most `window + UNCLAIMED_TAIL_MS` after arming by signal time
+/// (and by actor time, so a wall-clock jump cannot stretch it), with no own write since
+/// arming, is skipped and never stored.
+pub(super) struct UnclaimedTail {
+    app_id: String,
+    armed_at: Instant,
+    armed_signal_at: Timestamp,
+    /// Signal-time bound: ms after `armed_signal_at`.
+    span_ms: u64,
+    /// Actor-time bound.
+    until: Instant,
+    self_write_at_arm: Option<u64>,
+    /// The last change this tail skipped (seq, signal time), for its late ownerless flush.
+    skipped: Option<(u64, Timestamp)>,
 }
 
 /// The last claimed change, for its late ownerless OLE flush and the same app's follow-up
@@ -143,6 +180,22 @@ impl Actor {
         Duration::from_millis(CLAIM_WINDOW_MS)
     }
 
+    /// A slot ended without a claim at `now`: its tail starts (Task 610).
+    fn start_tail(&mut self, c: &ClaimSlot, now: Instant) {
+        self.unclaimed_tail = Some(UnclaimedTail {
+            app_id: c.app_id.clone(),
+            armed_at: c.armed_at,
+            armed_signal_at: c.armed_signal_at,
+            span_ms: c.window_ms.saturating_add(UNCLAIMED_TAIL_MS),
+            until: now
+                .max(c.deadline)
+                .checked_add(Duration::from_millis(UNCLAIMED_TAIL_MS))
+                .unwrap_or(now),
+            self_write_at_arm: c.self_write_at_arm,
+            skipped: None,
+        });
+    }
+
     /// `ExpectForeignCopy`: arms the slot, or replies `Busy` while another one is live.
     pub(super) fn arm_claim(&mut self, app_id: String, reply: ClaimReply) {
         let now = Instant::now();
@@ -151,7 +204,19 @@ impl Actor {
             let _ = reply.send(Err(ClaimError::Busy));
             return;
         }
-        self.claim = Some(ClaimSlot::new(app_id, now, self.claim_window(), reply));
+        // A tail for another app ends; the same app's tail is kept (its late copy may still
+        // come while the new slot is live, which cannot claim a change seen before arming).
+        if self
+            .unclaimed_tail
+            .as_ref()
+            .is_some_and(|t| t.app_id.to_lowercase() != app_id.to_lowercase())
+        {
+            self.unclaimed_tail = None;
+        }
+        let mut slot = ClaimSlot::new(app_id, now, self.claim_window(), reply);
+        slot.armed_signal_at = self.clock.now();
+        slot.self_write_at_arm = self.last_self_write_seq;
+        self.claim = Some(slot);
     }
 
     /// The slot cannot expire while a change it covers is still pending: that change is
@@ -177,6 +242,7 @@ impl Actor {
         let due = self.claim.as_ref().is_some_and(|c| now >= c.deadline) && !self.claim_held();
         if due {
             if let Some(c) = self.claim.take() {
+                self.start_tail(&c, now);
                 let _ = c.reply.send(Err(ClaimError::Expired));
             }
         }
@@ -219,6 +285,7 @@ impl Actor {
     pub(super) fn claim_gated(&mut self) {
         if self.policy.mode == CaptureMode::Private {
             if let Some(c) = self.claim.take() {
+                self.start_tail(&c, Instant::now());
                 let _ = c.reply.send(Err(ClaimError::Skipped(SkipReason::Private)));
             }
         }
@@ -304,6 +371,50 @@ impl Actor {
                 .is_some_and(|w| w > r.seq && w <= seq)
             && within_ms_or_earlier(r.signal_at, signal_at, cap_ms)
             && has_ole_signature(meta)
+    }
+
+    /// Task 610: the change (its primary source, or for an ownerless change the F-14 rule 2
+    /// heir), first seen at `seen_at` and first signalled at `signal_at`, falls in the
+    /// unclaimed tail: the target app's late copy, or the ownerless OLE flush of a change the
+    /// tail skipped (as `recent_claim_flush`). Decided from metadata only. Skip only: the
+    /// caller marks it processed and never stores it. Asked only for a change that is not
+    /// claimed, so a live slot always wins.
+    pub(super) fn unclaimed_tail_skips(
+        &mut self,
+        source: Option<&ClipboardSource>,
+        seq: u64,
+        seen_at: Instant,
+        signal_at: Timestamp,
+        meta: &ClipboardMeta,
+    ) -> bool {
+        let Some(t) = &self.unclaimed_tail else {
+            return false;
+        };
+        if Instant::now() > t.until || self.last_self_write_seq != t.self_write_at_arm {
+            self.unclaimed_tail = None;
+            return false;
+        }
+        let cap_ms = u64::try_from(self.max_burst_wait.as_millis()).unwrap_or(u64::MAX);
+        let skip = match source {
+            Some(s) => {
+                seen_at >= t.armed_at
+                    && within_ms_or_earlier(t.armed_signal_at, signal_at, t.span_ms)
+                    && same_app(s, &t.app_id)
+            }
+            None => {
+                t.skipped.is_some_and(|(s, at)| {
+                    seq.checked_sub(s)
+                        .is_some_and(|gap| (1..=MAX_HEIR_SEQ_GAP).contains(&gap))
+                        && within_ms_or_earlier(at, signal_at, cap_ms)
+                }) && has_ole_signature(meta)
+            }
+        };
+        if skip {
+            if let Some(t) = &mut self.unclaimed_tail {
+                t.skipped = Some((seq, signal_at));
+            }
+        }
+        skip
     }
 
     fn claim_outcome(&mut self, change: ClaimedChange<'_>) -> Result<Redacted<String>, ClaimError> {

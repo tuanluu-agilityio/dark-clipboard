@@ -507,20 +507,22 @@ All rows **untested** (no hardware, Q-04).
 
 Owner rows. Every row is **untested**: nothing here was run on a real machine, and no product row is marked from the G1 spike (the spike passed in Zalo, Slack and VS Code, but that was `spikes/translate-hotkey/`, not the product). Needs an Anthropic API key. Never use real passwords or private text; use a sample sentence. Open item: Q-08.
 
+> **Changed by Task 610 (2026-11-28):** the owner ran these rows on 0.3.0 (Q-08). Mapping from the owner's report: "focus etc." covers the overlay focus and the selection rows; "key" covers the key and the Test button rows; "DPI, monitors, VI" covers the last two rows. The history row failed in Zalo web on Chrome (a copy that Chrome answered after the claim window expired was stored); Task 610 fixes it, and the row stays pending until the owner re-tests it on the first press, after a failure and after a success.
+
 | Check | Expect | Status |
 |---|---|---|
-| Overlay focus in Notepad, Zalo, Slack and Chrome: select text, press the shortcut | The caret stays where it was, the paste lands in that field, the overlay's cancel (✕) does not take focus, and the log has no `translate_overlay_focus` line | **untested** |
-| Selection versus whole field (select a word, then select nothing), then `Ctrl+Z` | The selection is replaced; with nothing selected the whole field is replaced (up to 8000 characters); one `Ctrl+Z` brings the original back | **untested** |
-| Open the history window after translating | Neither the source text nor the translation is stored; the previous clipboard text is back on the clipboard (text only) | **untested** |
-| Capture Paused, then capture off, then Private | Paused and off still translate and store nothing; Private is refused with the overlay message | **untested** |
-| Foreground app KeePassXC (excluded) | Refused; nothing is sent | **untested** |
-| Foreground window a terminal (Windows Terminal, console) | Refused with "not supported in terminals"; the running program is not interrupted | **untested** |
-| Press `Esc` while the overlay says sending; press the shortcut twice quickly; press it with a modifier still held | Esc cancels and the text is unchanged; a second press while running is ignored; held keys are refused | **untested** |
-| Copy something else while the translation waits | The newer copy wins and nothing is pasted over it (`clipboard_changed` in the log) | **untested** |
-| Offline, wrong key, no key saved | Each shows its own overlay message, the text is unchanged and the Settings hint is named | **untested** |
-| Consent dialog: Cancel, `Esc`, Turn on | Cancel and Esc leave it off; Turn on enables it; the dialog lists what is sent, including the whole field and the shortcut shown | **untested** |
-| Key: Save, Replace, Remove | Only a mask is shown after Save; Replace overwrites; Remove deletes it from Credential Manager and translate then says no key | **untested** |
-| Settings > Translate Test button | One fixed sample is translated and "OK ... in N s" shows; with no key it says to save a key first | **untested** |
-| Shortcut clash: set the translate shortcut equal to the popup shortcut | The clash is reported and not saved; both shortcuts keep working | **untested** |
-| DPI 100 % and 150 %, and two monitors | The overlay appears near the pointer on the right monitor, is not cut off and does not take focus | **untested** |
-| Vietnamese text in and out; Windows animations off | The text arrives intact; the overlay still appears and disappears correctly | **untested** |
+| Overlay focus in Notepad, Zalo, Slack and Chrome: select text, press the shortcut | The caret stays where it was, the paste lands in that field, the overlay's cancel (✕) does not take focus, and the log has no `translate_overlay_focus` line | **T** (owner, 0.3.0, 2026-11-28) |
+| Selection versus whole field (select a word, then select nothing), then `Ctrl+Z` | The selection is replaced; with nothing selected the whole field is replaced (up to 8000 characters); one `Ctrl+Z` brings the original back | **T** (owner, 0.3.0, 2026-11-28) |
+| Open the history window after translating | Neither the source text nor the translation is stored; the previous clipboard text is back on the clipboard (text only) | **FAIL** (owner, 0.3.0, 2026-11-28) in Zalo web on Chrome: the source text and the translation were stored, source `chrome.exe`; Notepad clean. Fixed in Task 610, re-test pending |
+| Capture Paused, then capture off, then Private | Paused and off still translate and store nothing; Private is refused with the overlay message | **T** (owner, 0.3.0, 2026-11-28) |
+| Foreground app KeePassXC (excluded) | Refused; nothing is sent | **untested** (skipped by the owner, 2026-11-28) |
+| Foreground window a terminal (Windows Terminal, console) | Refused with "not supported in terminals"; the running program is not interrupted | **untested** (skipped by the owner, 2026-11-28) |
+| Press `Esc` while the overlay says sending; press the shortcut twice quickly; press it with a modifier still held | Esc cancels and the text is unchanged; a second press while running is ignored; held keys are refused | **T** (owner, 0.3.0, 2026-11-28) |
+| Copy something else while the translation waits | The newer copy wins and nothing is pasted over it (`clipboard_changed` in the log) | **untested** (owner, 0.3.0, 2026-11-28: not testable by hand, the translation is too fast; covered by the unit test `newer_user_copy_during_api_wait_is_not_overwritten`) |
+| Offline, wrong key, no key saved | Each shows its own overlay message, the text is unchanged and the Settings hint is named | **T** (owner, 0.3.0, 2026-11-28) |
+| Consent dialog: Cancel, `Esc`, Turn on | Cancel and Esc leave it off; Turn on enables it; the dialog lists what is sent, including the whole field and the shortcut shown | **T** (owner, 0.3.0, 2026-11-28) |
+| Key: Save, Replace, Remove | Only a mask is shown after Save; Replace overwrites; Remove deletes it from Credential Manager and translate then says no key | **T** (owner, 0.3.0, 2026-11-28) |
+| Settings > Translate Test button | One fixed sample is translated and "OK ... in N s" shows; with no key it says to save a key first | **T** (owner, 0.3.0, 2026-11-28) |
+| Shortcut clash: set the translate shortcut equal to the popup shortcut | The clash is reported and not saved; both shortcuts keep working | **T** (owner, 0.3.0, 2026-11-28) |
+| DPI 100 % and 150 %, and two monitors | The overlay appears near the pointer on the right monitor, is not cut off and does not take focus | **T** (owner, 0.3.0, 2026-11-28) |
+| Vietnamese text in and out; Windows animations off | The text arrives intact; the overlay still appears and disappears correctly | **T** (owner, 0.3.0, 2026-11-28) |

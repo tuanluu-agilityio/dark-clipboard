@@ -135,9 +135,10 @@ fn claimed_change_is_returned_and_never_stored() {
     h.fake
         .copy_burst_at(vec![(Timestamp(T0), owned("zalo.exe", "lan hai"))]);
     assert_eq!(claim_reply(&rx), Ok("lan hai".to_string()));
-    // Beyond the same-app follow-up skip (Task 603b: 1500 ms by signal time).
+    // Beyond the same-app follow-up skip (Task 603b: burst cap + claim window, 3500 ms by
+    // signal time since Task 610).
     h.fake.copy_burst_at(vec![(
-        Timestamp(T0 + 2_000),
+        Timestamp(T0 + 4_000),
         owned("zalo.exe", "stored again"),
     )]);
     let (id, before) = h.wait_added();
@@ -557,8 +558,13 @@ fn claim_expires_without_activity() {
         took < Duration::from_millis(CLAIM_WINDOW_MS + 500),
         "{took:?}"
     );
-    // Disarmed: a later change from the target is stored as usual.
-    h.fake.copy(owned("zalo.exe", "later text"));
+    // Disarmed: a later change from the target, past the unclaimed tail (Task 610), is
+    // stored as usual.
+    let after_tail = T0 + i64::try_from(CLAIM_WINDOW_MS + UNCLAIMED_TAIL_MS).unwrap() + 1;
+    h.fake.copy_burst_at(vec![(
+        Timestamp(after_tail),
+        owned("zalo.exe", "later text"),
+    )]);
     h.wait_added();
     assert_eq!(h.fake.snapshot_meta_calls(), 1);
 }
