@@ -150,13 +150,14 @@ fn new_arm_for_same_app_keeps_tail_and_new_claim_wins() {
         }
         long_window(&h);
         let rx = arm(&h, second_app);
+        // Kept, whatever app the second press is for (tails are per app): the late copy
+        // is skipped, never stored.
+        let seen = h.wait_skip(SkipReason::TranslateSource);
+        assert!(no_store_events(&seen), "{seen:?}");
+        assert_eq!(translate_skips(&h), 1);
+        assert_eq!(h.fake.read_calls(), 0);
+        assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
         if second_app == "chrome.exe" {
-            // Kept: the late copy is skipped, never stored.
-            let seen = h.wait_skip(SkipReason::TranslateSource);
-            assert!(no_store_events(&seen), "{seen:?}");
-            assert_eq!(translate_skips(&h), 1);
-            assert_eq!(h.fake.read_calls(), 0);
-            assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
             // The new slot wins for the next change from the target.
             h.fake.copy(owned("chrome.exe", "second press"));
             assert_eq!(claim_reply(&rx), Ok("second press".to_string()));
@@ -164,16 +165,107 @@ fn new_arm_for_same_app_keeps_tail_and_new_claim_wins() {
             let between = h.sentinel();
             assert!(no_store_events(&between), "{between:?}");
             assert_eq!(h.clip_count(), 1);
-        } else {
-            // Arming for another app clears the tail: the change is stored as before.
-            let (id, _) = h.wait_added();
-            assert_eq!(
-                h.ro().get_clip(&id).unwrap().unwrap().preview,
-                "late source"
-            );
-            assert_eq!(translate_skips(&h), 0);
         }
+        assert!(!h.stored_previews().iter().any(|p| p == "late source"));
     }
+}
+
+#[test]
+fn arm_for_other_app_replaces_live_slot_and_both_late_copies_are_skipped() {
+    // Press in A, Esc during the copy wait (A's slot stays live), then press in B: B's arm
+    // replaces A's slot (A's requester gets `Expired`) instead of replying `Busy`.
+    let h = start(PrivacyPolicy::default());
+    long_window(&h);
+    let rx_a = arm(&h, "zalo.exe");
+    short_window(&h);
+    let rx_b = arm(&h, "chrome.exe");
+    assert_eq!(claim_reply(&rx_a), Err(ClaimError::Expired));
+    // A's late copy: skipped by A's tail.
+    h.fake
+        .copy_burst_at(vec![(Timestamp(T0 + 500), owned("zalo.exe", "late a"))]);
+    h.wait_skip(SkipReason::TranslateSource);
+    // B's slot expires unclaimed; B's late copy is skipped by B's tail, and A's tail is
+    // still there.
+    assert_eq!(claim_reply(&rx_b), Err(ClaimError::Expired));
+    h.fake
+        .copy_burst_at(vec![(Timestamp(T0 + 600), owned("chrome.exe", "late b"))]);
+    h.wait_skip(SkipReason::TranslateSource);
+    h.fake.copy_burst_at(vec![(
+        Timestamp(T0 + 700),
+        owned("zalo.exe", "late a again"),
+    )]);
+    h.wait_skip(SkipReason::TranslateSource);
+    assert_eq!(translate_skips(&h), 3);
+    assert_eq!(h.fake.read_calls(), 0);
+    // A new press in B claims B's copy.
+    long_window(&h);
+    let rx = arm(&h, "chrome.exe");
+    h.fake.copy(owned("chrome.exe", "claimed b"));
+    assert_eq!(claim_reply(&rx), Ok("claimed b".to_string()));
+    let between = h.sentinel();
+    assert!(no_store_events(&between), "{between:?}");
+    assert_eq!(h.clip_count(), 1);
+    let previews = h.stored_previews();
+    for text in ["late a", "late b", "late a again", "claimed b"] {
+        assert!(!previews.iter().any(|p| p == text), "{text}");
+    }
+}
+
+#[test]
+fn tails_are_capped_at_four() {
+    let h = start(PrivacyPolicy::default());
+    let apps = ["a1.exe", "a2.exe", "a3.exe", "a4.exe", "a5.exe"];
+    for app in apps {
+        expired(&h, app);
+    }
+    // The oldest tail (a1) was dropped: its late copy is stored.
+    h.fake
+        .copy_burst_at(vec![(Timestamp(T0 + 500), owned("a1.exe", "late a1"))]);
+    let (id, _) = h.wait_added();
+    assert_eq!(h.ro().get_clip(&id).unwrap().unwrap().preview, "late a1");
+    assert_eq!(translate_skips(&h), 0);
+    // The four newest are kept.
+    for (i, app) in apps[1..].iter().enumerate() {
+        let at = T0 + 600 + i64::try_from(i).unwrap() * 10;
+        h.fake
+            .copy_burst_at(vec![(Timestamp(at), owned(app, "late copy"))]);
+        h.wait_skip(SkipReason::TranslateSource);
+    }
+    assert_eq!(translate_skips(&h), 4);
+    let between = h.sentinel();
+    assert!(no_store_events(&between), "{between:?}");
+    assert_eq!(h.clip_count(), 2);
+}
+
+#[test]
+fn change_first_seen_inside_tail_is_skipped_when_processed_after_it() {
+    // A 100 ms tail; the change is first seen inside it, then waits out the burst cap
+    // (500 ms, long debounce) and is processed after the tail's actor-time end.
+    let h = start_with(
+        PrivacyPolicy::default(),
+        RetentionPolicy::default(),
+        slow_debounce(),
+        |_| {},
+    );
+    h.cap().hooks.unclaimed_tail_ms.store(100, Ordering::SeqCst);
+    expired(&h, "chrome.exe");
+    let first_seen = Instant::now();
+    h.fake.copy_burst_at(vec![(
+        Timestamp(T0 + WINDOW + 50),
+        owned("chrome.exe", "late source"),
+    )]);
+    let seen = h.wait_skip(SkipReason::TranslateSource);
+    assert!(no_store_events(&seen), "{seen:?}");
+    // It was processed after the tail ended (by actor time).
+    assert!(first_seen.elapsed() >= Duration::from_millis(400));
+    // A change first seen after the tail: stored.
+    std::thread::sleep(Duration::from_millis(700));
+    h.fake.copy_burst_at(vec![(
+        Timestamp(T0 + WINDOW + 60),
+        owned("chrome.exe", "after tail"),
+    )]);
+    let (id, _) = h.wait_added();
+    assert_eq!(h.ro().get_clip(&id).unwrap().unwrap().preview, "after tail");
 }
 
 #[test]

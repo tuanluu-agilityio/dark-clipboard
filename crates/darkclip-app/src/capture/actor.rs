@@ -65,8 +65,8 @@ pub(super) struct Actor {
     pub(super) claim: Option<ClaimSlot>,
     /// The last claimed change, so its late OLE flush is never stored.
     pub(super) claimed_recent: Option<ClaimedRecent>,
-    /// Task 610: the tail of a slot that ended without a claim.
-    pub(super) unclaimed_tail: Option<UnclaimedTail>,
+    /// Task 610: the tails of slots that ended without a claim (one per app, at most 4).
+    pub(super) unclaimed_tails: Vec<UnclaimedTail>,
     /// The last captured change that was stored (inserted or deduplicated): its seq and clip.
     pub(super) last_stored: Option<(u64, ClipId)>,
     pub(super) next_retention: Instant,

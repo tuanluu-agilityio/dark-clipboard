@@ -13,10 +13,11 @@
 //! text/plain (GC-03). A late ownerless flush of a claimed change is skipped too
 //! (`recent_claim_flush`). No logging (GC-06): replies carry skip reasons only.
 //!
-//! Task 610 (Q-08): a slot that ends without a claim leaves an unclaimed tail. The target's
-//! copy arriving after the deadline (a slow app answering the synthetic Ctrl+C late), and
-//! its ownerless flush, are skipped as `TranslateSource` and never stored, for
-//! `UNCLAIMED_TAIL_MS` after the deadline and until our own next write. Decided from
+//! Task 610 (Q-08): a slot that ends without a claim (expired, replaced by a newer arm, or
+//! failed in Private mode) leaves an unclaimed tail for its app (at most `MAX_TAILS`, one per
+//! app). The target's copy arriving after the deadline (a slow app answering the synthetic
+//! Ctrl+C late), and its ownerless flush, are skipped as `TranslateSource` and never stored,
+//! for `UNCLAIMED_TAIL_MS` after the deadline and until our own next write. Decided from
 //! metadata only, like the claim.
 
 use super::actor::Actor;
@@ -41,6 +42,9 @@ pub const CLAIM_WINDOW_MS: u64 = 3_000;
 /// How long after an unclaimed slot's deadline (signal time) the target's late copy is
 /// still skipped (Task 610).
 pub const UNCLAIMED_TAIL_MS: u64 = 5_000;
+
+/// The most unclaimed tails kept (one per app); the oldest is dropped.
+const MAX_TAILS: usize = 4;
 
 /// The flow's receive timeout for a claim reply is `CLAIM_WINDOW_MS` plus this: a change seen
 /// just before the deadline still waits for its burst cap (500 ms) and the read retries.
@@ -76,7 +80,8 @@ pub enum ClaimError {
     TooLong,
     /// No change from the target app within the window.
     Expired,
-    /// Another claim is armed.
+    /// The claim could not be armed (the host's answer when the app does not reply). The
+    /// actor no longer replies it: a newer arm replaces a live slot (Task 610).
     Busy,
 }
 
@@ -131,7 +136,7 @@ pub(super) struct UnclaimedTail {
     armed_signal_at: Timestamp,
     /// Signal-time bound: ms after `armed_signal_at`.
     span_ms: u64,
-    /// Actor-time bound.
+    /// Actor-time bound on the change's first-seen time.
     until: Instant,
     self_write_at_arm: Option<u64>,
     /// The last change this tail skipped (seq, signal time), for its late ownerless flush.
@@ -180,38 +185,66 @@ impl Actor {
         Duration::from_millis(CLAIM_WINDOW_MS)
     }
 
-    /// A slot ended without a claim at `now`: its tail starts (Task 610).
+    fn tail_ms(&self) -> u64 {
+        #[cfg(test)]
+        {
+            let ms = self.hooks.unclaimed_tail_ms.load(Ordering::SeqCst);
+            if ms > 0 {
+                return ms;
+            }
+        }
+        UNCLAIMED_TAIL_MS
+    }
+
+    /// A slot ended without a claim at `now`: its app's tail starts (Task 610). An earlier
+    /// tail of the same app with no own write since is merged into it (keeping the earlier
+    /// start, so that press's late copy is still covered). Past `MAX_TAILS` the oldest goes.
     fn start_tail(&mut self, c: &ClaimSlot, now: Instant) {
-        self.unclaimed_tail = Some(UnclaimedTail {
+        let tail_ms = self.tail_ms();
+        let mut tail = UnclaimedTail {
             app_id: c.app_id.clone(),
             armed_at: c.armed_at,
             armed_signal_at: c.armed_signal_at,
-            span_ms: c.window_ms.saturating_add(UNCLAIMED_TAIL_MS),
+            span_ms: c.window_ms.saturating_add(tail_ms),
             until: now
                 .max(c.deadline)
-                .checked_add(Duration::from_millis(UNCLAIMED_TAIL_MS))
+                .checked_add(Duration::from_millis(tail_ms))
                 .unwrap_or(now),
             self_write_at_arm: c.self_write_at_arm,
             skipped: None,
-        });
+        };
+        let same = self
+            .unclaimed_tails
+            .iter()
+            .position(|t| t.app_id.to_lowercase() == c.app_id.to_lowercase());
+        if let Some(i) = same {
+            let old = self.unclaimed_tails.remove(i);
+            if old.self_write_at_arm == tail.self_write_at_arm && old.armed_at <= tail.armed_at {
+                let ahead = tail.armed_signal_at.0.saturating_sub(old.armed_signal_at.0);
+                let ahead = u64::try_from(ahead.max(0)).unwrap_or(0);
+                tail.span_ms = tail.span_ms.saturating_add(ahead).max(old.span_ms);
+                tail.armed_at = old.armed_at;
+                tail.armed_signal_at = old.armed_signal_at;
+                tail.until = tail.until.max(old.until);
+                tail.skipped = old.skipped;
+            }
+        }
+        if self.unclaimed_tails.len() >= MAX_TAILS {
+            self.unclaimed_tails.remove(0);
+        }
+        self.unclaimed_tails.push(tail);
     }
 
-    /// `ExpectForeignCopy`: arms the slot, or replies `Busy` while another one is live.
+    /// `ExpectForeignCopy`: arms the slot. A live slot is replaced: the host runs one press
+    /// at a time, so it belongs to a finished flow (Esc, or a reply it gave up on). Its
+    /// requester gets `Expired` and its app's tail starts, so its late copy is never stored
+    /// and there are never two live claims (Task 610 review).
     pub(super) fn arm_claim(&mut self, app_id: String, reply: ClaimReply) {
         let now = Instant::now();
         self.expire_claim_if_due(now);
-        if self.claim.is_some() {
-            let _ = reply.send(Err(ClaimError::Busy));
-            return;
-        }
-        // A tail for another app ends; the same app's tail is kept (its late copy may still
-        // come while the new slot is live, which cannot claim a change seen before arming).
-        if self
-            .unclaimed_tail
-            .as_ref()
-            .is_some_and(|t| t.app_id.to_lowercase() != app_id.to_lowercase())
-        {
-            self.unclaimed_tail = None;
+        if let Some(old) = self.claim.take() {
+            self.start_tail(&old, now);
+            let _ = old.reply.send(Err(ClaimError::Expired));
         }
         let mut slot = ClaimSlot::new(app_id, now, self.claim_window(), reply);
         slot.armed_signal_at = self.clock.now();
@@ -387,17 +420,23 @@ impl Actor {
         signal_at: Timestamp,
         meta: &ClipboardMeta,
     ) -> bool {
-        let Some(t) = &self.unclaimed_tail else {
-            return false;
-        };
-        if Instant::now() > t.until || self.last_self_write_seq != t.self_write_at_arm {
-            self.unclaimed_tail = None;
+        if self.unclaimed_tails.is_empty() {
             return false;
         }
-        let cap_ms = u64::try_from(self.max_burst_wait.as_millis()).unwrap_or(u64::MAX);
-        let skip = match source {
+        // A tail ends after an own write, or once no change first seen inside it can still be
+        // pending (its debounce is bounded by the burst cap).
+        let now = Instant::now();
+        let burst = self.max_burst_wait;
+        let self_write = self.last_self_write_seq;
+        self.unclaimed_tails.retain(|t| {
+            self_write == t.self_write_at_arm
+                && t.until.checked_add(burst).is_none_or(|end| now <= end)
+        });
+        let cap_ms = u64::try_from(burst.as_millis()).unwrap_or(u64::MAX);
+        let hit = self.unclaimed_tails.iter().position(|t| match source {
             Some(s) => {
                 seen_at >= t.armed_at
+                    && seen_at <= t.until
                     && within_ms_or_earlier(t.armed_signal_at, signal_at, t.span_ms)
                     && same_app(s, &t.app_id)
             }
@@ -408,13 +447,14 @@ impl Actor {
                         && within_ms_or_earlier(at, signal_at, cap_ms)
                 }) && has_ole_signature(meta)
             }
-        };
-        if skip {
-            if let Some(t) = &mut self.unclaimed_tail {
+        });
+        match hit.and_then(|i| self.unclaimed_tails.get_mut(i)) {
+            Some(t) => {
                 t.skipped = Some((seq, signal_at));
+                true
             }
+            None => false,
         }
-        skip
     }
 
     fn claim_outcome(&mut self, change: ClaimedChange<'_>) -> Result<Redacted<String>, ClaimError> {

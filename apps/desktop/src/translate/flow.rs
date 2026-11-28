@@ -376,7 +376,7 @@ fn run_inner<S: FlowSys>(sys: &mut S, cfg: &FlowConfig) -> Outcome {
     }
     // 4. The previous clipboard, taken before our copy changes it (I1 R5).
     let candidate = sys.restore_candidate();
-    // 5. One claim for both copy attempts (a second arm would reply Busy).
+    // 5. One claim for both copy attempts (a second arm would replace it).
     let seq0 = sys.clipboard_seq();
     let rx = sys.claim(&app_id);
     // A reply before any key: arming failed (the host could not reach the actor), or the

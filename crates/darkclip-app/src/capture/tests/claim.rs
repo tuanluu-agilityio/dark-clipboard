@@ -333,7 +333,8 @@ fn let_through_change_is_never_stored_after_resume() {
             source: Some(src("zalo.exe")),
         }))
         .unwrap();
-    assert_eq!(claim_reply(&arm(&h, "other.exe")), Err(ClaimError::Busy));
+    // A round trip through the actor's queue: the signal above was handled first.
+    let _ = restore_candidate(&h);
     h.clock.set(T0 + 120_000);
     let seen = h.wait_skip(SkipReason::Paused);
     assert!(no_store_events(&seen), "{seen:?}");
@@ -364,7 +365,8 @@ fn let_through_change_is_never_stored_after_resume() {
             source: Some(src("zalo.exe")),
         }))
         .unwrap();
-    assert_eq!(claim_reply(&arm(&h, "other.exe")), Err(ClaimError::Busy));
+    // A round trip through the actor's queue: the signal above was handled first.
+    let _ = restore_candidate(&h);
     h.set_mode(CaptureMode::Normal);
     let between = h.sentinel();
     assert!(no_store_events(&between), "{between:?}");
@@ -570,15 +572,25 @@ fn claim_expires_without_activity() {
 }
 
 #[test]
-fn second_claim_while_armed_is_busy() {
+fn second_claim_replaces_the_live_slot() {
+    // Never two live claims (Task 610 review): a second arm replaces the first slot, whose
+    // requester (a finished flow: the host runs one press at a time) gets `Expired` at once.
     let h = start(PrivacyPolicy::default());
+    long_window(&h);
+    let t = Instant::now();
     let first = arm(&h, "zalo.exe");
     let second = arm(&h, "slack.exe");
-    assert_eq!(claim_reply(&second), Err(ClaimError::Busy));
-    // The first slot stays (it expires on its own).
     assert_eq!(claim_reply(&first), Err(ClaimError::Expired));
-    // A new slot after expiry is armed normally.
-    long_window(&h);
+    assert!(t.elapsed() < Duration::from_millis(CLAIM_WINDOW_MS));
+    assert!(matches!(second.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    // Only the second slot claims.
+    h.fake.copy(owned("slack.exe", "second text"));
+    assert_eq!(claim_reply(&second), Ok("second text".to_string()));
+    assert!(matches!(
+        first.try_recv(),
+        Err(mpsc::TryRecvError::Disconnected)
+    ));
+    // A new slot after that is armed normally.
     let third = arm(&h, "slack.exe");
     h.fake.copy(owned("slack.exe", "third text"));
     assert_eq!(claim_reply(&third), Ok("third text".to_string()));
