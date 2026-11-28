@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title data-i18n="title">Dark Clipboard</title>
-<meta name="description" content="A local-first clipboard manager written in Rust. Remembers what you copy, never stores what is marked private. No account, no cloud, no telemetry." data-i18n-attr="content:desc">
+<meta name="description" content="A local-first clipboard manager written in Rust. Remembers what you copy, never stores what is marked private. No account, no telemetry. Nothing leaves your PC unless you opt in." data-i18n-attr="content:desc">
 <meta name="theme-color" content="#111318">
 <meta property="og:title" content="Dark Clipboard" data-i18n-attr="content:title">
-<meta property="og:description" content="A local-first clipboard manager written in Rust. Remembers what you copy, never stores what is marked private. No account, no cloud, no telemetry." data-i18n-attr="content:desc">
+<meta property="og:description" content="A local-first clipboard manager written in Rust. Remembers what you copy, never stores what is marked private. No account, no telemetry. Nothing leaves your PC unless you opt in." data-i18n-attr="content:desc">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://tuanluu-agilityio.github.io/dark-clipboard/">
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2056%2056%22%3E%3Crect%20x=%222%22%20y=%222%22%20width=%2252%22%20height=%2252%22%20rx=%2213%22%20fill=%22%23202328%22%20stroke=%22%233A3E45%22%20stroke-width=%221.2%22/%3E%3Crect%20x=%2216%22%20y=%2215%22%20width=%2224%22%20height=%2230%22%20rx=%224.5%22%20fill=%22none%22%20stroke=%22%237887FF%22%20stroke-width=%224%22/%3E%3Crect%20x=%2221.5%22%20y=%2210.5%22%20width=%2213%22%20height=%228%22%20rx=%222.5%22%20fill=%22%23F3F5F9%22/%3E%3Cpath%20d=%22M22%2028h12M22%2035h8%22%20stroke=%22%23F3F5F9%22%20stroke-width=%223.5%22%20stroke-linecap=%22round%22/%3E%3C/svg%3E">
@@ -423,9 +423,9 @@ svg.i:not(.ui svg.i){width:18px;height:18px}
 <main id="top">
 <section class="band hero">
   <div class="wrap intro">
-    <span class="pill"><span class="d"></span>0.2.0 alpha · Windows 11 x64</span>
+    <span class="pill"><span class="d"></span>0.3.0 alpha · Windows 11 x64</span>
     <h1 data-i18n="h1">Everything you copied.<br>Nothing you wanted kept private.</h1>
-    <p class="lede" data-i18n="lede">Dark Clipboard remembers text, links, code, images and files you copy, and finds them again as you type. It runs only on your PC, with no account, no cloud and no telemetry.</p>
+    <p class="lede" data-i18n="lede">Dark Clipboard remembers text, links, code, images and files you copy, and finds them again as you type. It runs on your PC, with no account and no telemetry. By default nothing leaves it; the only exceptions are opt-in: the update check and translate in place with your own Anthropic key.</p>
     <div class="acts">
       <a class="cta p" href="#download"><svg class="i"><use href="#dl"/></svg><span data-i18n="cta_dl">Download for Windows</span></a>
       <a class="cta" href="https://github.com/tuanluu-agilityio/dark-clipboard"><svg class="i"><use href="#gh"/></svg><span data-i18n="cta_src">View the source</span></a>
@@ -462,7 +462,7 @@ svg.i:not(.ui svg.i){width:18px;height:18px}
 
 <section class="strip"><div class="wrap facts4" style="padding-inline:max(5vw,16px);max-width:calc(1240px + 10vw)">
   <div><svg class="i"><use href="#hdd"/></svg><p><b data-i18n="f1b">Stays on your PC</b><span data-i18n="f1s">History lives in a local database in your own profile.</span></p></div>
-  <div><svg class="i"><use href="#cloudoff"/></svg><p><b data-i18n="f2b">No network</b><span data-i18n="f2s">No account, no sync, no telemetry. One opt-in update check.</span></p></div>
+  <div><svg class="i"><use href="#cloudoff"/></svg><p><b data-i18n="f2b">Offline by default</b><span data-i18n="f2s">No account, no telemetry. Network only if you opt in.</span></p></div>
   <div><svg class="i"><use href="#keyboard"/></svg><p><b data-i18n="f3b">Keyboard first</b><span data-i18n="f3s"><span class="k">Ctrl+Shift+V</span>, type, <span class="k">Enter</span>.</span></p></div>
   <div><svg class="i"><use href="#pause"/></svg><p><b data-i18n="f4b">Off until you say so</b><span data-i18n="f4s">Nothing is captured until you press Start.</span></p></div>
 </div></section>
@@ -579,6 +579,7 @@ ORDER BY created_at DESC;</pre></div>
     <div><svg class="i"><use href="#paste"/></svg><h3 data-i18n="t4h">Paste back</h3><p data-i18n="t4p"><span class="k">Enter</span> copies. <span class="k">Ctrl+Enter</span> pastes into the app you came from, if you turn it on.</p></div>
     <div><svg class="i"><use href="#dl"/></svg><h3 data-i18n="t5h">Backup and export</h3><p data-i18n="t5p">Back up the whole history to a file, restore it, import and export collections. Masked clips, which may hold a secret, are left out.</p></div>
     <div><svg class="i"><use href="#globe"/></svg><h3 data-i18n="t6h">English and Vietnamese</h3><p data-i18n="t6p">The whole interface in both languages, with room for Vietnamese diacritics in every row.</p></div>
+    <div style="grid-column:1/-1"><svg class="i"><use href="#globe"/></svg><h3 data-i18n="t7h">Translate in place</h3><p data-i18n="t7p">Type, press <span class="k">Ctrl+Alt+T</span>, and the selection, or the whole field when nothing is selected, is translated in place: Vietnamese into English, anything else into Vietnamese (or always one language, as you choose in Settings). It uses your own Anthropic key, is off by default and asks once before turning on. Excluded apps, private-marked and secret-looking text are never sent. Windows.</p></div>
   </div>
 </div></section>
 
@@ -679,7 +680,7 @@ ORDER BY created_at DESC;</pre></div>
   <table class="stack">
     <thead><tr><th data-i18n="th_p">Platform</th><th data-i18n="th_s">State</th><th data-i18n="th_n">Notes</th></tr></thead>
     <tbody>
-      <tr><td>Windows 11 x64</td><td data-l="State" data-i18n-attr="data-l:th_s"><span class="tag y" data-i18n="tg_alpha">Alpha, downloadable</span></td><td data-l="Notes" data-i18n-attr="data-l:th_n" data-i18n="n_w11">Capture tested on one Windows 11 machine. The binary is unsigned. Most screens have not been checked by hand yet.</td></tr>
+      <tr><td>Windows 11 x64</td><td data-l="State" data-i18n-attr="data-l:th_s"><span class="tag y" data-i18n="tg_alpha">Alpha, downloadable</span></td><td data-l="Notes" data-i18n-attr="data-l:th_n" data-i18n="n_w11">Capture tested on one Windows 11 machine. The binary is unsigned. Most screens have not been checked by hand yet. Translate in place is new in 0.3.0 and has not been checked by hand yet.</td></tr>
       <tr><td>Windows 10</td><td data-l="State" data-i18n-attr="data-l:th_s"><span class="tag n" data-i18n="tg_untested">Untested</span></td><td data-l="Notes" data-i18n-attr="data-l:th_n" data-i18n="n_w10">Not run there yet.</td></tr>
       <tr><td>macOS</td><td data-l="State" data-i18n-attr="data-l:th_s"><span class="tag n" data-i18n="tg_planned">Planned</span></td><td data-l="Notes" data-i18n-attr="data-l:th_n" data-i18n="n_mac">No app yet.</td></tr>
       <tr><td>Linux</td><td data-l="State" data-i18n-attr="data-l:th_s"><span class="tag n" data-i18n="tg_planned">Planned</span></td><td data-l="Notes" data-i18n-attr="data-l:th_n" data-i18n="n_lin">No app yet. Wayland support will be listed per desktop once tested.</td></tr>
@@ -691,15 +692,15 @@ ORDER BY created_at DESC;</pre></div>
 <section class="band" id="download"><div class="wrap dl">
   <div>
     <h2 data-i18n="dl_h2">Get the alpha</h2>
-    <p class="sub" data-i18n="dl_sub">Version 0.2.0 for Windows 11 x64: a single exe, no installer, nothing to uninstall.</p>
+    <p class="sub" data-i18n="dl_sub">Version 0.3.0 for Windows 11 x64: a single exe, no installer, nothing to uninstall.</p>
     <ol class="steps">
-      <li data-i18n="d1">Download <b>dark-clipboard-0.2.0-windows-x64.zip</b> and <b>SHA256SUMS.txt</b> from the release page.</li>
+      <li data-i18n="d1">Download <b>dark-clipboard-0.3.0-windows-x64.zip</b> and <b>SHA256SUMS.txt</b> from the release page.</li>
       <li data-i18n="d2">Check the hash in PowerShell (right). It must match the line for the zip.</li>
       <li data-i18n="d3">Unzip and start <b>dark-clipboard.exe</b>. It sits in the notification area; press <span class="k">Ctrl+Shift+V</span>.</li>
       <li data-i18n="d4">The welcome explains what is never captured. <b>Nothing is captured until you press Start.</b></li>
     </ol>
     <div class="acts" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:28px">
-      <a class="cta p" href="https://github.com/tuanluu-agilityio/dark-clipboard/releases/tag/v0.2.0"><svg class="i"><use href="#dl"/></svg><span data-i18n="rel_btn">Release 0.2.0 on GitHub</span></a>
+      <a class="cta p" href="https://github.com/tuanluu-agilityio/dark-clipboard/releases/tag/v0.3.0"><svg class="i"><use href="#dl"/></svg><span data-i18n="rel_btn">Release 0.3.0 on GitHub</span></a>
       <a class="cta" href="https://github.com/tuanluu-agilityio/dark-clipboard/blob/main/CHANGELOG.md" data-i18n="changelog">Changelog</a>
     </div>
   </div>
@@ -707,7 +708,7 @@ ORDER BY created_at DESC;</pre></div>
     <div class="term">
       <div class="tb"><span>PowerShell</span><button class="cta copy" id="cp" type="button"><svg class="i"><use href="#copy"/></svg><span data-i18n="copy">Copy</span></button></div>
       <pre id="cmd"><span class="c" data-i18n="cmd_c"># in the folder with both files</span>
-Get-FileHash .\dark-clipboard-0.2.0-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\dark-clipboard-0.3.0-windows-x64.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS.txt</pre>
     </div>
     <div class="warn"><svg class="i"><use href="#info"/></svg><p data-i18n="warn">The exe is <b>not signed</b>, so SmartScreen may say "Windows protected your PC". Run it only after the hash matches, then choose More info and Run anyway. Smart App Control may block it entirely.</p></div>
@@ -727,7 +728,7 @@ Get-Content .\SHA256SUMS.txt</pre>
 const L={
 "en": {
 "title": "Dark Clipboard",
-"desc": "A local-first clipboard manager written in Rust. Remembers what you copy, never stores what is marked private. No account, no cloud, no telemetry.",
+"desc": "A local-first clipboard manager written in Rust. Remembers what you copy, never stores what is marked private. No account, no telemetry. Nothing leaves your PC unless you opt in.",
 "nav_aria": "Sections",
 "nav_features": "Features",
 "nav_privacy": "Privacy",
@@ -736,7 +737,7 @@ const L={
 "nav_download": "Download",
 "lang_aria": "Language",
 "h1": "Everything you copied.<br>Nothing you wanted kept private.",
-"lede": "Dark Clipboard remembers text, links, code, images and files you copy, and finds them again as you type. It runs only on your PC, with no account, no cloud and no telemetry.",
+"lede": "Dark Clipboard remembers text, links, code, images and files you copy, and finds them again as you type. It runs on your PC, with no account and no telemetry. By default nothing leaves it; the only exceptions are opt-in: the update check and translate in place with your own Anthropic key.",
 "cta_dl": "Download for Windows",
 "cta_src": "View the source",
 "fine": "Free software under GPLv3, written in Rust. macOS and Linux are planned, not available yet.",
@@ -765,8 +766,8 @@ const L={
 "demo_note": "Try it: type, use ↑ ↓ and Enter. Sample clips, drawn from the app's design.",
 "f1b": "Stays on your PC",
 "f1s": "History lives in a local database in your own profile.",
-"f2b": "No network",
-"f2s": "No account, no sync, no telemetry. One opt-in update check.",
+"f2b": "Offline by default",
+"f2s": "No account, no telemetry. Network only if you opt in.",
 "f3b": "Keyboard first",
 "f3s": "<span class=\"k\">Ctrl+Shift+V<\/span>, type, <span class=\"k\">Enter<\/span>.",
 "f4b": "Off until you say so",
@@ -786,6 +787,8 @@ const L={
 "t5p": "Back up the whole history to a file, restore it, import and export collections. Masked clips, which may hold a secret, are left out.",
 "t6h": "English and Vietnamese",
 "t6p": "The whole interface in both languages, with room for Vietnamese diacritics in every row.",
+"t7h": "Translate in place",
+"t7p": "Type, press <span class=\"k\">Ctrl+Alt+T<\/span>, and the selection, or the whole field when nothing is selected, is translated in place: Vietnamese into English, anything else into Vietnamese (or always one language, as you choose in Settings). It uses your own Anthropic key, is off by default and asks once before turning on. Excluded apps, private-marked and secret-looking text are never sent. Windows.",
 "p_h2": "It checks before it reads.",
 "p_sub": "When something is copied, Dark Clipboard first looks only at the list of formats and the app that copied it. If the copy is marked private, the content is never read at all.",
 "s1h": "A copy happens",
@@ -821,7 +824,7 @@ const L={
 "th_s": "State",
 "th_n": "Notes",
 "tg_alpha": "Alpha, downloadable",
-"n_w11": "Capture tested on one Windows 11 machine. The binary is unsigned. Most screens have not been checked by hand yet.",
+"n_w11": "Capture tested on one Windows 11 machine. The binary is unsigned. Most screens have not been checked by hand yet. Translate in place is new in 0.3.0 and has not been checked by hand yet.",
 "tg_untested": "Untested",
 "n_w10": "Not run there yet.",
 "tg_planned": "Planned",
@@ -831,12 +834,12 @@ const L={
 "tg_later": "Later",
 "n_ai": "AI tools will see nothing unless you grant access, and only what you grant.",
 "dl_h2": "Get the alpha",
-"dl_sub": "Version 0.2.0 for Windows 11 x64: a single exe, no installer, nothing to uninstall.",
-"d1": "Download <b>dark-clipboard-0.2.0-windows-x64.zip<\/b> and <b>SHA256SUMS.txt<\/b> from the release page.",
+"dl_sub": "Version 0.3.0 for Windows 11 x64: a single exe, no installer, nothing to uninstall.",
+"d1": "Download <b>dark-clipboard-0.3.0-windows-x64.zip<\/b> and <b>SHA256SUMS.txt<\/b> from the release page.",
 "d2": "Check the hash in PowerShell (right). It must match the line for the zip.",
 "d3": "Unzip and start <b>dark-clipboard.exe<\/b>. It sits in the notification area; press <span class=\"k\">Ctrl+Shift+V<\/span>.",
 "d4": "The welcome explains what is never captured. <b>Nothing is captured until you press Start.<\/b>",
-"rel_btn": "Release 0.2.0 on GitHub",
+"rel_btn": "Release 0.3.0 on GitHub",
 "changelog": "Changelog",
 "cmd_c": "# in the folder with both files",
 "copy": "Copy",
@@ -850,7 +853,7 @@ const L={
 },
 "vi": {
 "title": "Dark Clipboard",
-"desc": "Trình quản lý bảng nhớ tạm ưu tiên chạy cục bộ, viết bằng Rust. Nhớ những gì bạn sao chép, không bao giờ lưu thứ được đánh dấu riêng tư. Không tài khoản, không đám mây, không telemetry.",
+"desc": "Trình quản lý bảng nhớ tạm ưu tiên chạy cục bộ, viết bằng Rust. Nhớ những gì bạn sao chép, không bao giờ lưu thứ được đánh dấu riêng tư. Không tài khoản, không telemetry. Mặc định không có gì rời khỏi máy, trừ khi bạn bật.",
 "nav_aria": "Các mục",
 "nav_features": "Tính năng",
 "nav_privacy": "Riêng tư",
@@ -859,7 +862,7 @@ const L={
 "nav_download": "Tải về",
 "lang_aria": "Ngôn ngữ",
 "h1": "Mọi thứ bạn đã sao chép.<br>Không lưu thứ bạn muốn giữ kín.",
-"lede": "Dark Clipboard nhớ văn bản, liên kết, mã nguồn, hình ảnh và tệp bạn sao chép, rồi tìm lại ngay khi bạn gõ. Chỉ chạy trên máy của bạn, không tài khoản, không đám mây, không telemetry.",
+"lede": "Dark Clipboard nhớ văn bản, liên kết, mã nguồn, hình ảnh và tệp bạn sao chép, rồi tìm lại ngay khi bạn gõ. Chạy trên máy của bạn, không tài khoản, không telemetry. Mặc định không có gì rời khỏi máy; ngoại lệ chỉ khi bạn bật: kiểm tra cập nhật và dịch tại chỗ bằng key Anthropic của bạn.",
 "cta_dl": "Tải về cho Windows",
 "cta_src": "Xem mã nguồn",
 "fine": "Phần mềm tự do theo GPLv3, viết bằng Rust. macOS và Linux đang trong kế hoạch, chưa có bản dùng.",
@@ -888,8 +891,8 @@ const L={
 "demo_note": "Thử ngay: gõ, dùng ↑ ↓ và Enter. Các mục mẫu, vẽ theo thiết kế của ứng dụng.",
 "f1b": "Ở lại trên máy của bạn",
 "f1s": "Lịch sử nằm trong một cơ sở dữ liệu cục bộ, trong hồ sơ người dùng của bạn.",
-"f2b": "Không dùng mạng",
-"f2s": "Không tài khoản, không đồng bộ, không telemetry. Chỉ có kiểm tra cập nhật, và chỉ khi bạn bật.",
+"f2b": "Mặc định ngoại tuyến",
+"f2s": "Không tài khoản, không telemetry. Chỉ dùng mạng khi bạn bật.",
 "f3b": "Ưu tiên bàn phím",
 "f3s": "<span class=\"k\">Ctrl+Shift+V<\/span>, gõ, <span class=\"k\">Enter<\/span>.",
 "f4b": "Tắt cho đến khi bạn bật",
@@ -909,6 +912,8 @@ const L={
 "t5p": "Sao lưu toàn bộ lịch sử ra một tệp, khôi phục, nhập và xuất bộ sưu tập. Các mục đã che (có thể chứa bí mật) sẽ không được đưa vào.",
 "t6h": "Tiếng Anh và tiếng Việt",
 "t6p": "Toàn bộ giao diện có cả hai ngôn ngữ, đủ chỗ cho dấu tiếng Việt ở mọi dòng.",
+"t7h": "Dịch tại chỗ",
+"t7p": "Gõ, bấm <span class=\"k\">Ctrl+Alt+T<\/span>, phần đang chọn (hoặc cả ô nếu không chọn gì) được dịch ngay tại chỗ: tiếng Việt sang tiếng Anh, còn lại sang tiếng Việt (hoặc luôn một ngôn ngữ, chọn trong Cài đặt). Dùng key Anthropic của riêng bạn, mặc định tắt và hỏi một lần trước khi bật. App bị loại trừ, nội dung có đánh dấu riêng tư và chữ giống bí mật không bao giờ được gửi. Chỉ Windows.",
 "p_h2": "Kiểm tra trước khi đọc.",
 "p_sub": "Khi có thứ được sao chép, Dark Clipboard chỉ xem danh sách định dạng và ứng dụng đã sao chép. Nếu bản sao được đánh dấu riêng tư, nội dung hoàn toàn không bị đọc.",
 "s1h": "Có một lần sao chép",
@@ -944,7 +949,7 @@ const L={
 "th_s": "Trạng thái",
 "th_n": "Ghi chú",
 "tg_alpha": "Alpha, có thể tải về",
-"n_w11": "Việc ghi nhớ đã được thử trên một máy Windows 11. Tệp chạy chưa được ký. Phần lớn màn hình chưa được kiểm tra thủ công.",
+"n_w11": "Việc ghi nhớ đã được thử trên một máy Windows 11. Tệp chạy chưa được ký. Phần lớn màn hình chưa được kiểm tra thủ công. Dịch tại chỗ là tính năng mới của 0.3.0 và chưa được kiểm tra thủ công.",
 "tg_untested": "Chưa thử",
 "n_w10": "Chưa chạy thử ở đó.",
 "tg_planned": "Dự kiến",
@@ -954,12 +959,12 @@ const L={
 "tg_later": "Sau này",
 "n_ai": "Công cụ AI sẽ không thấy gì trừ khi bạn cấp quyền, và chỉ thấy phần bạn cấp.",
 "dl_h2": "Tải bản alpha",
-"dl_sub": "Phiên bản 0.2.0 cho Windows 11 x64: một tệp exe, không cần cài đặt, không có gì phải gỡ.",
-"d1": "Tải <b>dark-clipboard-0.2.0-windows-x64.zip<\/b> và <b>SHA256SUMS.txt<\/b> từ trang phát hành.",
+"dl_sub": "Phiên bản 0.3.0 cho Windows 11 x64: một tệp exe, không cần cài đặt, không có gì phải gỡ.",
+"d1": "Tải <b>dark-clipboard-0.3.0-windows-x64.zip<\/b> và <b>SHA256SUMS.txt<\/b> từ trang phát hành.",
 "d2": "Kiểm tra mã băm trong PowerShell (bên phải). Nó phải khớp với dòng của tệp zip.",
 "d3": "Giải nén và chạy <b>dark-clipboard.exe<\/b>. Nó nằm ở khu vực thông báo; bấm <span class=\"k\">Ctrl+Shift+V<\/span>.",
 "d4": "Màn hình chào mừng giải thích những gì không bao giờ được ghi nhớ. <b>Không có gì được ghi nhớ cho đến khi bạn bấm Bắt đầu.<\/b>",
-"rel_btn": "Bản phát hành 0.2.0 trên GitHub",
+"rel_btn": "Bản phát hành 0.3.0 trên GitHub",
 "changelog": "Nhật ký thay đổi",
 "cmd_c": "# trong thư mục có cả hai tệp",
 "copy": "Sao chép",
