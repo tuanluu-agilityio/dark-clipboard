@@ -667,7 +667,8 @@ impl RawWindow {
 // Focus return and auto-paste (Task 205). Only `paste.rs` calls these; the decisions live there.
 // No window title is read (SR-11): the class name is compared with fixed shell class names and
 // dropped. The only input ever synthesized is Ctrl+A, Ctrl+C or Ctrl+V (Task 604), by
-// `send_ctrl`, after `paste::run` passed every check.
+// `send_ctrl`, after `paste::run` passed every check, and the unassigned menu mask key `0xE8`
+// (Task 612, `send_menu_mask`), sent only on the translate host's decision.
 // ---------------------------------------------------------------------------------------------
 
 /// Window classes of the taskbars and the desktop (shell windows that must never get a paste).
@@ -906,9 +907,7 @@ fn key_event(
 /// down. `key` is one of a closed set (A, C, V). Never called by tests that agents run (GC-19).
 pub(crate) fn send_ctrl(key: crate::paste::CtrlKey) -> Result<(), PlatformError> {
     use crate::paste::CtrlKey;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, VK_A, VK_C, VK_CONTROL, VK_V,
-    };
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_A, VK_C, VK_CONTROL, VK_V};
     let vk = match key {
         CtrlKey::A => VK_A,
         CtrlKey::C => VK_C,
@@ -920,19 +919,44 @@ pub(crate) fn send_ctrl(key: crate::paste::CtrlKey) -> Result<(), PlatformError>
         key_event(vk, true),
         key_event(VK_CONTROL, true),
     ];
+    let release = [key_event(vk, true), key_event(VK_CONTROL, true)];
+    send_batch(&inputs, &release)
+}
+
+/// The menu mask (Task 612): the INPUT events of `input::menu_mask_keys`, `0xE8` down then
+/// up. Building them sends nothing.
+pub(crate) fn menu_mask_inputs() -> [windows::Win32::UI::Input::KeyboardAndMouse::INPUT; 2] {
+    use windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY;
+    crate::input::menu_mask_keys().map(|(vk, up)| key_event(VIRTUAL_KEY(vk), up))
+}
+
+/// Sends the menu mask key (`0xE8` down, then up) as one batch; on a partial send a key-up of
+/// `0xE8` follows so it never stays down. Never called by tests that agents run (GC-19).
+pub(crate) fn send_menu_mask() -> Result<(), PlatformError> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY;
+    let release = [key_event(VIRTUAL_KEY(crate::input::MENU_MASK_VK), true)];
+    send_batch(&menu_mask_inputs(), &release)
+}
+
+/// One `SendInput` batch. If Windows inserted fewer events than given, `release` (key-ups,
+/// harmless for keys already up) is sent and the error code returned.
+fn send_batch(
+    inputs: &[windows::Win32::UI::Input::KeyboardAndMouse::INPUT],
+    release: &[windows::Win32::UI::Input::KeyboardAndMouse::INPUT],
+) -> Result<(), PlatformError> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT};
     let size = i32::try_from(std::mem::size_of::<INPUT>())
         .map_err(|_| PlatformError::Backend { code: -1 })?;
     // SAFETY: `inputs` is a slice of initialized keyboard INPUTs and `size` is the size of one
     // INPUT, as the API requires.
-    let sent = unsafe { SendInput(&inputs, size) };
+    let sent = unsafe { SendInput(inputs, size) };
     if usize::try_from(sent).ok() == Some(inputs.len()) {
         return Ok(());
     }
     // SAFETY: no arguments; reads this thread's last error before any other call.
     let code = unsafe { GetLastError() }.0;
-    let release = [key_event(vk, true), key_event(VK_CONTROL, true)];
-    // SAFETY: as above, two key-up events (harmless if the keys are already up).
-    let _ = unsafe { SendInput(&release, size) };
+    // SAFETY: as above, initialized key-up events (harmless if the keys are already up).
+    let _ = unsafe { SendInput(release, size) };
     Err(PlatformError::Backend {
         code: i64::from(code),
     })
@@ -1195,6 +1219,31 @@ pub(crate) fn cred_delete(target: &str) -> Result<(), PlatformError> {
         Ok(()) => Ok(()),
         Err(e) if cred_not_found(&e) => Ok(()),
         Err(e) => Err(cred_error(&e)),
+    }
+}
+
+#[cfg(test)]
+mod mask_tests {
+    // Builds the INPUT array only; `SendInput` is never called (GC-19).
+    #[test]
+    fn the_mask_inputs_are_two_keyboard_events_of_0xe8() {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        };
+        let inputs = super::menu_mask_inputs();
+        let mut seen = Vec::new();
+        for i in &inputs {
+            assert_eq!(i.r#type, INPUT_KEYBOARD);
+            // SAFETY: every INPUT built by `key_event` is a keyboard input, so `ki` is the
+            // initialized member of the union.
+            let ki = unsafe { i.Anonymous.ki };
+            assert_eq!((ki.time, ki.dwExtraInfo), (0, 0));
+            seen.push((ki.wVk.0, ki.dwFlags));
+        }
+        assert_eq!(
+            seen,
+            vec![(0xE8, KEYBD_EVENT_FLAGS(0)), (0xE8, KEYEVENTF_KEYUP)]
+        );
     }
 }
 

@@ -17,6 +17,8 @@ mod autostart;
 // everywhere.
 mod dib;
 mod formats;
+// The menu mask key (Task 612): the key list is pure; sending is Windows only.
+mod input;
 // Fuzz entry points (Task 406): tests and the `fuzzing` feature only.
 #[cfg(any(test, feature = "fuzzing"))]
 #[doc(hidden)]
@@ -39,6 +41,8 @@ pub use access::WinAccess;
 #[cfg(windows)]
 pub use autostart::RegistryAutostart;
 pub use autostart::{run_command, RUN_KEY, VALUE_NAME};
+#[cfg(windows)]
+pub use input::mask_menu_activation;
 #[cfg(windows)]
 pub use monitor::{SignalSourceFn, WinMonitor};
 #[cfg(windows)]
