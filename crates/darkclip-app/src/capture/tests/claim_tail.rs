@@ -239,29 +239,55 @@ fn tails_are_capped_at_four() {
 
 #[test]
 fn change_first_seen_inside_tail_is_skipped_when_processed_after_it() {
-    // A 100 ms tail; the change is first seen inside it, then waits out the burst cap
-    // (500 ms, long debounce) and is processed after the tail's actor-time end.
+    // A 1 s tail. The change is first seen right after the expiry (about 1 s of margin),
+    // then the actor is held up 2 s by a repeat signal of the same change while it is
+    // pending, so it is processed well after the tail's actor-time end.
+    const TAIL_MS: u64 = 1_000;
+    const STALL: Duration = Duration::from_millis(2_000);
     let h = start_with(
         PrivacyPolicy::default(),
         RetentionPolicy::default(),
         slow_debounce(),
         |_| {},
     );
-    h.cap().hooks.unclaimed_tail_ms.store(100, Ordering::SeqCst);
+    h.cap()
+        .hooks
+        .unclaimed_tail_ms
+        .store(TAIL_MS, Ordering::SeqCst);
+    // Signals here carry wall time: the test clock follows it so the tail applies.
+    let t0 = wall_ms();
+    h.clock.set(t0);
+    let started = Instant::now();
     expired(&h, "chrome.exe");
-    let first_seen = Instant::now();
-    h.fake.copy_burst_at(vec![(
-        Timestamp(T0 + WINDOW + 50),
-        owned("chrome.exe", "late source"),
-    )]);
+    // The signal has no owner: the actor resolves it when it first sees the change, so
+    // `resolve_calls` tells the test the change is pending.
+    let seq = h
+        .fake
+        .copy_then_set_source(text_copy("late source"), Some(src("chrome.exe")));
+    let deadline = Instant::now() + WAIT;
+    while h.fake.resolve_calls() == 0 {
+        assert!(Instant::now() < deadline, "signal never dequeued");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let first_seen = started.elapsed();
+    *h.cap().hooks.stall_on_signal.lock().unwrap() = Some((seq, STALL));
+    h.fake.signal_again(1);
     let seen = h.wait_skip(SkipReason::TranslateSource);
     assert!(no_store_events(&seen), "{seen:?}");
-    // It was processed after the tail ended (by actor time).
-    assert!(first_seen.elapsed() >= Duration::from_millis(400));
-    // A change first seen after the tail: stored.
-    std::thread::sleep(Duration::from_millis(700));
+    // Seen inside the tail, processed after it ended (by actor time).
+    assert!(
+        first_seen < Duration::from_millis(TAIL_MS),
+        "{first_seen:?}"
+    );
+    let processed = started.elapsed();
+    assert!(
+        processed > Duration::from_millis(WINDOW as u64 + TAIL_MS),
+        "{processed:?}"
+    );
+    // A change first seen after the tail (its signal time still inside the signal-time
+    // bound): stored.
     h.fake.copy_burst_at(vec![(
-        Timestamp(T0 + WINDOW + 60),
+        Timestamp(t0 + WINDOW + 60),
         owned("chrome.exe", "after tail"),
     )]);
     let (id, _) = h.wait_added();

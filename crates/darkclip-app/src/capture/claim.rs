@@ -423,16 +423,13 @@ impl Actor {
         if self.unclaimed_tails.is_empty() {
             return false;
         }
-        // A tail ends after an own write, or once no change first seen inside it can still be
-        // pending (its debounce is bounded by the burst cap).
-        let now = Instant::now();
-        let burst = self.max_burst_wait;
+        // A tail ends after an own write. Time bounds the skip itself (`seen_at <= until`), so
+        // a change first seen inside the tail is skipped however late it is processed;
+        // `MAX_TAILS` bounds the memory.
         let self_write = self.last_self_write_seq;
-        self.unclaimed_tails.retain(|t| {
-            self_write == t.self_write_at_arm
-                && t.until.checked_add(burst).is_none_or(|end| now <= end)
-        });
-        let cap_ms = u64::try_from(burst.as_millis()).unwrap_or(u64::MAX);
+        self.unclaimed_tails
+            .retain(|t| self_write == t.self_write_at_arm);
+        let cap_ms = u64::try_from(self.max_burst_wait.as_millis()).unwrap_or(u64::MAX);
         let hit = self.unclaimed_tails.iter().position(|t| match source {
             Some(s) => {
                 seen_at >= t.armed_at
