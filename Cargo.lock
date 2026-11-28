@@ -1056,7 +1056,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "dark-clipboard"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ctrlc",
  "darkclip-ai",
@@ -1078,7 +1078,7 @@ dependencies = [
 
 [[package]]
 name = "darkclip-ai"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "darkclip-core",
  "serde",
@@ -1087,7 +1087,7 @@ dependencies = [
 
 [[package]]
 name = "darkclip-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "darkclip-ai",
  "darkclip-core",
@@ -1105,7 +1105,7 @@ dependencies = [
 
 [[package]]
 name = "darkclip-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "darkclip-fuzzgen",
  "serde",
@@ -1118,14 +1118,14 @@ dependencies = [
 
 [[package]]
 name = "darkclip-fuzzgen"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "png",
 ]
 
 [[package]]
 name = "darkclip-platform"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "darkclip-core",
  "serde",
@@ -1134,7 +1134,7 @@ dependencies = [
 
 [[package]]
 name = "darkclip-storage"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "boon",
  "darkclip-core",
@@ -1150,7 +1150,7 @@ dependencies = [
 
 [[package]]
 name = "darkclip-windows"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "darkclip-core",
  "darkclip-fuzzgen",
