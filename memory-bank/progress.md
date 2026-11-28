@@ -152,7 +152,7 @@ The owner reviewed the Phase 7 demo on 2026-11-25 ("đã review", D-089); no rel
 | 612 Menu mask key for Alt shortcuts (Chrome loses the first Ctrl+C) | task/612-alt-menu-mask | specialist | opus | done (`darkclip_windows::mask_menu_activation()` sends only VK 0xE8 down/up (shared `send_batch`, `send_ctrl` unchanged); host sends it after the single-flight check while Alt/Win is still held (live key state; modifier match is observed RegisterHotKey behaviour, harmless if wrong); content-free failure log; owner row pending: Chrome Ctrl+Alt+T `select_all=0`, small `copy_ms`) | 123,069 | 49,408 (security-reviewer opus: APPROVED, wording fix applied) | 1,903 | 174,380 |
 | 0.3.1 scoped review (D-077, Tasks 609-612) | main f52b953 | specialist | opus | **APPROVED** 2026-11-28 (no blocking items; notes applied in the release PR, D-099) | | 130,015 | | 130,015 |
 | **Release 0.3.1** (Tasks 610-612; owner approved, D-099) | release/0.3.1 | orchestrator | opus | **released 2026-11-28 (D-100)** | | | | |
-| 613 Website for 0.3.1 and release records (EN/VI) | task/613-website-0.3.1 | scaffolder | sonnet | in progress | | | | |
+| 613 Website for 0.3.1 and release records (EN/VI) | task/613-website-0.3.1 | scaffolder | sonnet | done (`website/index.html`: pill, download text, release link and hash command 0.3.1; `n_w11` states the owner checks (Notepad, Zalo web on Chrome); D-100 recorded) | 51,324 | 29,545 (reviewer sonnet: APPROVED) | 0 | 80,869 |
 
 Phase 6 complete 2026-11-28 (608 APPROVED; 0.3.0 released; Q-08 owner rows still open).
 
