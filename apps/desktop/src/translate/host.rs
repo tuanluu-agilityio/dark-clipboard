@@ -22,7 +22,7 @@ use super::flow::{Outcome, OverlayState};
 use crate::log::{Log, Val};
 use darkclip_app::App;
 use darkclip_core::SensitiveCategory;
-use darkclip_platform::PasteInjector;
+use darkclip_platform::{PasteInjector, PlatformError};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
@@ -95,10 +95,24 @@ impl Drop for Landing {
 
 impl SingleFlight {
     /// Starts `job` on a new thread named `name` unless one is running. `false`: ignored.
+    #[cfg(test)]
     pub(crate) fn try_start(&self, name: &str, job: impl FnOnce() + Send + 'static) -> bool {
+        self.try_start_after(name, || {}, job)
+    }
+
+    /// Starts `job` on a new thread named `name` unless one is running. `before` runs on the
+    /// calling thread once the flight is taken and before the job's thread starts; a press
+    /// ignored as busy never runs it. `false`: ignored.
+    pub(crate) fn try_start_after(
+        &self,
+        name: &str,
+        before: impl FnOnce(),
+        job: impl FnOnce() + Send + 'static,
+    ) -> bool {
         if self.running.swap(true, Ordering::SeqCst) {
             return false;
         }
+        before();
         let landing = Landing(Arc::clone(&self.running));
         let started = std::thread::Builder::new()
             .name(name.into())
@@ -189,6 +203,50 @@ pub(crate) fn vk_for_code(code: &str) -> Option<u16> {
 
 /// Ctrl, Shift, Alt (`VK_MENU`), left and right Win: they must all be up before arming.
 pub(crate) const MODIFIER_VKS: [u16; 5] = [0x11, 0x10, 0x12, 0x5B, 0x5C];
+
+/// Alt (`VK_MENU`, either Alt key, AltGr too) and the left and right Win keys: a lone tap of
+/// one of them opens a menu (the app's menu bar, or Start).
+pub(crate) const MENU_KEY_VKS: [u16; 3] = [0x12, 0x5B, 0x5C];
+
+/// Whether this press sends the menu mask key (Task 612): only while Alt or a Win key is still
+/// down. Asked right when the translate hotkey fires, a held Alt or Win is part of the
+/// shortcut: the OS hotkey fires only when the held modifiers match its registration, so a
+/// shortcut without Alt or Win (`Ctrl+Shift+Y`) never fires with one held. Once released, the
+/// lone tap already happened and a mask can no longer help.
+pub(crate) fn menu_mask_wanted(held: impl Fn(&[u16]) -> bool) -> bool {
+    held(&MENU_KEY_VKS)
+}
+
+/// The content-free log line of a mask that could not be sent: a status and a code.
+pub(crate) fn mask_failed_fields(e: &PlatformError) -> [(&'static str, Val); 2] {
+    let code = match e {
+        PlatformError::Backend { code } => u64::try_from(*code).unwrap_or(0),
+        _ => 0,
+    };
+    [("status", Val::Name("failed")), ("code", Val::Num(code))]
+}
+
+/// One press of the translate shortcut: the single-flight check first (a busy press sends
+/// nothing, not even the mask), then the menu mask while the shortcut's Alt or Win is still
+/// held, then the flow on its own thread. The mask is sent even when the flow later refuses the
+/// press: it is harmless and keeps the menu closed either way. A failed mask is logged and the
+/// flow runs anyway (its select-all retry is the fallback). `false`: ignored as busy.
+pub(crate) fn press(
+    flight: &SingleFlight,
+    log: &Log,
+    held: impl Fn(&[u16]) -> bool,
+    send_mask: impl FnOnce() -> Result<(), PlatformError>,
+    job: impl FnOnce() + Send + 'static,
+) -> bool {
+    let mask = || {
+        if menu_mask_wanted(held) {
+            if let Err(e) = send_mask() {
+                log.event("translate_menu_mask", &mask_failed_fields(&e));
+            }
+        }
+    };
+    flight.try_start_after("darkclip-translate", mask, job)
+}
 
 /// What one press measured, for the log line.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -300,9 +358,13 @@ pub(crate) fn on_press() {
     let Some(h) = HOST.get() else {
         return;
     };
-    let started = h
-        .flight
-        .try_start("darkclip-translate", move || run_press(h));
+    let started = press(
+        &h.flight,
+        &h.deps.log,
+        imp::keys_down,
+        imp::send_menu_mask,
+        move || run_press(h),
+    );
     if !started {
         h.deps
             .log
@@ -443,6 +505,16 @@ mod imp {
 
     /// The longest wait for an app call on the worker (it may be busy with another job).
     const APP_CALL_WAIT: Duration = Duration::from_secs(5);
+
+    /// True while any of `vks` is down.
+    pub(super) fn keys_down(vks: &[u16]) -> bool {
+        crate::winsys::any_key_down(vks)
+    }
+
+    /// The menu mask key (`0xE8` down and up; Task 612).
+    pub(super) fn send_menu_mask() -> Result<(), PlatformError> {
+        darkclip_windows::mask_menu_activation()
+    }
 
     pub(super) fn read_key() -> Option<Redacted<String>> {
         darkclip_windows::WinSecretStore
@@ -697,6 +769,15 @@ mod imp {
     use super::{Host, Injector, Metrics};
     use crate::translate::flow::{Block, Outcome};
     use darkclip_core::Redacted;
+    use darkclip_platform::PlatformError;
+
+    pub(super) fn keys_down(_vks: &[u16]) -> bool {
+        false
+    }
+
+    pub(super) fn send_menu_mask() -> Result<(), PlatformError> {
+        Ok(())
+    }
 
     pub(super) fn read_key() -> Option<Redacted<String>> {
         None
@@ -1080,5 +1161,152 @@ mod tests {
         assert_eq!(s.take(), "abc");
         assert!(s.0.is_empty());
         drop(Secret("xyz".into()));
+    }
+
+    /// The held keys when the hotkey fires: exactly the shortcut's modifiers (the OS hotkey
+    /// fires only when the modifier state matches the registration).
+    fn held_as_pressed(s: &crate::shortcut::Shortcut) -> impl Fn(&[u16]) -> bool + '_ {
+        move |vks: &[u16]| {
+            vks.iter().any(|vk| match *vk {
+                0x11 => s.ctrl,
+                0x10 => s.shift,
+                0x12 => s.alt,
+                0x5B => s.win,
+                _ => false,
+            })
+        }
+    }
+
+    #[test]
+    fn shortcut_needs_menu_mask() {
+        for (text, needs) in [
+            ("Ctrl+Alt+T", true),
+            ("Alt+Shift+X", true),
+            ("Win+Ctrl+X", true),
+            ("Ctrl+Shift+Y", false),
+            ("Ctrl+F5", false),
+        ] {
+            let s = crate::shortcut::parse(text).unwrap();
+            assert_eq!(menu_mask_wanted(held_as_pressed(&s)), needs, "{text}");
+        }
+        // Released before the press was handled: no mask (it could not help any more).
+        assert!(!menu_mask_wanted(|_: &[u16]| false));
+        // Only Alt and the Win keys are asked about, never Ctrl or Shift.
+        let asked = Mutex::new(Vec::new());
+        let _ = menu_mask_wanted(|vks: &[u16]| {
+            asked.lock().unwrap().extend_from_slice(vks);
+            false
+        });
+        assert_eq!(*asked.lock().unwrap(), vec![0x12, 0x5B, 0x5C]);
+    }
+
+    fn temp_log() -> (tempfile::TempDir, Log) {
+        let dir = tempfile::tempdir().unwrap();
+        let log = Log::open(dir.path());
+        (dir, log)
+    }
+
+    fn log_text(dir: &tempfile::TempDir) -> String {
+        std::fs::read_to_string(dir.path().join("logs").join("dark-clipboard.log"))
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn the_mask_is_sent_once_per_press_before_any_flow_key() {
+        let (_dir, log) = temp_log();
+        let flight = SingleFlight::default();
+        let steps = Arc::new(Mutex::new(Vec::new()));
+        let (done_tx, done_rx) = mpsc::channel();
+        let (m, f) = (Arc::clone(&steps), Arc::clone(&steps));
+        assert!(press(
+            &flight,
+            &log,
+            |_: &[u16]| true,
+            move || {
+                m.lock().unwrap().push("mask");
+                Ok(())
+            },
+            move || {
+                f.lock().unwrap().push("flow");
+                let _ = done_tx.send(());
+            },
+        ));
+        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(*steps.lock().unwrap(), vec!["mask", "flow"]);
+    }
+
+    #[test]
+    fn no_mask_on_a_busy_press() {
+        let (_dir, log) = temp_log();
+        let flight = SingleFlight::default();
+        let (go, wait) = mpsc::channel::<()>();
+        assert!(flight.try_start("t-flow", move || {
+            let _ = wait.recv();
+        }));
+        let masks = Arc::new(AtomicUsize::new(0));
+        let flows = Arc::new(AtomicUsize::new(0));
+        let (m, f) = (Arc::clone(&masks), Arc::clone(&flows));
+        assert!(!press(
+            &flight,
+            &log,
+            |_: &[u16]| true,
+            move || {
+                m.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            move || {
+                f.fetch_add(1, Ordering::SeqCst);
+            },
+        ));
+        go.send(()).unwrap();
+        assert_eq!(masks.load(Ordering::SeqCst), 0);
+        assert_eq!(flows.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn no_mask_when_the_modifier_is_already_released() {
+        let (_dir, log) = temp_log();
+        let flight = SingleFlight::default();
+        let masks = Arc::new(AtomicUsize::new(0));
+        let m = Arc::clone(&masks);
+        let (done_tx, done_rx) = mpsc::channel();
+        assert!(press(
+            &flight,
+            &log,
+            |_: &[u16]| false,
+            move || {
+                m.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            move || {
+                let _ = done_tx.send(());
+            },
+        ));
+        // The flow still runs; only the mask is skipped.
+        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(masks.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_failed_mask_is_logged_content_free_and_the_flow_runs() {
+        let (dir, log) = temp_log();
+        let flight = SingleFlight::default();
+        let (done_tx, done_rx) = mpsc::channel();
+        assert!(press(
+            &flight,
+            &log,
+            |_: &[u16]| true,
+            || Err(PlatformError::Backend { code: 5 }),
+            move || {
+                let _ = done_tx.send(());
+            },
+        ));
+        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        drop(log);
+        assert!(log_text(&dir).contains("translate_menu_mask status=failed code=5"));
+        assert_eq!(
+            render(&mask_failed_fields(&PlatformError::Unsupported("x"))),
+            "status=failed code=0"
+        );
     }
 }

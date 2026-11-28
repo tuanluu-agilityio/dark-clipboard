@@ -525,4 +525,5 @@ Owner rows. Every row is **untested**: nothing here was run on a real machine, a
 | Settings > Translate Test button | One fixed sample is translated and "OK ... in N s" shows; with no key it says to save a key first | **T** (owner, 0.3.0, 2026-11-28) |
 | Shortcut clash: set the translate shortcut equal to the popup shortcut | The clash is reported and not saved; both shortcuts keep working | **T** (owner, 0.3.0, 2026-11-28) |
 | DPI 100 % and 150 %, and two monitors | The overlay appears near the pointer on the right monitor, is not cut off and does not take focus | **T** (owner, 0.3.0, 2026-11-28) |
+| Chrome (Zalo web or any page) with the default `Ctrl+Alt+T`: select a word, press the shortcut, release it; then Word and Firefox if available (Task 612) | The word is translated on the first press; the `translate` log line has `select_all=0` and `copy_ms` under 500; no menu bar opens after the press; no `translate_menu_mask status=failed` line | **untested** |
 | Vietnamese text in and out; Windows animations off | The text arrives intact; the overlay still appears and disappears correctly | **T** (owner, 0.3.0, 2026-11-28) |
