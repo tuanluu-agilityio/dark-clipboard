@@ -65,10 +65,10 @@ fn claim_reply_carries_claimed_seq() {
 }
 
 #[test]
-fn claim_window_is_one_second() {
-    assert_eq!(CLAIM_WINDOW_MS, 1_000);
+fn claim_window_is_three_seconds() {
+    assert_eq!(CLAIM_WINDOW_MS, 3_000);
     assert_eq!(CLAIM_REPLY_SLACK_MS, 800);
-    // The slot's own rule, with exact instants: a change first seen 900 ms after arming is
+    // The slot's own rule, with exact instants: a change first seen 2900 ms after arming is
     // covered; at the deadline it is not.
     let (tx, _rx) = mpsc::channel();
     let t = Instant::now();
@@ -79,14 +79,14 @@ fn claim_window_is_one_second() {
         tx,
     );
     assert!(slot.covers(t));
-    assert!(slot.covers(t + Duration::from_millis(900)));
-    assert!(slot.covers(t + Duration::from_millis(999)));
-    assert!(!slot.covers(t + Duration::from_millis(1_000)));
-    // In the actor, with the real window: the actor is held up 650 ms when it dequeues the
-    // target's signal (the smallest round delay past the old 600 ms window, so it proves the
-    // window is longer, with 350 ms of margin to the new deadline), and still claims it.
+    assert!(slot.covers(t + Duration::from_millis(2_900)));
+    assert!(slot.covers(t + Duration::from_millis(2_999)));
+    assert!(!slot.covers(t + Duration::from_millis(3_000)));
+    // In the actor, with the real window: the actor is held up 1100 ms when it dequeues the
+    // target's signal (a round delay past the old 1000 ms window, so it proves the window is
+    // longer, with 1900 ms of margin to the new deadline), and still claims it.
     let h = start(PrivacyPolicy::default());
-    *h.cap().hooks.stall_on_signal.lock().unwrap() = Some((1, Duration::from_millis(650)));
+    *h.cap().hooks.stall_on_signal.lock().unwrap() = Some((1, Duration::from_millis(1_100)));
     let rx = arm(&h, "zalo.exe");
     h.fake.copy(owned("zalo.exe", "slow app text"));
     assert_eq!(claim_reply(&rx), Ok("slow app text".to_string()));
@@ -106,9 +106,9 @@ fn same_app_follow_up_after_claim_is_skipped_and_counted() {
     assert!(no_store_events(&seen), "{seen:?}");
     assert_eq!(translate_skips(&h), 1);
     assert_eq!(h.fake.read_calls(), 1);
-    // Up to 1500 ms after the claimed change's first signal.
+    // Up to 3500 ms (burst cap + claim window) after the claimed change's first signal.
     h.fake.copy_burst_at(vec![(
-        Timestamp(T0 + 1_500),
+        Timestamp(T0 + 3_500),
         owned("zalo.exe", "third copy"),
     )]);
     h.wait_skip(SkipReason::TranslateSource);
@@ -124,19 +124,19 @@ fn same_app_follow_up_after_claim_is_skipped_and_counted() {
 
 #[test]
 fn same_app_change_after_window_or_after_own_write_is_stored() {
-    // After 1500 ms.
+    // After 3500 ms.
     let h = start(PrivacyPolicy::default());
     long_window(&h);
     claim_at(&h, "zalo.exe", "first copy", T0);
     h.fake.copy_burst_at(vec![(
-        Timestamp(T0 + 1_501),
+        Timestamp(T0 + 3_501),
         owned("zalo.exe", "later copy"),
     )]);
     let (id, before) = h.wait_added();
     assert!(no_store_events(&before), "{before:?}");
     assert_eq!(h.ro().get_clip(&id).unwrap().unwrap().preview, "later copy");
     assert_eq!(translate_skips(&h), 0);
-    // After an own write (the translation), inside the 1500 ms.
+    // After an own write (the translation), inside the 3500 ms.
     let h = start(PrivacyPolicy::default());
     long_window(&h);
     claim_at(&h, "zalo.exe", "first copy", T0);

@@ -4,6 +4,16 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Translate in place stored the source text and the translation in History when the target app (Zalo web in Chrome) answered the copy late, after a failed first press (Q-08, Task 610). A copy from the target app that arrives up to 5 s after the copy window ended is now skipped and never stored. The copy window is 3 s (was 1 s) and the select-all retry waits 1.2 s (was 0.4 s), so a slow app's selection is translated on the first press and is not widened to the whole field when the app answers within about 1.2 s. A press in another app while an abandoned press still waits no longer lets that app's copy be stored. The log line of each press has `copy_ms` and `select_all` (timings only).
+
+### Known issues
+
+- With nothing selected, the whole field is selected about 1.2 s after the press (was 0.4 s): the cost of waiting for slow apps.
+- An app slower than about 1.2 s to answer the copy still gets the select-all retry, so a partial selection can be widened to the whole field (`Ctrl+Z` brings the original back).
+- A copy you make yourself in an app within about 8 s of a failed or cancelled translate press in that app (for up to the 4 most recent apps, even after pressing in another app), or within 3.5 s of a successful press before the translation is written, is not stored in history (counted as "Translate in place source"; nothing is overwritten).
+
 ## [0.3.0] - 2026-11-28
 
 Phase 6: translate in place (opens P2; D-093, D-094, D-095). Windows x64 only, unsigned, alpha. Released before the owner's manual checks at the owner's request (D-097): no translate-in-place row in the checklist has been run.

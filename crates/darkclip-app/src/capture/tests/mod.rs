@@ -3,6 +3,7 @@
 
 mod claim;
 mod claim_contract;
+mod claim_tail;
 mod commands;
 mod copy_back;
 mod debounce;

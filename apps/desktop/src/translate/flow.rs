@@ -23,8 +23,10 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 
 /// How long the flow waits for the shortcut's keys to come up before arming (I1 M1).
 pub(crate) const KEYS_UP_WAIT_MS: u64 = 1000;
-/// How long the plain Ctrl+C has to move the clipboard before the select-all retry.
-pub(crate) const COPY_WAIT_MS: u64 = 400;
+/// How long the plain Ctrl+C has to move the clipboard before the select-all retry. 1200
+/// since Task 610: a slow app (Chrome) answered later than 400 ms, so the retry selected the
+/// whole field. The cost: with nothing selected, select-all comes about 1.2 s after the press.
+pub(crate) const COPY_WAIT_MS: u64 = 1_200;
 /// The longest wait for the claim reply, counted from arming (603b).
 pub(crate) const CLAIM_WAIT_MS: u64 = CLAIM_WINDOW_MS + CLAIM_REPLY_SLACK_MS;
 /// The pause between the paste and the restore of the previous clipboard.
@@ -269,6 +271,9 @@ pub(crate) trait FlowSys {
     fn keys_up(&mut self, wait: u64) -> bool;
     fn claim(&mut self, app_id: &str) -> Receiver<Result<ClaimedText, ClaimError>>;
     fn send_copy(&mut self, t: &PasteTarget, select_all: bool) -> Result<(), PlatformError>;
+    /// The wait for the claim reply after the first `send_copy` ended (a reply, Esc or the
+    /// timeout), for the content-free `copy_ms` of the log line (Task 610). No data.
+    fn copy_wait_ended(&mut self) {}
     fn is_sensitive(&mut self, text: &str) -> bool;
     fn translate(&mut self, text: Cleared) -> Receiver<Result<TransformResult, AiError>>;
     /// The own write seq; `None` when the clipboard no longer holds `expect_seq`.
@@ -371,7 +376,7 @@ fn run_inner<S: FlowSys>(sys: &mut S, cfg: &FlowConfig) -> Outcome {
     }
     // 4. The previous clipboard, taken before our copy changes it (I1 R5).
     let candidate = sys.restore_candidate();
-    // 5. One claim for both copy attempts (a second arm would reply Busy).
+    // 5. One claim for both copy attempts (a second arm would replace it).
     let seq0 = sys.clipboard_seq();
     let rx = sys.claim(&app_id);
     // A reply before any key: arming failed (the host could not reach the actor), or the
@@ -393,7 +398,9 @@ fn run_inner<S: FlowSys>(sys: &mut S, cfg: &FlowConfig) -> Outcome {
                     Block::NotNormalWindow
                 });
             }
-            match wait_for_claim(sys, cfg, &rx, &t, seq0) {
+            let waited = wait_for_claim(sys, cfg, &rx, &t, seq0);
+            sys.copy_wait_ended();
+            match waited {
                 Ok(c) => c,
                 Err(o) => {
                     // A text that landed with the cancel or the timeout is wiped.
@@ -632,6 +639,9 @@ mod tests {
         seq_unknown: bool,
         armed: bool,
         since_arm: u64,
+        /// The claim reply is delivered by the first `sleep` that reaches this virtual time
+        /// since arming (a slow app; Task 610).
+        reply_after_ms: Option<u64>,
         overlays: Vec<OverlayState>,
         sent_text: Vec<usize>,
     }
@@ -667,6 +677,7 @@ mod tests {
                 seq_unknown: false,
                 armed: false,
                 since_arm: 0,
+                reply_after_ms: None,
                 overlays: Vec::new(),
                 sent_text: Vec::new(),
             }
@@ -747,6 +758,9 @@ mod tests {
             }
             r
         }
+        fn copy_wait_ended(&mut self) {
+            self.calls.push("copy_wait_ended".into());
+        }
         fn is_sensitive(&mut self, _text: &str) -> bool {
             self.calls.push("is_sensitive".into());
             self.sensitive
@@ -791,6 +805,9 @@ mod tests {
             self.calls.push(format!("sleep {ms}"));
             if self.armed {
                 self.since_arm += ms;
+                if self.reply_after_ms.is_some_and(|t| self.since_arm >= t) {
+                    self.deliver();
+                }
             }
         }
         fn cancelled(&mut self) -> bool {
@@ -824,6 +841,7 @@ mod tests {
                 "restore_candidate",
                 "claim",
                 "send_copy false",
+                "copy_wait_ended",
                 "is_sensitive",
                 "overlay Sending { chars: 17 }",
                 "translate",
@@ -1160,6 +1178,49 @@ mod tests {
     }
 
     #[test]
+    fn slow_copy_is_claimed_without_select_all() {
+        // Task 610 (Q-08): a slow app (Chrome) moves the clipboard 900 ms after the plain
+        // Ctrl+C. No Ctrl+A is sent (a partial selection is never widened) and the claim of
+        // that first copy is used.
+        let mut f = Fake::new();
+        f.seq_at = Box::new(|t| if t >= 900 { CLAIMED_SEQ } else { SEQ0 });
+        f.reply_at = ReplyAt::Never;
+        f.reply_after_ms = Some(900);
+        assert_eq!(f.run(), Outcome::Replaced);
+        assert_eq!(f.count("send_copy true"), 0);
+        assert_eq!(f.count("send_copy false"), 1);
+        assert!(f.has(&format!("write_own_if {CLAIMED_SEQ}")));
+        assert_eq!(f.sent_text, vec![SOURCE.chars().count()]);
+        // The copy wait's end is reported once, for `copy_ms`.
+        assert_eq!(f.count("copy_wait_ended"), 1);
+    }
+
+    #[test]
+    fn select_all_only_after_1200_ms_unchanged() {
+        assert_eq!(COPY_WAIT_MS, 1_200);
+        // Unchanged for the whole 1200 ms: one select-all, after exactly that wait.
+        let mut f = Fake::new();
+        f.seq_at = Box::new(|_| SEQ0);
+        f.reply_at = ReplyAt::Copy(2);
+        assert_eq!(f.run(), Outcome::Replaced);
+        assert_eq!(f.count("send_copy true"), 1);
+        let first = f.calls.iter().position(|c| c == "send_copy false").unwrap();
+        let retry = f.calls.iter().position(|c| c == "send_copy true").unwrap();
+        let slept: u64 = f.calls[first..retry]
+            .iter()
+            .filter_map(|c| c.strip_prefix("sleep ")?.parse::<u64>().ok())
+            .sum();
+        assert_eq!(slept, 1_200);
+        // Moved at 1190 ms: no select-all.
+        let mut f = Fake::new();
+        f.seq_at = Box::new(|t| if t >= 1_190 { CLAIMED_SEQ } else { SEQ0 });
+        f.reply_at = ReplyAt::Never;
+        f.reply_after_ms = Some(1_190);
+        assert_eq!(f.run(), Outcome::Replaced);
+        assert_eq!(f.count("send_copy true"), 0);
+    }
+
+    #[test]
     fn one_claim_for_both_attempts() {
         let mut f = Fake::new();
         f.seq_at = Box::new(|_| SEQ0);
@@ -1176,6 +1237,7 @@ mod tests {
         f.reply_at = ReplyAt::Never;
         assert_eq!(f.run(), Outcome::Failed(FlowError::NothingCopied));
         assert_eq!(f.since_arm, CLAIM_WAIT_MS);
+        assert_eq!(f.count("copy_wait_ended"), 1);
         assert!(!f.has("translate") && !f.has("restore_if") && !f.has("paste"));
         // The actor's Expired is the same outcome.
         let mut f = Fake::new();

@@ -197,6 +197,10 @@ pub(crate) struct Metrics {
     pub out_chars: u64,
     pub api_ms: u64,
     pub total_ms: u64,
+    /// From the first Ctrl+C to the claim reply (or the end of that wait; Task 610).
+    pub copy_ms: u64,
+    /// 1 when the select-all retry was sent.
+    pub select_all: u64,
 }
 
 /// The fields of the one log line per press: codes, counts and timings only.
@@ -210,6 +214,8 @@ pub(crate) fn log_fields(o: Outcome, m: &Metrics) -> Vec<(&'static str, Val)> {
         ("out_chars", Val::Num(m.out_chars)),
         ("api_ms", Val::Num(m.api_ms)),
         ("total_ms", Val::Num(m.total_ms)),
+        ("copy_ms", Val::Num(m.copy_ms)),
+        ("select_all", Val::Num(m.select_all)),
     ]);
     f
 }
@@ -388,6 +394,8 @@ mod imp {
         key: Option<Redacted<String>>,
         metrics: Metrics,
         api_ms: Arc<AtomicU64>,
+        /// When the first Ctrl+C was sent, for `copy_ms`.
+        copy_started: Option<Instant>,
     }
 
     impl Drop for WinFlow<'_> {
@@ -489,8 +497,21 @@ mod imp {
                 .injector
                 .as_ref()
                 .ok_or(PlatformError::Unsupported("copy"))?;
+            if self.copy_started.is_none() {
+                self.copy_started = Some(Instant::now());
+            }
             let mut guard = lock(injector);
-            guard.copy(t, select_all)
+            let sent = guard.copy(t, select_all);
+            if select_all && sent.is_ok() {
+                self.metrics.select_all = 1;
+            }
+            sent
+        }
+
+        fn copy_wait_ended(&mut self) {
+            if let Some(t0) = self.copy_started {
+                self.metrics.copy_ms = u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX);
+            }
         }
 
         fn is_sensitive(&mut self, text: &str) -> bool {
@@ -595,6 +616,7 @@ mod imp {
             key: None,
             metrics: Metrics::default(),
             api_ms: Arc::new(AtomicU64::new(0)),
+            copy_started: None,
         };
         let outcome = flow::run(&mut sys, &FlowConfig::default());
         let mut m = sys.metrics;
@@ -747,11 +769,25 @@ mod tests {
             out_chars: 11,
             api_ms: 900,
             total_ms: 1500,
+            copy_ms: 950,
+            select_all: 0,
         };
         let line = render(&log_fields(Outcome::Replaced, &m));
         assert_eq!(
             line,
-            "outcome=replaced src_chars=17 out_chars=11 api_ms=900 total_ms=1500"
+            "outcome=replaced src_chars=17 out_chars=11 api_ms=900 total_ms=1500 copy_ms=950 select_all=0"
+        );
+        let line = render(&log_fields(
+            Outcome::Failed(FlowError::NothingCopied),
+            &Metrics {
+                copy_ms: 3000,
+                select_all: 1,
+                ..Metrics::default()
+            },
+        ));
+        assert_eq!(
+            line,
+            "outcome=failed reason=nothing_copied src_chars=0 out_chars=0 api_ms=0 total_ms=0 copy_ms=3000 select_all=1"
         );
         let line = render(&log_fields(
             Outcome::Blocked(Block::Terminal),

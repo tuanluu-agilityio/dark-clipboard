@@ -23,7 +23,7 @@ pub(super) fn translate_platform() -> Platform {
 impl App {
     /// Arms the capture claim for `app_id` (`ExpectForeignCopy`) and returns at once; the
     /// caller waits on the receiver for at most `CLAIM_WINDOW_MS + CLAIM_REPLY_SLACK_MS`.
-    /// One slot: a second arm while one is armed replies `Busy`. UI only.
+    /// One slot: a second arm replaces a live one, which replies `Expired` (Task 610). UI only.
     pub fn ui_translate_claim(
         &self,
         c: &Caller,

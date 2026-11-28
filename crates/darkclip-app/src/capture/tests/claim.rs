@@ -135,9 +135,10 @@ fn claimed_change_is_returned_and_never_stored() {
     h.fake
         .copy_burst_at(vec![(Timestamp(T0), owned("zalo.exe", "lan hai"))]);
     assert_eq!(claim_reply(&rx), Ok("lan hai".to_string()));
-    // Beyond the same-app follow-up skip (Task 603b: 1500 ms by signal time).
+    // Beyond the same-app follow-up skip (Task 603b: burst cap + claim window, 3500 ms by
+    // signal time since Task 610).
     h.fake.copy_burst_at(vec![(
-        Timestamp(T0 + 2_000),
+        Timestamp(T0 + 4_000),
         owned("zalo.exe", "stored again"),
     )]);
     let (id, before) = h.wait_added();
@@ -332,7 +333,8 @@ fn let_through_change_is_never_stored_after_resume() {
             source: Some(src("zalo.exe")),
         }))
         .unwrap();
-    assert_eq!(claim_reply(&arm(&h, "other.exe")), Err(ClaimError::Busy));
+    // A round trip through the actor's queue: the signal above was handled first.
+    let _ = restore_candidate(&h);
     h.clock.set(T0 + 120_000);
     let seen = h.wait_skip(SkipReason::Paused);
     assert!(no_store_events(&seen), "{seen:?}");
@@ -363,7 +365,8 @@ fn let_through_change_is_never_stored_after_resume() {
             source: Some(src("zalo.exe")),
         }))
         .unwrap();
-    assert_eq!(claim_reply(&arm(&h, "other.exe")), Err(ClaimError::Busy));
+    // A round trip through the actor's queue: the signal above was handled first.
+    let _ = restore_candidate(&h);
     h.set_mode(CaptureMode::Normal);
     let between = h.sentinel();
     assert!(no_store_events(&between), "{between:?}");
@@ -557,22 +560,37 @@ fn claim_expires_without_activity() {
         took < Duration::from_millis(CLAIM_WINDOW_MS + 500),
         "{took:?}"
     );
-    // Disarmed: a later change from the target is stored as usual.
-    h.fake.copy(owned("zalo.exe", "later text"));
+    // Disarmed: a later change from the target, past the unclaimed tail (Task 610), is
+    // stored as usual.
+    let after_tail = T0 + i64::try_from(CLAIM_WINDOW_MS + UNCLAIMED_TAIL_MS).unwrap() + 1;
+    h.fake.copy_burst_at(vec![(
+        Timestamp(after_tail),
+        owned("zalo.exe", "later text"),
+    )]);
     h.wait_added();
     assert_eq!(h.fake.snapshot_meta_calls(), 1);
 }
 
 #[test]
-fn second_claim_while_armed_is_busy() {
+fn second_claim_replaces_the_live_slot() {
+    // Never two live claims (Task 610 review): a second arm replaces the first slot, whose
+    // requester (a finished flow: the host runs one press at a time) gets `Expired` at once.
     let h = start(PrivacyPolicy::default());
+    long_window(&h);
+    let t = Instant::now();
     let first = arm(&h, "zalo.exe");
     let second = arm(&h, "slack.exe");
-    assert_eq!(claim_reply(&second), Err(ClaimError::Busy));
-    // The first slot stays (it expires on its own).
     assert_eq!(claim_reply(&first), Err(ClaimError::Expired));
-    // A new slot after expiry is armed normally.
-    long_window(&h);
+    assert!(t.elapsed() < Duration::from_millis(CLAIM_WINDOW_MS));
+    assert!(matches!(second.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    // Only the second slot claims.
+    h.fake.copy(owned("slack.exe", "second text"));
+    assert_eq!(claim_reply(&second), Ok("second text".to_string()));
+    assert!(matches!(
+        first.try_recv(),
+        Err(mpsc::TryRecvError::Disconnected)
+    ));
+    // A new slot after that is armed normally.
     let third = arm(&h, "slack.exe");
     h.fake.copy(owned("slack.exe", "third text"));
     assert_eq!(claim_reply(&third), Ok("third text".to_string()));

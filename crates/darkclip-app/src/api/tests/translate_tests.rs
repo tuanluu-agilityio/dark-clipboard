@@ -92,15 +92,17 @@ fn claim_write_and_restore_through_the_api() {
 }
 
 #[test]
-fn a_second_claim_while_armed_is_busy() {
+fn a_second_claim_replaces_the_armed_one() {
+    // Task 610: never two live claims; the older one ends `Expired` at once.
     let h = start(&[], None);
     let a = h.app();
-    let _first = a.ui_translate_claim(&Caller::Ui, TARGET.into()).unwrap();
+    let first = a.ui_translate_claim(&Caller::Ui, TARGET.into()).unwrap();
     let second = a.ui_translate_claim(&Caller::Ui, TARGET.into()).unwrap();
     assert_eq!(
-        second.recv_timeout(WAIT).unwrap().unwrap_err(),
-        crate::capture::ClaimError::Busy
+        first.recv_timeout(WAIT).unwrap().unwrap_err(),
+        crate::capture::ClaimError::Expired
     );
+    assert!(second.try_recv().is_err());
 }
 
 #[test]
