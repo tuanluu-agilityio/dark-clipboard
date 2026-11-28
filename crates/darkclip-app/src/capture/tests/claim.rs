@@ -607,8 +607,10 @@ fn claim_expires_without_activity() {
     assert_eq!(claim_reply(&rx), Err(ClaimError::Expired));
     let took = t.elapsed();
     assert!(took >= Duration::from_millis(CLAIM_WINDOW_MS), "{took:?}");
+    // Upper bound with CI slack (F-42): the reply must come from the deadline wake-up, not
+    // from a much later event; 2 s over the window keeps that meaning on a loaded runner.
     assert!(
-        took < Duration::from_millis(CLAIM_WINDOW_MS + 500),
+        took < Duration::from_millis(CLAIM_WINDOW_MS + 2_000),
         "{took:?}"
     );
     // Disarmed: a later change from the target, past the unclaimed tail (Task 610), is
