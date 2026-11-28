@@ -17,6 +17,8 @@ Updated: 2026-11-28
 
 - **Q-08 results 2026-11-28 (owner, 0.3.0):** rows 1, 3, 5, 7-11 OK; row 4 skipped; row 6 not testable by hand; **row 2 FAIL**: in Zalo web on Chrome, History stores the source and the translation (source `chrome.exe`). Root cause: a target copy arriving after the claim window expired is captured normally (no tail rule after `Expired`); first presses in Chrome often fail `nothing_copied`. Task 610 done (late copy fix, for 0.3.1). **Owner re-test of row 2 (Zalo web on Chrome) pending before 0.3.1**; also: press in Chrome, Esc at once, press in Notepad: nothing stored. Then the known items (608 follow-ups, F-42, F-44 a/c) before 0.3.1: Task 611 implemented (review pending).
 
+- **Owner re-test 2026-11-28 (main after 610):** Zalo web on Chrome: History clean (row 2 now passes), partial selection translated correctly. Log shows `select_all=1 copy_ms≈1400-1600` with `Ctrl+Alt+T` but `select_all=0 copy_ms=120` with `Ctrl+Shift+Y`: releasing **Alt** after the hotkey (T is swallowed) is a lone Alt tap, so Chrome focuses its menu and the first synthetic Ctrl+C is lost. **Next: Task 612** (menu mask key: send an unassigned VK 0xE8 down/up while Alt or Win of the shortcut is still held, as AutoHotkey's MenuMaskKey), then the 0.3.1 scoped review and release (owner approval needed).
+
 ## Waiting on owner
 
 | ID | Question | Blocks |
