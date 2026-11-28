@@ -6,7 +6,24 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 
 ### Added
 
+- Translate in place (Windows, Tasks 600-606; D-093, D-094, D-095): a shortcut (default `Ctrl+Alt+T`) translates the selected text, or the whole field when nothing is selected, and replaces it in place. It is off by default, with its settings in Settings > Translate, an enable-time consent dialog, the Anthropic API key in Windows Credential Manager, a Test button and a "Never sent" card. The only network address is `https://api.anthropic.com/v1/messages` (`apps/desktop/src/ai_net.rs`); `crates/` stay network-free. A new skip reason "Translate in place source" counts the copies the flow makes itself.
 - Project website (English and Vietnamese), published with GitHub Pages from `website/`.
+
+### Fixed
+
+- F-41: the Windows gate (`scripts/check.ps1`) manifest check used an invalid filter regex (the `-notmatch` pattern for the `target` folder), so it checked no manifest on Windows; fixed in Task 600 (`check.sh` was correct).
+
+### Known issues
+
+- VS Code copies the current line when nothing is selected, so translating with no selection duplicates the line.
+- Apps running as administrator are refused.
+- Only text survives the restore: images and HTML on the clipboard are not restored, and the restore puts back the stored clip only.
+- `Esc` during the copy wait can leave the source text on the clipboard (not stored, not sent).
+- `Esc` is held globally while a translation runs, up to about 30 s.
+- A copy you make in the same app within 1.5 s of pressing translate, before the translation is written, is not stored in history.
+- If the clipboard owner is a child process (some Electron or WebView2 apps), the claim cannot match, and in Normal capture mode the source text is stored as a normal clip (I1 R2).
+- Plaintext copies of the text inside the AI client are not wiped from memory (T-21 R6).
+- Notepad, Chrome and Word are not yet tested with translate in place; no owner row has been run (the G1 spike passed in Zalo, Slack and VS Code, but that was the spike, not the product).
 
 ## [0.2.0] - 2026-11-25
 
