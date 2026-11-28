@@ -31,6 +31,9 @@ Phase 0 test environment: one machine, Windows 11 Home 10.0.26300, x64, Rust 1.1
 | Popup near cursor | Yes (`GetCursorPos`) (**D**) | Yes (`NSEvent.mouseLocation`) (**D**) | Yes (**D**) | No global cursor position (**D**) → centered | same (**D**) | same (**D**) |
 | Start at login | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (Darkshot uses it) (**D**) | `SMAppService.mainApp` (macOS 13+) (**D**) | `~/.config/autostart/*.desktop` (**D**) | same (**D**) | Compositor config (**D**) | same as X11 (**D**) |
 | Secret storage (for P2 tokens, P3 keys) | DPAPI or Credential Manager (**D**) | Keychain (**D**) | Secret Service (libsecret) (**D**) | same (**D**) | same if a provider runs (**D**) | same (**D**) |
+| Translate in place (selection or field, replace via paste) | **untested**: built and unit-tested (Tasks 600-606), owner rows pending (`docs/testing/platform-checklist.md`, Translate in place); the G1 spike (Zalo, Slack, VS Code) is not product evidence | unavailable (not built) | unavailable (not built) | unavailable (not built) | unavailable (not built) | unavailable (not built) |
+
+> Note 2026-11-28 (Task 607): the Translate in place row is new. The flow sends text to `api.anthropic.com` only after enable-time consent (D-093), through the one extra network file `apps/desktop/src/ai_net.rs` (D-094), and refuses terminals by window class (D-095). Windows is `untested` until the owner rows pass; the secret storage row above is used by it (Credential Manager) but is not itself marked T by this task.
 
 ## 2. Phase 0 test results (Windows)
 
