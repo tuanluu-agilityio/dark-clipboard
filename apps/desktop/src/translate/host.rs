@@ -352,11 +352,76 @@ impl Drop for Secret {
     }
 }
 
+/// Set when one flow run ends (Task 611): a job the host posted for that run does nothing
+/// once it is set, so a job the UI worker reaches late (after `APP_CALL_WAIT`) never arms a
+/// claim nobody waits on, nor writes a translation after the flow gave up.
+#[derive(Clone, Default)]
+pub(crate) struct FlowEnd(Arc<AtomicBool>);
+
+impl FlowEnd {
+    pub(crate) fn ended(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// Sets the [`FlowEnd`] flag when dropped: every path out of a flow run, an unwind included.
+pub(crate) struct EndGuard(pub(crate) FlowEnd);
+
+impl Drop for EndGuard {
+    fn drop(&mut self) {
+        (self.0).0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// A job for a worker that hands it `&A` (`App` in the real host).
+pub(crate) type GuardedJob<A> = Box<dyn FnOnce(&A) + Send>;
+/// Queues a [`GuardedJob`] on that worker ([`RunOnApp`] for `App`).
+pub(crate) type PostJob<A> = dyn Fn(GuardedJob<A>) + Send + Sync;
+
+/// The job posted for one app call: it checks first that the flow run has not ended and that
+/// its call has not given up; if either is set it does nothing and drops `f` unrun (a
+/// [`Secret`] that `f` holds is then wiped by its `Drop`). Otherwise it runs `f` and sends the
+/// answer.
+pub(crate) fn guarded_job<A: ?Sized + 'static, T: Send + 'static>(
+    end: &FlowEnd,
+    gave_up: &Arc<AtomicBool>,
+    tx: std::sync::mpsc::Sender<T>,
+    f: impl FnOnce(&A) -> T + Send + 'static,
+) -> GuardedJob<A> {
+    let end = end.clone();
+    let gave_up = Arc::clone(gave_up);
+    Box::new(move |app: &A| {
+        if end.ended() || gave_up.load(Ordering::SeqCst) {
+            drop(f);
+            return;
+        }
+        let _ = tx.send(f(app));
+    })
+}
+
+/// Posts `f` with `post` (the UI worker) and waits at most `wait` for its answer. A call that
+/// times out marks its job as given up, so the job does nothing if the worker reaches it later.
+pub(crate) fn call_guarded<A: ?Sized + 'static, T: Send + 'static>(
+    post: &PostJob<A>,
+    end: &FlowEnd,
+    wait: std::time::Duration,
+    f: impl FnOnce(&A) -> T + Send + 'static,
+) -> Option<T> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let gave_up = Arc::new(AtomicBool::new(false));
+    post(guarded_job(end, &gave_up, tx, f));
+    let answer = rx.recv_timeout(wait).ok();
+    if answer.is_none() {
+        gave_up.store(true, Ordering::SeqCst);
+    }
+    answer
+}
+
 #[cfg(windows)]
 mod imp {
     use super::{
-        any_modifier_or, lock, note_key_present, sensitive_all, AppJob, Host, Injector, Metrics,
-        Secret,
+        any_modifier_or, call_guarded, lock, note_key_present, sensitive_all, EndGuard, FlowEnd,
+        Host, Injector, Metrics, Secret,
     };
     use crate::translate::flow::{
         self, first_block, Block, BlockFacts, Cleared, FlowConfig, FlowSys, Outcome, OverlayState,
@@ -396,6 +461,8 @@ mod imp {
         api_ms: Arc<AtomicU64>,
         /// When the first Ctrl+C was sent, for `copy_ms`.
         copy_started: Option<Instant>,
+        /// Set when this flow run ends: its late jobs do nothing (Task 611).
+        end: FlowEnd,
     }
 
     impl Drop for WinFlow<'_> {
@@ -407,14 +474,10 @@ mod imp {
     }
 
     impl WinFlow<'_> {
-        /// Runs `f` on the thread that owns `App` and waits for its answer (bounded).
+        /// Runs `f` on the thread that owns `App` and waits for its answer (bounded). A job the
+        /// worker reaches after the wait gave up, or after the flow ended, does nothing.
         fn call<T: Send + 'static>(&self, f: impl FnOnce(&App) -> T + Send + 'static) -> Option<T> {
-            let (tx, rx) = mpsc::channel();
-            let job: AppJob = Box::new(move |app| {
-                let _ = tx.send(f(app));
-            });
-            (self.host.deps.run_on_app)(job);
-            rx.recv_timeout(APP_CALL_WAIT).ok()
+            call_guarded(&*self.host.deps.run_on_app, &self.end, APP_CALL_WAIT, f)
         }
 
         fn shortcut_vk(&self) -> Option<u16> {
@@ -609,6 +672,9 @@ mod imp {
     }
 
     pub(super) fn run_flow(h: &Host, injector: Option<Injector>) -> (Outcome, Metrics) {
+        let end = FlowEnd::default();
+        // Dropped last, on every path out of here: the run's late jobs then do nothing.
+        let _ended = EndGuard(end.clone());
         let mut sys = WinFlow {
             host: h,
             injector,
@@ -617,6 +683,7 @@ mod imp {
             metrics: Metrics::default(),
             api_ms: Arc::new(AtomicU64::new(0)),
             copy_started: None,
+            end,
         };
         let outcome = flow::run(&mut sys, &FlowConfig::default());
         let mut m = sys.metrics;
@@ -870,6 +937,141 @@ mod tests {
         })
         .join();
         assert_eq!(*calls.lock().unwrap(), vec![true, false, true, false]);
+    }
+
+    /// The app worker's state in these tests: what the jobs did.
+    #[derive(Default)]
+    struct FakeApp {
+        armed: AtomicBool,
+        copied: Mutex<Option<String>>,
+    }
+
+    type FakeJob = GuardedJob<FakeApp>;
+
+    /// A fake UI worker that runs each job `delay` after it was posted, one at a time, and
+    /// reports each job it was handed (run or skipped) on the returned receiver.
+    fn delayed_worker(
+        delay: Duration,
+    ) -> (Arc<PostJob<FakeApp>>, Arc<FakeApp>, mpsc::Receiver<()>) {
+        let (job_tx, job_rx) = mpsc::channel::<FakeJob>();
+        let (done_tx, done_rx) = mpsc::channel();
+        let app = Arc::new(FakeApp::default());
+        let a = Arc::clone(&app);
+        std::thread::spawn(move || {
+            for job in job_rx {
+                std::thread::sleep(delay);
+                job(&a);
+                let _ = done_tx.send(());
+            }
+        });
+        let job_tx = Mutex::new(job_tx);
+        let post: Arc<PostJob<FakeApp>> = Arc::new(move |job| {
+            let _ = job_tx.lock().unwrap().send(job);
+        });
+        (post, app, done_rx)
+    }
+
+    /// Set when dropped: proves a job's closure (and the `Secret` it holds) was dropped.
+    struct DropProbe(Arc<AtomicBool>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn late_jobs_after_flow_end_do_nothing() {
+        let (post, app, done) = delayed_worker(Duration::from_millis(300));
+        let end = FlowEnd::default();
+        let dropped = Arc::new(AtomicBool::new(false));
+        {
+            // One flow run: both calls give up after 20 ms, long before the worker runs them.
+            let _guard = EndGuard(end.clone());
+            let armed = call_guarded(&*post, &end, Duration::from_millis(20), |a: &FakeApp| {
+                a.armed.store(true, Ordering::SeqCst);
+                true
+            });
+            assert_eq!(armed, None);
+            let mut secret = Secret("translated text".into());
+            let probe = DropProbe(Arc::clone(&dropped));
+            let copied = call_guarded(&*post, &end, Duration::from_millis(20), move |a| {
+                let _probe = &probe;
+                *a.copied.lock().unwrap() = Some(secret.take());
+                7u64
+            });
+            assert_eq!(copied, None);
+            assert!(!end.ended());
+        }
+        // The flow returned: its flag is set, on every path (the guard).
+        assert!(end.ended());
+        for _ in 0..2 {
+            done.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        assert!(
+            !app.armed.load(Ordering::SeqCst),
+            "a late claim armed a slot"
+        );
+        assert_eq!(*app.copied.lock().unwrap(), None, "a late copy wrote");
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "the skipped copy job was not dropped"
+        );
+
+        // A job posted while the flow ran but run only after it ended (its call never gave
+        // up): the flag alone stops it.
+        let end = FlowEnd::default();
+        let (tx, rx) = mpsc::channel();
+        let gave_up = Arc::new(AtomicBool::new(false));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let probe = DropProbe(Arc::clone(&dropped));
+        let mut secret = Secret("translated text".into());
+        let job = guarded_job(&end, &gave_up, tx, move |a: &FakeApp| {
+            let _probe = &probe;
+            *a.copied.lock().unwrap() = Some(secret.take());
+        });
+        drop(EndGuard(end.clone()));
+        let fresh = FakeApp::default();
+        job(&fresh);
+        assert_eq!(*fresh.copied.lock().unwrap(), None);
+        assert!(dropped.load(Ordering::SeqCst));
+        assert!(rx.try_recv().is_err());
+        // The flag is also set when the flow's thread unwinds.
+        let end = FlowEnd::default();
+        let e = end.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = EndGuard(e);
+            panic!("flow failed");
+        })
+        .join();
+        assert!(end.ended());
+    }
+
+    #[test]
+    fn jobs_within_the_flow_still_run() {
+        let (post, app, done) = delayed_worker(Duration::from_millis(20));
+        let end = FlowEnd::default();
+        let _guard = EndGuard(end.clone());
+        let armed = call_guarded(&*post, &end, Duration::from_secs(5), |a: &FakeApp| {
+            a.armed.store(true, Ordering::SeqCst);
+            true
+        });
+        assert_eq!(armed, Some(true));
+        let mut secret = Secret("translated text".into());
+        let copied = call_guarded(&*post, &end, Duration::from_secs(5), move |a| {
+            *a.copied.lock().unwrap() = Some(secret.take());
+            7u64
+        });
+        assert_eq!(copied, Some(7));
+        assert!(app.armed.load(Ordering::SeqCst));
+        assert_eq!(
+            app.copied.lock().unwrap().as_deref(),
+            Some("translated text")
+        );
+        for _ in 0..2 {
+            done.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        assert!(!end.ended());
     }
 
     #[test]

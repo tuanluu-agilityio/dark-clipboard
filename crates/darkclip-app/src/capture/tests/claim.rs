@@ -375,6 +375,57 @@ fn let_through_change_is_never_stored_after_resume() {
 }
 
 #[test]
+fn ownerless_change_after_resume_does_not_inherit_held() {
+    // F-44 (a), Task 611. Paused, armed: the target's change is let through and held. The
+    // user resumes; then an unrelated ownerless change (no OLE shape, so no heir) supersedes
+    // it before it is inspected. The gate no longer applies, so it is not held: it is stored
+    // as any ownerless change. The target's signal is sent in the actor's queue before the
+    // resume, so the order is fixed; a wide debounce keeps the target change pending.
+    let policy = PrivacyPolicy {
+        mode: CaptureMode::Paused {
+            until: Timestamp(T0 + 60_000),
+        },
+        ..PrivacyPolicy::default()
+    };
+    let wide = Duration::from_millis(2_000);
+    let cfg = CaptureConfig {
+        debounce_ms: 2_000,
+        ..test_cfg()
+    };
+    let h = start_full(policy, RetentionPolicy::default(), cfg, wide, |_| {});
+    long_window(&h);
+    let rx = arm(&h, "zalo.exe");
+    h.cap().hooks.drop_signal.lock().unwrap().push(1);
+    h.fake.copy(owned("zalo.exe", "target text"));
+    wait_signal_lost(&h);
+    h.cap()
+        .tx
+        .as_ref()
+        .unwrap()
+        .send(Msg::Signal(ChangeSignal {
+            seq: 1,
+            at: Timestamp(T0),
+            source: Some(src("zalo.exe")),
+        }))
+        .unwrap();
+    // The resume marks seq 1 as seen (no backfill) but keeps the pending change.
+    h.set_mode(CaptureMode::Normal);
+    h.fake.copy(text_copy("unrelated ownerless text"));
+    let (id, before) = h.wait_added();
+    assert!(
+        !before
+            .iter()
+            .any(|e| matches!(e, AppEvent::Skipped(SkipReason::Paused))),
+        "{before:?}"
+    );
+    let clip = h.ro().get_clip(&id).unwrap().unwrap();
+    assert_eq!(clip.preview, "unrelated ownerless text");
+    assert!(clip.source.is_none());
+    assert!(!h.stored_previews().iter().any(|p| p == "target text"));
+    assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+}
+
+#[test]
 fn claim_with_gone_requester_is_not_stored() {
     let h = start(PrivacyPolicy::default());
     long_window(&h);
@@ -556,8 +607,10 @@ fn claim_expires_without_activity() {
     assert_eq!(claim_reply(&rx), Err(ClaimError::Expired));
     let took = t.elapsed();
     assert!(took >= Duration::from_millis(CLAIM_WINDOW_MS), "{took:?}");
+    // Upper bound with CI slack (F-42): the reply must come from the deadline wake-up, not
+    // from a much later event; 2 s over the window keeps that meaning on a loaded runner.
     assert!(
-        took < Duration::from_millis(CLAIM_WINDOW_MS + 500),
+        took < Duration::from_millis(CLAIM_WINDOW_MS + 2_000),
         "{took:?}"
     );
     // Disarmed: a later change from the target, past the unclaimed tail (Task 610), is

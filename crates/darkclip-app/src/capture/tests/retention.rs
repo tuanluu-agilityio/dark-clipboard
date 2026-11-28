@@ -265,10 +265,25 @@ fn file_has_token(h: &H) -> bool {
     all.windows(TOKEN.len()).any(|w| w == TOKEN.as_bytes())
 }
 
+/// A round trip through the actor's queue: the actor finished the loop iteration that
+/// handled everything sent before (F-42, Task 611).
+fn barrier(h: &H) {
+    let (tx, rx) = mpsc::channel();
+    h.cap()
+        .send(ActorCommand::RestoreCandidate { reply: tx })
+        .unwrap();
+    rx.recv_timeout(WAIT).unwrap();
+}
+
+/// Copies at test-clock time `T0 + ms` and waits until the actor is done with it. F-42:
+/// `ClipAdded` is sent from inside the capture step, before the same loop iteration's FTS
+/// housekeeping (which arms or runs the merge deadline). Without the barrier, a loaded
+/// machine let the test move the clock or read the file before that housekeeping ran.
 fn copy_at(h: &H, ms: i64, text: &str) {
     h.clock.set(T0 + ms);
     h.fake.copy(text_copy(text));
     h.wait_added();
+    barrier(h);
 }
 
 fn two_item_limit() -> RetentionPolicy {

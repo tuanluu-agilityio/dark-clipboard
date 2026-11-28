@@ -869,6 +869,27 @@ mod tests {
     }
 
     #[test]
+    fn restore_not_found_is_silent() {
+        // F-44 (c), Task 611: the restore candidate was deleted since the press (the actor's
+        // `RestoreIf` answers `NotFound`, any error maps to `Err`). The paste already
+        // happened: no failure overlay, the outcome stays Replaced, nothing else is tried.
+        let mut f = Fake::new();
+        f.restore = Err(());
+        assert_eq!(f.run(), Outcome::Replaced);
+        assert_eq!(f.calls.last().map(String::as_str), Some("restore_if 102"));
+        assert_eq!(f.count("restore_if"), 1);
+        assert_eq!(f.count("paste"), 1);
+        assert_eq!(f.overlays.last(), Some(&OverlayState::Done));
+        assert!(
+            !f.overlays
+                .iter()
+                .any(|o| matches!(o, OverlayState::Failed(_))),
+            "{:?}",
+            f.overlays
+        );
+    }
+
+    #[test]
     fn newer_user_copy_during_api_wait_is_not_overwritten() {
         let mut f = Fake::new();
         f.write = Ok(None);
