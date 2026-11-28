@@ -97,6 +97,8 @@ struct Host {
     ai_consent: u32,
     /// The mask of the stored API key, read once when the form is filled (never the key).
     key_mask: Option<String>,
+    /// The key row's Credential Manager calls, run off the UI thread (Task 611).
+    key_calls: tr::KeyCalls,
     /// Bumped by every Test press: a late answer for an older one is dropped.
     test_gen: u64,
 }
@@ -637,14 +639,21 @@ impl Host {
         self.win.set_dirty(false);
     }
 
-    /// The key row, read once from the credential store. A user who never accepted the consent
+    /// The key row, read once from the credential store on a short worker thread (Task 611);
+    /// the last known mask shows until the answer arrives. A user who never accepted the consent
     /// has no key (the row is disabled until then), so the store is not read for them.
     fn fill_key(&mut self, consent: u32) {
-        self.key_mask = if consent >= tr::CONSENT_VERSION {
-            secret_store().and_then(|st| tr::stored_mask(st.as_ref()))
+        if consent >= tr::CONSENT_VERSION && secret_store().is_some() {
+            let gen = self.key_calls.start();
+            if !spawn_key_call(gen, |st| KeyAnswer::Read(tr::stored_mask(st))) {
+                self.key_calls.finish(gen);
+                self.key_mask = None;
+            }
         } else {
-            None
-        };
+            self.key_calls.cancel();
+            self.key_mask = None;
+        }
+        self.win.set_tr_key_busy(self.key_calls.busy());
         self.show_key();
         self.win.set_tr_key_input(SharedString::new());
         self.win.set_tr_key_error(SharedString::new());
@@ -999,6 +1008,7 @@ fn create() -> Option<()> {
             edits_at_save: 0,
             ai_consent: 0,
             key_mask: None,
+            key_calls: tr::KeyCalls::default(),
             test_gen: 0,
         });
     });
@@ -1729,17 +1739,111 @@ fn tr_toggled(on: bool) {
     });
 }
 
-/// The key's Save: stored at once (not through the draft), the field cleared either way.
+/// What a Credential Manager call of the key row answered (Task 611). Masks and codes only.
+enum KeyAnswer {
+    /// The read when the form fills: the stored key's mask.
+    Read(Option<String>),
+    Saved(Result<String, tr::KeyError>),
+    Removed(Result<(), tr::KeyError>),
+}
+
+/// A typed key on its way to the worker thread: wiped when dropped unused (a failed spawn).
+struct TypedKey(String);
+
+impl Drop for TypedKey {
+    fn drop(&mut self) {
+        darkclip_core::sensitive::wipe_string(&mut self.0);
+    }
+}
+
+/// Runs `call` with the credential store on a short worker thread, never the UI one (the
+/// `SecretStore` contract); the answer comes back on the event loop for generation `gen`.
+/// `false`: the thread did not start (`call` is dropped unrun).
+fn spawn_key_call(
+    gen: u64,
+    call: impl FnOnce(&dyn darkclip_platform::SecretStore) -> KeyAnswer + Send + 'static,
+) -> bool {
+    std::thread::Builder::new()
+        .name("darkclip-key-store".into())
+        .spawn(move || {
+            let answer = match secret_store() {
+                Some(store) => call(store.as_ref()),
+                None => KeyAnswer::Read(None),
+            };
+            let _ = slint::invoke_from_event_loop(move || on_key_answer(gen, answer));
+        })
+        .is_ok()
+}
+
+/// Starts a Save or Remove call unless one runs (the buttons are disabled then, so this only
+/// guards Enter in the field). Clears the field when it starts.
+fn start_key_press() -> Option<u64> {
+    with_host(|h| {
+        if h.key_calls.busy() {
+            return None;
+        }
+        h.win.set_tr_key_input(SharedString::new());
+        let gen = h.key_calls.start();
+        h.win.set_tr_key_busy(true);
+        Some(gen)
+    })
+    .flatten()
+}
+
+/// The key's Save: stored at once (not through the draft) on a worker thread, the field
+/// cleared. The typed key is wiped on the worker (`tr::save_key`), or here if it never starts.
 fn tr_save_key(typed: SharedString) {
-    let Some(store) = secret_store() else {
+    if secret_store().is_none() {
+        return;
+    }
+    let input = TypedKey(typed.to_string());
+    drop(typed);
+    let Some(gen) = start_key_press() else {
         return;
     };
-    let input = typed.to_string();
-    drop(typed);
-    let saved = with_host(|h| {
-        h.win.set_tr_key_input(SharedString::new());
-        match tr::save_key(store.as_ref(), input) {
-            Ok(mask) => {
+    let started = spawn_key_call(gen, move |store| {
+        let mut input = input;
+        KeyAnswer::Saved(tr::save_key(store, std::mem::take(&mut input.0)))
+    });
+    if !started {
+        on_key_answer(
+            gen,
+            KeyAnswer::Saved(Err(tr::KeyError::Store(tr::busy_code()))),
+        );
+    }
+}
+
+/// The key's Remove, on a worker thread.
+fn tr_remove_key() {
+    if secret_store().is_none() {
+        return;
+    }
+    let Some(gen) = start_key_press() else {
+        return;
+    };
+    if !spawn_key_call(gen, |store| KeyAnswer::Removed(tr::remove_key(store))) {
+        on_key_answer(
+            gen,
+            KeyAnswer::Removed(Err(tr::KeyError::Remove(tr::busy_code()))),
+        );
+    }
+}
+
+/// A key-row answer on the event loop. Only the latest call's answer is shown (an older one is
+/// dropped); a key set or removed is reported to the flow whatever the generation.
+fn on_key_answer(gen: u64, answer: KeyAnswer) {
+    let changed = matches!(answer, KeyAnswer::Saved(Ok(_)) | KeyAnswer::Removed(Ok(())));
+    with_host(|h| {
+        if !h.key_calls.finish(gen) {
+            return;
+        }
+        h.win.set_tr_key_busy(h.key_calls.busy());
+        match answer {
+            KeyAnswer::Read(mask) => {
+                h.key_mask = mask;
+                h.show_key();
+            }
+            KeyAnswer::Saved(Ok(mask)) => {
                 h.key_mask = Some(mask);
                 h.win.set_tr_key_error(SharedString::new());
                 h.show_key();
@@ -1747,41 +1851,22 @@ fn tr_save_key(typed: SharedString) {
                     t(h.lang, Msg::SettingsTrKeySaved).to_string(),
                     false,
                 )));
-                true
             }
-            Err(e) => {
+            KeyAnswer::Removed(Ok(())) => {
+                h.key_mask = None;
+                h.win.set_tr_key_error(SharedString::new());
+                h.show_key();
+                h.set_status(Some((
+                    t(h.lang, Msg::SettingsTrKeyRemoved).to_string(),
+                    false,
+                )));
+            }
+            KeyAnswer::Saved(Err(e)) | KeyAnswer::Removed(Err(e)) => {
                 h.win.set_tr_key_error(tr::key_error_text(h.lang, e).into());
-                false
             }
         }
     });
-    if saved == Some(true) {
-        key_changed();
-    }
-}
-
-/// The key's Remove.
-fn tr_remove_key() {
-    let Some(store) = secret_store() else {
-        return;
-    };
-    let removed = with_host(|h| match tr::remove_key(store.as_ref()) {
-        Ok(()) => {
-            h.key_mask = None;
-            h.win.set_tr_key_error(SharedString::new());
-            h.show_key();
-            h.set_status(Some((
-                t(h.lang, Msg::SettingsTrKeyRemoved).to_string(),
-                false,
-            )));
-            true
-        }
-        Err(e) => {
-            h.win.set_tr_key_error(tr::key_error_text(h.lang, e).into());
-            false
-        }
-    });
-    if removed == Some(true) {
+    if changed {
         key_changed();
     }
 }

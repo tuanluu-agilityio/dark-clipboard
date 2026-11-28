@@ -7,6 +7,9 @@ All notable changes to Dark Clipboard, newest first. Versions follow [SemVer](ht
 ### Fixed
 
 - Translate in place stored the source text and the translation in History when the target app (Zalo web in Chrome) answered the copy late, after a failed first press (Q-08, Task 610). A copy from the target app that arrives up to 5 s after the copy window ended is now skipped and never stored. The copy window is 3 s (was 1 s) and the select-all retry waits 1.2 s (was 0.4 s), so a slow app's selection is translated on the first press and is not widened to the whole field when the app answers within about 1.2 s. A press in another app while an abandoned press still waits no longer lets that app's copy be stored. The log line of each press has `copy_ms` and `select_all` (timings only).
+- Settings > Translate: reading, saving and removing the API key in Windows Credential Manager no longer runs on the UI thread, so a slow credential store cannot freeze the window; Save and Remove are disabled while a call runs (Task 611).
+- Translate in place: when the app was too busy to answer within 5 s, its late work for that press (arming the copy claim, writing the translation) could still run after the press gave up; it is now dropped and the translation text wiped (Task 611).
+- A copy from another app right after you resumed capture, while a translate press waited for the target app, could be dropped instead of stored (F-44, Task 611).
 
 ### Known issues
 

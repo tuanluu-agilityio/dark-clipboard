@@ -404,14 +404,8 @@ mod tests {
         assert_eq!(scan_window("short"), "short");
     }
 
-    #[test]
-    fn pathological_inputs_are_fast() {
-        let bound = if cfg!(debug_assertions) {
-            std::time::Duration::from_secs(2)
-        } else {
-            std::time::Duration::from_millis(200)
-        };
-        let inputs = [
+    fn pathological_inputs() -> [String; 7] {
+        [
             "a@".repeat(MAX_SCAN_BYTES / 2),
             "4 ".repeat(MAX_SCAN_BYTES / 2),
             "eyJ.".repeat(MAX_SCAN_BYTES / 4),
@@ -419,11 +413,36 @@ mod tests {
             "password:".repeat(MAX_SCAN_BYTES / 9),
             "+1-".repeat(MAX_SCAN_BYTES / 3),
             "sk-".repeat(MAX_SCAN_BYTES / 3),
-        ];
-        for input in &inputs {
+        ]
+    }
+
+    /// A guard against catastrophic (super-linear) slowness only, with bounds loose enough
+    /// for a loaded machine (F-42, Task 611). The real budget (200 ms per input in release)
+    /// is measured by the `#[ignore]` bench `pathological_inputs_budget_bench` below.
+    #[test]
+    fn pathological_inputs_are_fast() {
+        let bound = if cfg!(debug_assertions) {
+            std::time::Duration::from_secs(10)
+        } else {
+            std::time::Duration::from_secs(1)
+        };
+        for input in &pathological_inputs() {
             let start = std::time::Instant::now();
             let _ = scan(input, &all());
             assert!(start.elapsed() < bound);
+        }
+    }
+
+    /// The real scan budget: 200 ms per pathological input. Wall-clock, so run on demand on
+    /// an idle machine: `cargo test -p darkclip-core --release -- --ignored budget_bench`.
+    #[test]
+    #[ignore = "benchmark; run in release on an idle machine with --ignored"]
+    fn pathological_inputs_budget_bench() {
+        let budget = std::time::Duration::from_millis(200);
+        for input in &pathological_inputs() {
+            let start = std::time::Instant::now();
+            let _ = scan(input, &all());
+            assert!(start.elapsed() < budget);
         }
     }
 

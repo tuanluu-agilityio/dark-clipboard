@@ -6,6 +6,7 @@
 //! - Cancel keeps it off; Turn on sets it on and the consent to 1;
 //! - Save with an empty or too-long key shows the error and stores nothing;
 //! - Save with a key stores it, clears the field and shows only the mask; Remove clears it;
+//! - while a key call runs (`key-busy`, Task 611) Save and Remove do nothing;
 //! - in the real settings window, Ctrl+6 picks About (the key map of `src/ui/settings_keys.rs`).
 //!
 //! `set_platform` works once per process, so every case lives in the one `#[test]` below.
@@ -50,6 +51,7 @@ slint::slint! {
         in property <string> key-error;
         in-out property <string> key-input;
         in property <bool> consent-open;
+        in property <bool> key-busy;
         out property <length> enable-y: e.y;
         out property <length> enable-h: e.height;
         out property <length> key-y: k.y;
@@ -80,6 +82,7 @@ slint::slint! {
             key-status: root.key-status;
             key-error: root.key-error;
             key-input <=> root.key-input;
+            key-busy: root.key-busy;
             save-key(v) => {
                 root.save-key(v);
             }
@@ -323,6 +326,14 @@ fn translate_section_clicks_consent_key_entry_and_ctrl_6() {
     assert_eq!(ui.get_key_error(), t(lang, Msg::SettingsTrKeyEmpty));
     assert_eq!(store.get(ANTHROPIC_KEY_TARGET).unwrap(), None);
 
+    // 4b. Task 611: while a key call runs, Save is disabled.
+    ui.set_key_busy(true);
+    slint::platform::update_timers_and_animations();
+    click(&window, kx, kyy);
+    assert_eq!(st.saves.get(), 1, "Save ran while a key call was running");
+    ui.set_key_busy(false);
+    slint::platform::update_timers_and_animations();
+
     // 5. A key over 2560 bytes: the error, nothing stored, the field cleared.
     ui.set_key_input("k".repeat(tr::MAX_KEY_BYTES + 1).into());
     click(&window, kx, kyy);
@@ -354,6 +365,27 @@ fn translate_section_clicks_consent_key_entry_and_ctrl_6() {
     assert_eq!(store.get(ANTHROPIC_KEY_TARGET).unwrap(), None);
     assert!(ui.get_editing());
     assert_eq!(ui.get_key_status(), t(lang, Msg::SettingsTrKeyNone));
+
+    // 7b. Task 611: stored again, then Remove while a key call runs does nothing.
+    let (rx, ry) = hit.unwrap();
+    ui.set_key_input(key.as_str().into());
+    click(&window, kx, kyy);
+    assert_eq!(st.saves.get(), 4);
+    assert!(!ui.get_editing());
+    ui.set_key_busy(true);
+    slint::platform::update_timers_and_animations();
+    click(&window, rx, ry);
+    assert_eq!(
+        (st.removes.get(), st.replaces.get()),
+        (1, 0),
+        "Remove ran while a key call was running"
+    );
+    assert_eq!(store.get(ANTHROPIC_KEY_TARGET).unwrap().unwrap().0, key);
+    ui.set_key_busy(false);
+    slint::platform::update_timers_and_animations();
+    click(&window, rx, ry);
+    assert_eq!(st.removes.get(), 2);
+    assert_eq!(store.get(ANTHROPIC_KEY_TARGET).unwrap(), None);
 
     // 8. The real settings window: Ctrl+6 picks About (section index 5).
     let sw = SettingsWindow::new().unwrap();

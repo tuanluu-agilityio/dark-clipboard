@@ -169,14 +169,11 @@ impl Actor {
         let prev = self.pending.take();
         let first_at = prev.as_ref().map_or(now, |p| p.first_at);
         // Task 603: an ownerless change replacing one the claim let through may be its flush:
-        // it is held as well, so it is never stored unless claimed.
-        let held = admitted.or_else(|| {
-            if s.source.is_none() {
-                prev.as_ref().and_then(|p| p.held)
-            } else {
-                None
-            }
-        });
+        // it is held as well, so it is never stored unless claimed. F-44 (a), Task 611: only
+        // while the settings gate still applies (Paused or Disabled now, `admitted`). After a
+        // resume it is a normal change; the target app is still covered by the claim, the
+        // 603b follow-up rule and the 610 tails.
+        let held = admitted;
         // F-14: a replaced pending change was never processed, so it always joins the chain,
         // whatever the actor's own timing (rule 1: its sources are checked for exclusion,
         // which only adds skips; rule 2: it may name an ownerless flush's source, bounded by

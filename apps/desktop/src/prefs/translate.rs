@@ -111,6 +111,11 @@ fn code(e: &PlatformError) -> i64 {
     }
 }
 
+/// The code shown when a key call could not start (as for a busy store): try again.
+pub fn busy_code() -> i64 {
+    code(&PlatformError::Busy)
+}
+
 /// Checks a typed key: trimmed, not empty, at most [`MAX_KEY_BYTES`].
 pub fn check_key(input: &str) -> Result<&str, KeyError> {
     let key = input.trim();
@@ -154,6 +159,46 @@ pub fn stored_mask(store: &dyn SecretStore) -> Option<String> {
     let mask = (!key.0.trim().is_empty()).then(|| key_mask(&key.0));
     wipe_string(&mut key.0);
     mask
+}
+
+/// The Credential Manager calls of the key row (the read when the form fills, Save, Remove)
+/// run on short worker threads, never on the UI thread (Task 611). Each one starts a new
+/// generation; only the latest generation's answer is shown, an older one is dropped. Save and
+/// Remove are disabled while the latest call runs.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct KeyCalls {
+    gen: u64,
+    busy: bool,
+}
+
+impl KeyCalls {
+    /// A call starts: its generation, to hand back with its answer.
+    pub fn start(&mut self) -> u64 {
+        self.gen = self.gen.wrapping_add(1);
+        self.busy = true;
+        self.gen
+    }
+
+    /// No call is needed (the form filled without consent): an answer still running is dropped.
+    pub fn cancel(&mut self) {
+        self.gen = self.gen.wrapping_add(1);
+        self.busy = false;
+    }
+
+    /// The answer of the call `gen` arrived: `true` when it is the latest one (show it; the row
+    /// is no longer busy), `false` for an older one (drop it, nothing changes).
+    pub fn finish(&mut self, gen: u64) -> bool {
+        if gen != self.gen {
+            return false;
+        }
+        self.busy = false;
+        true
+    }
+
+    /// The latest call has not answered yet: Save and Remove are disabled.
+    pub fn busy(&self) -> bool {
+        self.busy
+    }
 }
 
 /// The status line of the key row.
@@ -329,6 +374,37 @@ mod tests {
         assert_eq!(stored_mask(&store), None);
         // Removing again is fine.
         assert_eq!(remove_key(&store), Ok(()));
+    }
+
+    #[test]
+    fn only_the_latest_key_call_is_shown() {
+        let mut calls = KeyCalls::default();
+        assert!(!calls.busy());
+        // The form fills (a read), then Save is pressed before the read answers.
+        let read = calls.start();
+        assert!(calls.busy());
+        let save = calls.start();
+        // The read answers late: dropped, still busy for the save.
+        assert!(!calls.finish(read));
+        assert!(calls.busy());
+        assert!(calls.finish(save));
+        assert!(!calls.busy());
+        // A cancel (the form filled without consent) drops the answer still running.
+        let remove = calls.start();
+        calls.cancel();
+        assert!(!calls.busy());
+        assert!(!calls.finish(remove));
+        assert!(!calls.busy());
+        // The counter wraps without matching an older call.
+        let mut calls = KeyCalls {
+            gen: u64::MAX,
+            busy: false,
+        };
+        let old = calls.gen;
+        let new = calls.start();
+        assert_eq!(new, 0);
+        assert!(!calls.finish(old));
+        assert!(calls.finish(new));
     }
 
     #[test]
