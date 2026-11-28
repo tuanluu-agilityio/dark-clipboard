@@ -641,13 +641,17 @@ impl Host {
 
     /// The key row, read once from the credential store on a short worker thread (Task 611);
     /// the last known mask shows until the answer arrives. A user who never accepted the consent
-    /// has no key (the row is disabled until then), so the store is not read for them.
+    /// has no key (the row is disabled until then), so the store is not read for them. While a
+    /// Save or Remove runs nothing is read: its answer stands and the buttons stay disabled.
     fn fill_key(&mut self, consent: u32) {
-        if consent >= tr::CONSENT_VERSION && secret_store().is_some() {
-            let gen = self.key_calls.start();
-            if !spawn_key_call(gen, |st| KeyAnswer::Read(tr::stored_mask(st))) {
-                self.key_calls.finish(gen);
-                self.key_mask = None;
+        if self.key_calls.busy() {
+            // The running call's answer sets the row.
+        } else if consent >= tr::CONSENT_VERSION && secret_store().is_some() {
+            if let Some(gen) = self.key_calls.start_unless_busy() {
+                if !spawn_key_call(gen, |st| KeyAnswer::Read(tr::stored_mask(st))) {
+                    self.key_calls.finish(gen);
+                    self.key_mask = None;
+                }
             }
         } else {
             self.key_calls.cancel();
@@ -1779,11 +1783,8 @@ fn spawn_key_call(
 /// guards Enter in the field). Clears the field when it starts.
 fn start_key_press() -> Option<u64> {
     with_host(|h| {
-        if h.key_calls.busy() {
-            return None;
-        }
+        let gen = h.key_calls.start_unless_busy()?;
         h.win.set_tr_key_input(SharedString::new());
-        let gen = h.key_calls.start();
         h.win.set_tr_key_busy(true);
         Some(gen)
     })

@@ -179,6 +179,12 @@ impl KeyCalls {
         self.gen
     }
 
+    /// Starts a call only when none runs: `None` while the latest call is busy, so its answer
+    /// stands (a form fill during a Save or Remove does not read over it).
+    pub fn start_unless_busy(&mut self) -> Option<u64> {
+        (!self.busy).then(|| self.start())
+    }
+
     /// No call is needed (the form filled without consent): an answer still running is dropped.
     pub fn cancel(&mut self) {
         self.gen = self.gen.wrapping_add(1);
@@ -405,6 +411,19 @@ mod tests {
         assert_eq!(new, 0);
         assert!(!calls.finish(old));
         assert!(calls.finish(new));
+    }
+
+    #[test]
+    fn a_form_fill_never_reads_over_a_running_save_or_remove() {
+        let mut calls = KeyCalls::default();
+        let save = calls.start_unless_busy().unwrap();
+        // Revert or a reopen fills the form while the save runs: no new read, still busy.
+        assert_eq!(calls.start_unless_busy(), None);
+        assert!(calls.busy());
+        // The save's answer stands and ends the busy state.
+        assert!(calls.finish(save));
+        assert!(!calls.busy());
+        assert!(calls.start_unless_busy().is_some());
     }
 
     #[test]
