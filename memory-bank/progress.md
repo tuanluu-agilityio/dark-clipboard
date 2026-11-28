@@ -147,6 +147,7 @@ The owner reviewed the Phase 7 demo on 2026-11-25 ("đã review", D-089); no rel
 | 608 Phase review | — (read-only on main 959115a) | specialist | opus | **APPROVED 2026-11-28** (no blocking; Review Focus 1-5 and anti-goals A1-A6 proven by tests and probes (default-off and enabled-without-consent runs register no translate shortcut; ureq proxy/redirect behaviour read in source); 6 non-blocking: restore and sensitive wording (fixed in the release PR), consent dialog without model name and overlay-failure send (accepted, D-097), Credential Manager on the UI thread, late worker jobs after 5 s) | 212,964 | | | 212,964 |
 | **Release 0.3.0** (Phase 6; owner approved before the manual rows, D-097) | release/0.3.0 | orchestrator | opus | **released 2026-11-28 (D-098)** | | | | |
 | 609 Website for 0.3.0 (translate in place, EN/VI) | task/609-website-0.3.0 | scaffolder | sonnet | done (`website/index.html`: desc, lede, f2 offline by default, t7 translate card, status note untested, 0.3.0 downloads; D-098 recorded) | 70,406 | 37,801 (reviewer sonnet: APPROVED, 1 table fix applied by orchestrator) | 0 | 108,207 |
+| 610 Late copy after a failed press stored in History (Q-08 bug, 0.3.1) | task/610-late-copy-fix | specialist | opus | in progress | | | | |
 
 Phase 6 complete 2026-11-28 (608 APPROVED; 0.3.0 released; Q-08 owner rows still open).
 
