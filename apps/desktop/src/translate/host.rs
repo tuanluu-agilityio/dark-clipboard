@@ -209,10 +209,12 @@ pub(crate) const MODIFIER_VKS: [u16; 5] = [0x11, 0x10, 0x12, 0x5B, 0x5C];
 pub(crate) const MENU_KEY_VKS: [u16; 3] = [0x12, 0x5B, 0x5C];
 
 /// Whether this press sends the menu mask key (Task 612): only while Alt or a Win key is still
-/// down. Asked right when the translate hotkey fires, a held Alt or Win is part of the
-/// shortcut: the OS hotkey fires only when the held modifiers match its registration, so a
-/// shortcut without Alt or Win (`Ctrl+Shift+Y`) never fires with one held. Once released, the
-/// lone tap already happened and a mask can no longer help.
+/// down. Asked right when the translate hotkey fires, a held Alt or Win is taken to be part of
+/// the shortcut: as observed (not documented by Microsoft), a `RegisterHotKey` hotkey fires
+/// only when the held modifiers match its registration, so a shortcut without Alt or Win
+/// (`Ctrl+Shift+Y`) does not fire with one held. If that is wrong, the only effect is a
+/// harmless `0xE8` mask while the user happens to hold Alt or Win. Once released, the lone tap
+/// already happened and a mask can no longer help.
 pub(crate) fn menu_mask_wanted(held: impl Fn(&[u16]) -> bool) -> bool {
     held(&MENU_KEY_VKS)
 }
